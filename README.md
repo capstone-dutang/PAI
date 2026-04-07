@@ -20,7 +20,7 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 | Python | 3.10 |
 | 빌드 시스템 | ament_python |
 
-'''
+```
 ~/
 ├── ros2_ws/
 │   └── src/
@@ -38,7 +38,7 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 │
 └── llama.cpp/
     └── llama-server
-'''
+```
 
 ### 외부 PC (학습 / Isaac Sim)
 
