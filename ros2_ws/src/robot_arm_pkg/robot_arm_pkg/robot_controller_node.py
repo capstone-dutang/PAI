@@ -1,12 +1,13 @@
 """
 robot_controller_node.py
 
-act_node의 joint_command를 받아 실제 LeRobot 모터를 구동하고
+act_node의 joint_command를 받아 SO-101 팔로워 암을 구동하고
 현재 관절 상태(joint_states)를 피드백하는 노드.
 
 환경:
   Python   3.10
   ROS2     Humble (Humboldt, 22.04 LTS)
+  LeRobot  SO-101 (so101_follower) — Feetech STS3215 모터
 
 구독 토픽:
   /joint_command (sensor_msgs/JointState) — act_node로부터 수신
@@ -15,16 +16,37 @@ act_node의 joint_command를 받아 실제 LeRobot 모터를 구동하고
   /joint_states  (sensor_msgs/JointState) — 1000Hz
 
 파라미터:
+  robot_port (str)   — SO-101 팔로워 USB 포트 (기본 /dev/ttyACM0)
+  robot_id   (str)   — 캘리브레이션 파일 식별 이름 (기본 follower)
   publish_hz (float) — joint_states 발행 주기 (기본 1000Hz)
+
+SO-101 관절 순서 (6축):
+  shoulder_pan, shoulder_lift, elbow_flex,
+  wrist_flex, wrist_roll, gripper
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
+import torch
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+
+# LeRobot 0.4.4 기준 경로
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+
+
+# SO-101 관절 이름 — LeRobot observation.state 텐서 차원 순서와 일치
+SO101_JOINT_NAMES: List[str] = [
+    'shoulder_pan',
+    'shoulder_lift',
+    'elbow_flex',
+    'wrist_flex',
+    'wrist_roll',
+    'gripper',
+]
 
 
 class RobotControllerNode(Node):
@@ -33,17 +55,23 @@ class RobotControllerNode(Node):
         super().__init__('robot_controller_node')
 
         # ── 파라미터 ──────────────────────────────
+        self.declare_parameter('robot_port', '/dev/ttyACM0')
+        self.declare_parameter('robot_id',   'follower')
         self.declare_parameter('publish_hz', 1000.0)
+
+        robot_port = self.get_parameter('robot_port').value
+        robot_id   = self.get_parameter('robot_id').value
         publish_hz = self.get_parameter('publish_hz').value
 
-        # ── LeRobot API 초기화 ────────────────────
-        # TODO: LeRobot API 확정 후 구현
-        #   self.robot = LeRobotAPI(...)
-        #   self.robot.connect()
-        self._robot = None
-        self.get_logger().warn(
-            '[robot_controller] LeRobot API 미확정. '
-            '_send_command() 및 _read_joints() 를 구현하세요.'
+        # ── SO-101 LeRobot SDK 초기화 ─────────────
+        robot_cfg = SO101FollowerConfig(
+            port=robot_port,
+            id=robot_id,
+        )
+        self._robot = SO101Follower(robot_cfg)
+        self._robot.connect()
+        self.get_logger().info(
+            f'SO-101 연결 완료 | 포트: {robot_port} | ID: {robot_id}'
         )
 
         # ── 최신 커맨드 캐시 ──────────────────────
@@ -63,7 +91,7 @@ class RobotControllerNode(Node):
     # ── 구독 콜백 ─────────────────────────────────
 
     def _cmd_callback(self, msg: JointState) -> None:
-        """act_node로부터 관절 명령 수신."""
+        """act_node로부터 관절 명령 수신 후 즉시 모터로 전송."""
         self._latest_cmd = msg
         self._send_command(msg)
 
@@ -75,44 +103,46 @@ class RobotControllerNode(Node):
             state = self._read_joints()
             if state is not None:
                 self.state_pub.publish(state)
-        except NotImplementedError as e:
-            self.get_logger().warn(str(e), throttle_duration_sec=5.0)
         except Exception as e:
             self.get_logger().error(f'관절 상태 읽기 실패: {e}')
 
-    # ── 드라이버 인터페이스 ───────────────────────
+    # ── LeRobot SDK 연동 ──────────────────────────
 
     def _send_command(self, cmd: JointState) -> None:
         """
-        관절 명령을 실제 모터로 전송.
-
-        TODO: LeRobot API 확정 후 구현
-          self._robot.set_joint_positions(cmd.position)
+        JointState 메시지를 받아 SO-101 모터로 전송.
+        cmd.position 은 SO101_JOINT_NAMES 순서의 6개 값이어야 함.
         """
-        raise NotImplementedError(
-            "[robot_controller] _send_command() 미구현. "
-            "LeRobot API 확정 후 구현하세요."
-        )
+        action = torch.tensor(list(cmd.position), dtype=torch.float32)
+        self._robot.send_action(action)
 
     def _read_joints(self) -> Optional[JointState]:
         """
-        현재 관절 상태를 하드웨어에서 읽어 반환.
-
-        TODO: LeRobot API 확정 후 구현
-          positions = self._robot.get_joint_positions()
-          → JointState 메시지로 변환 후 반환
+        SO-101 현재 관절 상태를 읽어 JointState 메시지로 반환.
 
         Returns:
             JointState — 현재 관절 상태. 실패 시 None.
         """
-        raise NotImplementedError(
-            "[robot_controller] _read_joints() 미구현. "
-            "LeRobot API 확정 후 구현하세요."
-        )
+        obs = self._robot.get_observation()
+
+        # observation.state: shape (6,) torch.Tensor
+        # 순서: shoulder_pan, shoulder_lift, elbow_flex,
+        #        wrist_flex, wrist_roll, gripper
+        state_tensor: torch.Tensor = obs['observation.state']
+
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name         = SO101_JOINT_NAMES
+        msg.position     = state_tensor.tolist()
+        return msg
 
     def destroy_node(self) -> None:
-        # TODO: LeRobot API 연결 해제
-        # if self._robot: self._robot.disconnect()
+        """노드 종료 시 SO-101 연결 해제."""
+        try:
+            self._robot.disconnect()
+            self.get_logger().info('SO-101 연결 해제 완료')
+        except Exception as e:
+            self.get_logger().warn(f'SO-101 연결 해제 중 오류: {e}')
         super().destroy_node()
 
 

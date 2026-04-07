@@ -40,8 +40,8 @@ class VLMNode(Node):
         super().__init__('vlm_node')
 
         # ── 파라미터 ──────────────────────────────
-        self.declare_parameter('model_path', '')
-        self.declare_parameter('server_url', '')
+        self.declare_parameter('model_path', '/home/user/models/vlm_qwen3.5_4b_q4.gguf')
+        self.declare_parameter('server_url', 'http://localhost:8080')
         self.declare_parameter('infer_hz',   0.4)
 
         self.model_path = self.get_parameter('model_path').value

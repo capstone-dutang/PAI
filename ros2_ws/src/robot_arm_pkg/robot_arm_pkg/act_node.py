@@ -1,12 +1,13 @@
 """
 act_node.py
 
-ACT Policy (TensorRT) 로 관절 시퀀스를 추론하는 노드.
+LeRobot ACT Policy (.pth 체크포인트) 로 관절 시퀀스를 추론하는 노드.
 VLM이 발행한 object_pose를 캐싱하고, 30Hz로 joint_command를 발행.
 
 환경:
   Python   3.10
   ROS2     Humble (Humboldt, 22.04 LTS)
+  LeRobot  ACT Policy — .pth 체크포인트를 torch로 직접 추론 (TensorRT 미사용)
 
 구독 토픽:
   /camera/rgb    (sensor_msgs/Image)
@@ -18,19 +19,41 @@ VLM이 발행한 object_pose를 캐싱하고, 30Hz로 joint_command를 발행.
   /joint_command (sensor_msgs/JointState)    — 30Hz
 
 파라미터:
-  model_path  (str)   — TensorRT 엔진 파일 경로 (.trt)
+  model_path  (str)   — LeRobot ACT 체크포인트 경로 (.pth)
   chunk_size  (int)   — 한 번에 예측할 스텝 수 (기본 100)
   publish_hz  (float) — 발행 주기 (기본 30Hz)
+
+observation 구성 (학습 시와 동일해야 함):
+  observation.image        — RGB 이미지 텐서
+  observation.depth        — Depth 맵 텐서
+  observation.state        — 관절 상태 텐서 (6축, SO-101 순서)
+  observation.object_pose  — VLM 추론 결과 (x, y, z)
+
+TODO (Part E 완료 후 구현):
+  _load_policy()  — 체크포인트 로드 및 normalizer 설정 확인
+  _predict_chunk() 내부 — 입력 텐서 전처리 및 policy.select_action() 호출
+  입력 전처리 방식은 체크포인트에 포함된 normalizer 설정에 따라 결정됨
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 
+import torch
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, JointState
 from geometry_msgs.msg import PoseStamped
+
+# SO-101 관절 이름 — robot_controller_node.py 와 동일한 순서 유지
+SO101_JOINT_NAMES: List[str] = [
+    'shoulder_pan',
+    'shoulder_lift',
+    'elbow_flex',
+    'wrist_flex',
+    'wrist_roll',
+    'gripper',
+]
 
 
 class ACTNode(Node):
@@ -39,13 +62,17 @@ class ACTNode(Node):
         super().__init__('act_node')
 
         # ── 파라미터 ──────────────────────────────
-        self.declare_parameter('model_path', '')
+        self.declare_parameter('model_path', '/home/user/models/act_policy.pth')
         self.declare_parameter('chunk_size', 100)
         self.declare_parameter('publish_hz', 30.0)
 
         self.model_path = self.get_parameter('model_path').value
         self.chunk_size = self.get_parameter('chunk_size').value
         publish_hz      = self.get_parameter('publish_hz').value
+
+        # ── LeRobot Policy 로드 ───────────────────
+        # TODO: Part E 완료 후 _load_policy() 구현
+        self.policy = self._load_policy()
 
         # ── 입력 캐시 ─────────────────────────────
         self._latest_rgb:    Optional[Image]       = None
@@ -74,6 +101,29 @@ class ACTNode(Node):
         self.get_logger().info(
             f'act_node 시작 | 모델: {self.model_path} | chunk_size: {self.chunk_size} | {publish_hz}Hz'
         )
+
+    # ── Policy 로드 ───────────────────────────────
+
+    def _load_policy(self):
+        """
+        LeRobot ACT 체크포인트를 로드하여 반환.
+
+        TODO: Part E(ACT 학습) 완료 후 구현
+          체크포인트 구조와 normalizer 설정을 확인한 뒤 아래를 구현:
+
+          from lerobot.policies.act.modeling_act import ACTPolicy
+          policy = ACTPolicy.from_pretrained(self.model_path)
+          policy.eval()
+          return policy
+
+        Returns:
+            ACTPolicy 객체. 미구현 시 None.
+        """
+        self.get_logger().warn(
+            '[act_node] _load_policy() 미구현. '
+            'Part E 완료 후 LeRobot ACT 체크포인트 로드를 구현하세요.'
+        )
+        return None
 
     # ── 구독 콜백 ─────────────────────────────────
 
@@ -120,17 +170,45 @@ class ACTNode(Node):
         """
         현재 입력으로 chunk_size 스텝의 관절 시퀀스 예측.
 
-        TODO: TensorRT 엔진 확정 후 구현
-          1. rgb, depth, pose, joints → 텐서 변환
-          2. TensorRT 엔진으로 추론
-          3. 출력 텐서 → JointState 리스트 변환 (chunk_size 개)
+        TODO: Part E(ACT 학습) 완료 후 구현
+          체크포인트의 normalizer 설정 확인 후 아래를 구현:
+
+          1. 입력 텐서 구성 — normalizer 설정에 맞게 전처리
+             obs = {
+                 'observation.image':       _to_image_tensor(self._latest_rgb),
+                 'observation.depth':       _to_depth_tensor(self._latest_depth),
+                 'observation.state':       _to_state_tensor(self._latest_joints),
+                 'observation.object_pose': _to_pose_tensor(self._latest_pose),
+             }
+
+          2. LeRobot Policy 추론
+             with torch.no_grad():
+                 action_chunk = self.policy.select_action(obs)
+             # action_chunk shape: (chunk_size, 6)
+
+          3. 출력 텐서 → JointState 리스트 변환
+             result = []
+             for step in action_chunk:
+                 msg = JointState()
+                 msg.name     = SO101_JOINT_NAMES
+                 msg.position = step.tolist()
+                 result.append(msg)
+             return result
 
         Returns:
-            List[JointState] 길이 chunk_size. 실패 시 None.
+            List[JointState] 길이 chunk_size. 미구현 또는 실패 시 None.
         """
+        if self.policy is None:
+            self.get_logger().warn(
+                '[act_node] policy 미로드. _load_policy() 구현 후 사용 가능.',
+                throttle_duration_sec=5.0,
+            )
+            return None
+
+        # TODO: 위 독스트링의 구현 내용 채우기
         raise NotImplementedError(
-            "[act_node] TensorRT 추론 미구현. "
-            "모델 확정 후 _predict_chunk()를 구현하세요."
+            "[act_node] _predict_chunk() 미구현. "
+            "Part E 완료 후 LeRobot Policy 추론을 구현하세요."
         )
 
 
