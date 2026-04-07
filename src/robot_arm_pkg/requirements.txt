@@ -1,0 +1,29 @@
+# ============================================================
+# robot_arm_pkg requirements
+# Python  : 3.10
+# ROS2    : Humble (Ubuntu 22.04 LTS)
+# ============================================================
+# ROS2 패키지(rclpy, sensor_msgs, std_msgs, geometry_msgs)는
+# apt/rosdep으로 설치
+#
+# 설치 방법:
+#   pip install -r requirements.txt
+# ============================================================
+
+# ── ROS2 Python 빌드 필수 ────────────────────────────────────
+setuptools>=58.2.0   # ROS2 Humble 호환 버전
+
+# ── 공통 ─────────────────────────────────────────────────────
+numpy>=1.21.0        # 이미지/텐서 데이터 처리 (act_node, vlm_node)
+
+# ── vlm_node: llama.cpp 서버 HTTP 통신 ───────────────────────
+requests>=2.28.0     # HTTP POST → llama.cpp 서버
+
+# ── act_node: TensorRT 추론 ───────────────────────────────────
+# TensorRT는 NVIDIA 공식 경로로 별도 설치 필요:
+#   https://docs.nvidia.com/deeplearning/tensorrt/install-guide
+# 설치 후 Python 바인딩은 아래 패키지로 사용 가능:
+tensorrt             # NVIDIA TensorRT Python 바인딩
+
+# ── robot_controller_node: LeRobot API ───────────────────────
+lerobot              # HuggingFace LeRobot (모터 제어 API)
