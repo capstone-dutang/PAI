@@ -4,9 +4,39 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 
 ---
 
+## 전체 파이프라인
+
+```
+Part A  하드웨어 세팅 (카메라 캘리브레이션)
+  │
+  ├─▶ Part B  Isaac Sim 합성 데이터 생성
+  │     │
+  │     ▼
+  │   Part C  VLM LoRA 파인튜닝 (외부 PC)
+  │     │         → vlm_qwen3.5_4b_q4.gguf
+  │     │
+  │     ▼
+  │   Part D  시연 데이터 수집 (Jetson) ← VLM 실시간 구동 필요
+  │             record_with_vlm.py 사용
+  │             → LeRobot dataset (observation.state + object_pose + action)
+  │
+  └─▶ Part E  ACT 모방학습 (외부 PC, LeRobot)
+                → act_policy.pth
+                    │
+                    ▼
+              Part F  Jetson 통합 배포 (VLM + ACT → 비동기 추론 루프)
+                    │
+                    ▼
+              Part G  Isaac Sim 시뮬레이션 검증 및 비교 실험
+```
+
+> Part C 완료 후 Part D 시작 가능 (데이터 수집 중 VLM 실시간 구동 필요)
+
+---
+
 ## 실행 환경
 
-### Jetson (배포)
+### Jetson (데이터 수집 / 배포)
 
 | 항목 | 내용 |
 |------|------|
@@ -14,8 +44,6 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 | JetPack | 6.2.1 |
 | OS | Ubuntu 22.04 LTS |
 | CUDA | 12.6 |
-| cuDNN | 9.3.0 |
-| TensorRT | 10.3.0 |
 | ROS2 | Humble Hawksbill |
 | Python | 3.10 |
 | 빌드 시스템 | ament_python |
@@ -30,7 +58,7 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 │   ├── vlm/
 │   │   └── vlm_qwen3.5_4b_q4.gguf
 │   └── act/
-│       └── act_policy.trt
+│       └── act_policy.pth
 │
 ├── calibration/
 │   ├── camera_intrinsics.yaml
@@ -47,8 +75,7 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 | OS | Ubuntu |
 | GPU VRAM | 16GB 이상 |
 | CUDA | 12.6 |
-| TensorRT | 10.3.0 (Jetson과 버전 일치 필요) |
-| 주요 작업 | VLM LoRA 파인튜닝, ACT 모방학습, Isaac Sim 시뮬레이션 |
+| 주요 작업 | VLM LoRA 파인튜닝 (Part C), ACT 모방학습 (Part E), Isaac Sim 시뮬레이션 |
 
 ---
 
@@ -58,13 +85,13 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 |------|------|
 | 카메라 | RGB-D 센서 (미확정) |
 | 로봇 팔 | SO-101 (HuggingFace LeRobot) |
-| 추론 가속 | NVIDIA TensorRT (Jetson 내장 GPU) |
+| 리더 팔 | SO-101 Leader (데이터 수집 시 사용) |
 
 ---
 
 ## 소프트웨어 의존성
 
-### ROS2 패키지 (apt / rosdep)
+### ROS2 패키지
 
 ```bash
 sudo apt install ros-humble-rclpy \
@@ -73,7 +100,7 @@ sudo apt install ros-humble-rclpy \
                  ros-humble-geometry-msgs
 ```
 
-### Python 패키지 (pip)
+### Python 패키지
 
 ```bash
 pip install -r ros2_ws/src/robot_arm_pkg/requirements.txt
@@ -83,15 +110,9 @@ pip install -r ros2_ws/src/robot_arm_pkg/requirements.txt
 |--------|------|------|
 | setuptools | ≥58.2.0 | ROS2 Humble 빌드 호환 |
 | numpy | ≥1.21.0 | 이미지/텐서 데이터 처리 |
+| torch | ≥2.0.0 | ACT Policy 추론 |
 | requests | ≥2.28.0 | llama.cpp 서버 HTTP 통신 |
-| tensorrt | — | ACT Policy 추론 (NVIDIA 공식 설치 필요) |
-| lerobot | — | SO-101 모터 제어 API |
-
-### TensorRT 별도 설치
-
-TensorRT는 pip만으로 설치되지 않습니다. NVIDIA 공식 가이드를 따라 설치 후 Python 바인딩을 활성화하세요.
-
-> https://docs.nvidia.com/deeplearning/tensorrt/install-guide
+| lerobot | 0.4.4 | SO-101 모터 제어 SDK, 데이터 수집, ACT 학습 |
 
 ---
 
@@ -104,9 +125,11 @@ ros2_ws/
         ├── robot_arm_pkg/
         │   ├── camera_node.py           # RGB-D 카메라 입력
         │   ├── vlm_node.py              # VLM 추론 (Qwen3.5-4B GGUF)
-        │   ├── act_node.py              # ACT Policy 추론 (TensorRT)
-        │   ├── robot_controller_node.py # SO-101 모터 제어
+        │   ├── act_node.py              # ACT Policy 추론 (LeRobot .pth)
+        │   ├── robot_controller_node.py # SO-101 팔로워 모터 제어 (LeRobot SDK)
         │   └── state_monitor_node.py    # 태스크 성공/실패 판단
+        ├── scripts/
+        │   └── record_with_vlm.py       # 데이터 수집 스크립트 (Part D)
         ├── package.xml
         ├── setup.py
         └── requirements.txt
@@ -116,14 +139,14 @@ ros2_ws/
 
 ## ROS2 노드 및 토픽
 
-### 노드 요약
+### 배포 단계 노드 구성
 
 | 노드 | 실행 주기 | 역할 |
 |------|-----------|------|
 | `camera_node` | 30 Hz | RGB-D 카메라 프레임 발행 |
 | `vlm_node` | 0.4 Hz | Qwen3.5-4B로 물체 3D 위치 추론 |
 | `act_node` | 30 Hz | ACT Policy로 관절 시퀀스 예측 |
-| `robot_controller_node` | 1000 Hz | SO-101 모터 구동 및 관절 상태 피드백 |
+| `robot_controller_node` | 1000 Hz | SO-101 팔로워 모터 구동 및 관절 상태 피드백 |
 | `state_monitor_node` | 10 Hz | 성공/실패 판단, 재시도 트리거 |
 
 ### 토픽 구조
@@ -165,31 +188,83 @@ colcon build --packages-select robot_arm_pkg
 source install/setup.bash
 ```
 
-### 노드 실행
+### 배포 실행 (Part F)
 
 ```bash
 # 카메라
 ros2 run robot_arm_pkg camera_node
 
-# VLM (llama.cpp 서버 주소 및 모델 경로 지정 필요)
+# llama.cpp 서버 (VLM 추론용)
+~/llama.cpp/llama-server \
+  -m ~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
+  --host 0.0.0.0 --port 8080
+
+# VLM 노드
 ros2 run robot_arm_pkg vlm_node \
-  --ros-args -p model_path:=/path/to/vlm.gguf \
+  --ros-args -p model_path:=~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
              -p server_url:=http://localhost:8080
 
-# ACT Policy (TensorRT 엔진 경로 지정 필요)
+# ACT Policy (LeRobot .pth 체크포인트)
 ros2 run robot_arm_pkg act_node \
-  --ros-args -p model_path:=/path/to/act_policy.trt \
+  --ros-args -p model_path:=~/models/act/act_policy.pth \
              -p chunk_size:=100
 
-# 로봇 컨트롤러
-ros2 run robot_arm_pkg robot_controller_node
+# 로봇 컨트롤러 (SO-101 팔로워)
+ros2 run robot_arm_pkg robot_controller_node \
+  --ros-args -p robot_port:=/dev/ttyACM0 \
+             -p robot_id:=follower
 
 # 상태 모니터
 ros2 run robot_arm_pkg state_monitor_node
 
-# 태스크 명령 발행 (예시)
+# 태스크 명령 발행
 ros2 topic pub /task_command std_msgs/String "data: 'pick up the red cube'"
 ```
+
+---
+
+## 데이터 수집 (Part D)
+
+LeRobot 네이티브 파이프라인을 사용하며, VLM의 `object_pose`를 observation에 포함하여 기록.
+
+### 실행 전 준비
+
+1. Part C 완료 → `vlm_node` 실행 가능 상태
+2. SO-101 리더/팔로워 USB 포트 확인
+3. LeRobot 캘리브레이션 완료 (`lerobot-calibrate`)
+
+### 실행 순서
+
+```bash
+# 1. llama.cpp 서버 실행
+~/llama.cpp/llama-server \
+  -m ~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
+  --host 0.0.0.0 --port 8080
+
+# 2. VLM 노드 실행 (/object_pose 발행)
+ros2 run robot_arm_pkg vlm_node \
+  --ros-args -p server_url:=http://localhost:8080
+
+# 3. 데이터 수집 스크립트 실행
+python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
+  --robot-port      /dev/ttyACM0 \
+  --robot-id        follower \
+  --teleop-port     /dev/ttyACM1 \
+  --teleop-id       leader \
+  --dataset-repo-id myname/my_dataset \
+  --single-task     "pick and place" \
+  --num-episodes    50
+```
+
+### 데이터셋 구조
+
+| 채널 | shape | 내용 |
+|------|-------|------|
+| `observation.state` | (6,) | 팔로워 관절 위치 (SO-101 6축) |
+| `observation.object_pose` | (3,) | VLM 추론 결과 (x, y, z) |
+| `action` | (6,) | 리더 관절 값 (정답 행동) |
+
+> 카메라 채널(`observation.images.top`)은 카메라 기종 확정 후 추가 예정
 
 ---
 
@@ -199,7 +274,7 @@ ros2 topic pub /task_command std_msgs/String "data: 'pick up the red cube'"
 |----------|-----|
 | OS + ROS2 | ~1.5 GB |
 | VLM (Qwen3.5-4B GGUF Q4) | ~4.0 GB |
-| ACT Policy (TensorRT) | ~0.3 GB |
+| ACT Policy (PyTorch .pth) | ~0.3 GB |
 | RGB-D 드라이버 + 버퍼 | ~0.3 GB |
 | KV Cache / 기타 | ~0.5 GB |
 | **합계** | **~6.6 GB** |
@@ -208,10 +283,10 @@ ros2 topic pub /task_command std_msgs/String "data: 'pick up the red cube'"
 
 ## 미구현 항목 (TODO)
 
-| 노드 | 미구현 메서드 | 내용 |
-|------|--------------|------|
-| `camera_node` | `PlaceholderAdapter.get_frames()` | 실제 RGB-D 드라이버 연동 |
-| `vlm_node` | `_run_inference()` | llama.cpp HTTP 추론 구현 |
-| `act_node` | `_predict_chunk()` | TensorRT 추론 구현 |
-| `robot_controller_node` | `_send_command()`, `_read_joints()` | LeRobot API 연동 |
-| `state_monitor_node` | `_evaluate()` | 성공/실패 판단 기준 구현 |
+| 파일 | 미구현 항목 | 선행 조건 |
+|------|------------|----------|
+| `camera_node.py` | `PlaceholderAdapter.get_frames()` | 카메라 기종 확정 |
+| `vlm_node.py` | `_run_inference()` | Part C 완료 |
+| `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
+| `state_monitor_node.py` | `_evaluate()` | 성공/실패 기준 확정 |
+| `record_with_vlm.py` | 카메라 채널 추가 | 카메라 기종 확정 |
