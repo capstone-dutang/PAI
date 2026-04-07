@@ -20,6 +20,26 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 | Python | 3.10 |
 | 빌드 시스템 | ament_python |
 
+'''
+~/
+├── ros2_ws/
+│   └── src/
+│       └── robot_arm_pkg/
+│
+├── models/
+│   ├── vlm/
+│   │   └── vlm_qwen3.5_4b_q4.gguf
+│   └── act/
+│       └── act_policy.trt
+│
+├── calibration/
+│   ├── camera_intrinsics.yaml
+│   └── camera_robot_transform.yaml
+│
+└── llama.cpp/
+    └── llama-server
+'''
+
 ### 외부 PC (학습 / Isaac Sim)
 
 | 항목 | 내용 |
@@ -75,7 +95,7 @@ TensorRT는 pip만으로 설치되지 않습니다. NVIDIA 공식 가이드를 �
 
 ---
 
-## 패키지 구조
+## ROS2 패키지 구조
 
 ```
 ros2_ws/
