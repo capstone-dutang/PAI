@@ -10,6 +10,9 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/scripts', ['scripts/record_with_vlm.py']),
+        ('share/' + package_name + '/launch',  ['launch/calibration.launch.py']),
+        # urdf/so101.urdf 파일을 배치한 뒤 아래 주석 해제
+        # ('share/' + package_name + '/urdf', ['urdf/so101.urdf']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
