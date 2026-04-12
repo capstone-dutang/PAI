@@ -83,7 +83,7 @@ Part A  하드웨어 세팅 (카메라 캘리브레이션)
 
 | 항목 | 내용 |
 |------|------|
-| 카메라 | RGB-D 센서 (미확정) |
+| 카메라 | Intel RealSense (RGB-D) |
 | 로봇 팔 | SO-101 (HuggingFace LeRobot) |
 | 리더 팔 | SO-101 Leader (데이터 수집 시 사용) |
 
@@ -97,7 +97,9 @@ Part A  하드웨어 세팅 (카메라 캘리브레이션)
 sudo apt install ros-humble-rclpy \
                  ros-humble-sensor-msgs \
                  ros-humble-std-msgs \
-                 ros-humble-geometry-msgs
+                 ros-humble-geometry-msgs \
+                 ros-humble-realsense2-camera \
+                 ros-humble-realsense2-description
 ```
 
 ### Python 패키지
@@ -223,6 +225,86 @@ ros2 topic pub /task_command std_msgs/String "data: 'pick up the red cube'"
 
 ---
 
+## 카메라-로봇 캘리브레이션 (Part A)
+
+Hand-Eye 캘리브레이션 (Eye-to-Hand 방식): 카메라 고정, SO-101 엔드이펙터에 ArUco 마커 부착.
+
+### Jetson 사전 설치
+
+```bash
+# 1. ArUco 검출 패키지
+sudo apt install ros-humble-aruco-opencv
+
+# 2. robot_state_publisher
+sudo apt install ros-humble-robot-state-publisher
+
+# 3. easy_handeye2 (소스 빌드)
+cd ~/ros2_ws/src
+git clone https://github.com/marcoesposito1988/easy_handeye2.git
+cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --packages-select easy_handeye2
+source install/setup.bash
+```
+
+### SO-101 URDF 배치
+
+```bash
+# LeRobot 저장소에서 SO-101 URDF 복사
+# 경로 예시 (LeRobot 설치 위치에 따라 다를 수 있음):
+#   ~/.local/lib/python3.10/site-packages/lerobot/robots/so101/urdf/
+cp <lerobot_urdf_path>/so101.urdf ~/ros2_ws/src/robot_arm_pkg/urdf/so101.urdf
+
+# setup.py의 urdf 주석 해제 후 재빌드
+cd ~/ros2_ws && colcon build --packages-select robot_arm_pkg
+```
+
+> URDF의 엔드이펙터 링크 이름을 확인하여 `calibration.launch.py`의
+> `robot_effector_frame` 파라미터와 일치시킬 것.
+
+### 캘리브레이션 실행
+
+```bash
+# 패키지 빌드 및 소스
+cd ~/ros2_ws
+colcon build --packages-select robot_arm_pkg
+source install/setup.bash
+
+# 캘리브레이션 launch (마커 크기 5cm 기준)
+ros2 launch robot_arm_pkg calibration.launch.py \
+  marker_id:=0 \
+  marker_size:=0.05 \
+  robot_port:=/dev/ttyACM0
+
+# 별도 터미널: rqt GUI에서 EasyHandeye2 플러그인 실행
+ros2 run rqt_gui rqt_gui --force-discover
+```
+
+### 캘리브레이션 절차
+
+1. SO-101 엔드이펙터에 ArUco 마커(ID=0, 5cm) 부착
+2. rqt → EasyHandeye2 플러그인 열기
+3. 로봇을 수동으로 이동 → 카메라가 마커를 인식하면 **Take Sample** 클릭
+4. 10~15개 포즈에서 반복 (포즈 간 충분한 회전 변화 필요)
+5. **Compute** → 변환 행렬 확인 → **Save**
+6. 결과 파일 복사:
+
+```bash
+cp ~/.ros/easy_handeye2/eye_to_hand_calibration.yaml \
+   ~/calibration/camera_robot_transform.yaml
+
+# camera_intrinsics는 RealSense camera_info 토픽에서 추출
+ros2 topic echo /camera/color/camera_info --once | \
+  python3 -c "
+import sys, yaml, rclpy
+# 또는 아래 명령으로 직접 저장:
+" 
+# 간단한 방법: camera_info 토픽을 YAML로 저장
+ros2 topic echo /camera/color/camera_info --once > ~/calibration/camera_intrinsics.yaml
+```
+
+---
+
 ## 데이터 수집 (Part D)
 
 LeRobot 네이티브 파이프라인을 사용하며, VLM의 `object_pose`를 observation에 포함하여 기록.
@@ -236,16 +318,22 @@ LeRobot 네이티브 파이프라인을 사용하며, VLM의 `object_pose`를 ob
 ### 실행 순서
 
 ```bash
-# 1. llama.cpp 서버 실행
+# 1. RealSense 드라이버 실행
+ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true
+
+# 2. camera_node 실행 (/camera/rgb, /camera/depth 발행)
+ros2 run robot_arm_pkg camera_node
+
+# 3. llama.cpp 서버 실행
 ~/llama.cpp/llama-server \
   -m ~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
   --host 0.0.0.0 --port 8080
 
-# 2. VLM 노드 실행 (/object_pose 발행)
+# 4. VLM 노드 실행 (/object_pose 발행)
 ros2 run robot_arm_pkg vlm_node \
   --ros-args -p server_url:=http://localhost:8080
 
-# 3. 데이터 수집 스크립트 실행
+# 5. 데이터 수집 스크립트 실행
 python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
   --robot-port      /dev/ttyACM0 \
   --robot-id        follower \
@@ -264,7 +352,7 @@ python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
 | `observation.object_pose` | (3,) | VLM 추론 결과 (x, y, z) |
 | `action` | (6,) | 리더 관절 값 (정답 행동) |
 
-> 카메라 채널(`observation.images.top`)은 카메라 기종 확정 후 추가 예정
+> 카메라 채널(`observation.images.top`)은 Intel RealSense `/camera/color/image_raw` 토픽을 사용
 
 ---
 
@@ -285,8 +373,8 @@ python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
 
 | 파일 | 미구현 항목 | 선행 조건 |
 |------|------------|----------|
-| `camera_node.py` | `PlaceholderAdapter.get_frames()` | 카메라 기종 확정 |
+| `camera_node.py` | ~~`PlaceholderAdapter.get_frames()`~~ 구현 완료 (ROS2 드라이버 릴레이) | - |
 | `vlm_node.py` | `_run_inference()` | Part C 완료 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
 | `state_monitor_node.py` | `_evaluate()` | 성공/실패 기준 확정 |
-| `record_with_vlm.py` | 카메라 채널 추가 | 카메라 기종 확정 |
+| `record_with_vlm.py` | ~~카메라 채널 추가~~ 구현 완료 (`observation.images.top`) | - |
