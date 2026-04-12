@@ -1,130 +1,68 @@
 """
 camera_node.py
 
-카메라 드라이버 어댑터 구조로 설계된 카메라 노드.
+Intel RealSense ROS2 드라이버(realsense2_camera)가 발행하는 토픽을 구독하여
+시스템 내부 토픽(/camera/rgb, /camera/depth)으로 릴레이하는 노드.
 
-환경:
-  Python   3.10
-  ROS2     Humble (Humboldt, 22.04 LTS)
+전제조건:
+  realsense2_camera 드라이버가 align_depth 활성화 상태로 실행 중이어야 함:
+    ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true
 
-드라이버 확정 시:
-  1. BaseCameraAdapter를 상속한 새 어댑터 클래스 구현
-  2. CameraNode.__init__() 의 self.adapter = PlaceholderAdapter() 를
-     self.adapter = YourAdapter() 로 교체
-  3. 어댑터 내부의 get_frames() 구현
+구독 토픽 (realsense2_camera 드라이버 출력):
+  /camera/color/image_raw                  (sensor_msgs/Image)
+  /camera/aligned_depth_to_color/image_raw (sensor_msgs/Image)
 
-발행 토픽:
-  /camera/rgb   (sensor_msgs/Image) — 30Hz
-  /camera/depth (sensor_msgs/Image) — 30Hz
+발행 토픽 (시스템 내부):
+  /camera/rgb   (sensor_msgs/Image)
+  /camera/depth (sensor_msgs/Image)
 """
 
 from __future__ import annotations
 
-from typing import Tuple
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+import message_filters
 
-
-# ──────────────────────────────────────────────
-# 어댑터 인터페이스 (모든 드라이버가 구현해야 함)
-# ──────────────────────────────────────────────
-
-class BaseCameraAdapter:
-    """
-    카메라 드라이버 어댑터 인터페이스.
-    드라이버 확정 시 이 클래스를 상속하여 get_frames() 를 구현.
-    """
-
-    def get_frames(self) -> Tuple[Image, Image]:
-        """
-        Returns:
-            (rgb_msg, depth_msg): sensor_msgs/Image 형식의 튜플
-        """
-        raise NotImplementedError(
-            "get_frames()를 구현해야 합니다. "
-            "드라이버 확정 후 BaseCameraAdapter를 상속하여 구현하세요."
-        )
-
-    def destroy(self) -> None:
-        """노드 종료 시 드라이버 리소스 해제. 필요 시 오버라이드."""
-        pass
-
-
-# ──────────────────────────────────────────────
-# 임시 어댑터 (드라이버 확정 전까지 사용)
-# 드라이버 확정 시 이 클래스를 실제 어댑터로 교체
-# ──────────────────────────────────────────────
-
-class PlaceholderAdapter(BaseCameraAdapter):
-    """
-    드라이버 미확정 상태의 임시 어댑터.
-    get_frames() 호출 시 NotImplementedError 발생.
-
-    드라이버 확정 시 교체 방법:
-        class RealSenseAdapter(BaseCameraAdapter):
-            def get_frames(self):
-                # pyrealsense2 등으로 프레임 취득
-                ...
-    """
-
-    def get_frames(self) -> Tuple[Image, Image]:
-        raise NotImplementedError(
-            "[PlaceholderAdapter] 카메라 드라이버가 아직 확정되지 않았습니다. "
-            "드라이버 확정 후 PlaceholderAdapter를 실제 어댑터로 교체하세요."
-        )
-
-
-# ──────────────────────────────────────────────
-# 카메라 노드
-# ──────────────────────────────────────────────
 
 class CameraNode(Node):
 
-    PUBLISH_HZ = 30.0
+    QUEUE_SIZE = 10
+    SYNC_SLOP  = 0.033  # 1프레임(30Hz) 허용 시간 오차 (초)
 
     def __init__(self):
         super().__init__('camera_node')
 
-        # ── 파라미터 ──────────────────────────────
-        # 드라이버 이름: 로깅용. 실제 분기는 어댑터 교체로 처리.
-        self.declare_parameter('camera_driver', 'placeholder')
-        driver_name = self.get_parameter('camera_driver').value
-        self.get_logger().info(f'카메라 드라이버: {driver_name}')
-
-        # ── 어댑터 초기화 ─────────────────────────
-        # TODO: 드라이버 확정 시 아래 한 줄을 교체
-        #   self.adapter = PlaceholderAdapter()
-        #   → self.adapter = RealSenseAdapter()  (예시)
-        self.adapter = PlaceholderAdapter()
-
         # ── 퍼블리셔 ──────────────────────────────
-        self.rgb_pub   = self.create_publisher(Image, '/camera/rgb',   10)
-        self.depth_pub = self.create_publisher(Image, '/camera/depth', 10)
+        self.rgb_pub   = self.create_publisher(Image, '/camera/rgb',   self.QUEUE_SIZE)
+        self.depth_pub = self.create_publisher(Image, '/camera/depth', self.QUEUE_SIZE)
 
-        # ── 타이머 ────────────────────────────────
-        self.create_timer(1.0 / self.PUBLISH_HZ, self._timer_callback)
-        self.get_logger().info(f'camera_node 시작 ({self.PUBLISH_HZ}Hz)')
+        # ── 동기화 구독 (RGB + Depth 타임스탬프 동기화) ──
+        rgb_sub = message_filters.Subscriber(
+            self, Image, '/camera/color/image_raw'
+        )
+        depth_sub = message_filters.Subscriber(
+            self, Image, '/camera/aligned_depth_to_color/image_raw'
+        )
 
-    def _timer_callback(self) -> None:
-        try:
-            rgb_msg, depth_msg = self.adapter.get_frames()
-            self.rgb_pub.publish(rgb_msg)
-            self.depth_pub.publish(depth_msg)
-        except NotImplementedError as e:
-            self.get_logger().warn(str(e), throttle_duration_sec=5.0)
-        except Exception as e:
-            self.get_logger().error(f'프레임 취득 실패: {e}')
+        self._sync = message_filters.ApproximateTimeSynchronizer(
+            [rgb_sub, depth_sub],
+            queue_size=self.QUEUE_SIZE,
+            slop=self.SYNC_SLOP,
+        )
+        self._sync.registerCallback(self._relay_callback)
 
-    def destroy_node(self) -> None:
-        self.adapter.destroy()
-        super().destroy_node()
+        self.get_logger().info(
+            'camera_node 시작\n'
+            '  구독: /camera/color/image_raw\n'
+            '        /camera/aligned_depth_to_color/image_raw\n'
+            '  발행: /camera/rgb  /camera/depth'
+        )
 
+    def _relay_callback(self, rgb_msg: Image, depth_msg: Image) -> None:
+        self.rgb_pub.publish(rgb_msg)
+        self.depth_pub.publish(depth_msg)
 
-# ──────────────────────────────────────────────
-# 엔트리포인트
-# ──────────────────────────────────────────────
 
 def main(args=None):
     rclpy.init(args=args)
