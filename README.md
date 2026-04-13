@@ -126,7 +126,8 @@ ros2_ws/
     └── robot_arm_pkg/
         ├── robot_arm_pkg/
         │   ├── camera_node.py           # RGB-D 카메라 입력
-        │   ├── vlm_node.py              # VLM 추론 (Qwen3.5-4B GGUF)
+        │   ├── vlm_node.py              # VLM 추론 (Qwen3.5-4B GGUF) → /target_class
+        │   ├── yolo_node.py             # YOLO 실시간 탐지 → /object_pose (30Hz)
         │   ├── act_node.py              # ACT Policy 추론 (LeRobot .pth)
         │   ├── robot_controller_node.py # SO-101 팔로워 모터 제어 (LeRobot SDK)
         │   └── state_monitor_node.py    # 태스크 성공/실패 판단
@@ -146,7 +147,8 @@ ros2_ws/
 | 노드 | 실행 주기 | 역할 |
 |------|-----------|------|
 | `camera_node` | 30 Hz | RGB-D 카메라 프레임 발행 |
-| `vlm_node` | 0.4 Hz | Qwen3.5-4B로 물체 3D 위치 추론 |
+| `vlm_node` | 0.4 Hz | Qwen3.5-4B로 집을 물체 클래스 결정 → `/target_class` |
+| `yolo_node` | 30 Hz | 타겟 클래스 필터링 후 3D 좌표 추론 → `/object_pose` |
 | `act_node` | 30 Hz | ACT Policy로 관절 시퀀스 예측 |
 | `robot_controller_node` | 1000 Hz | SO-101 팔로워 모터 구동 및 관절 상태 피드백 |
 | `state_monitor_node` | 10 Hz | 성공/실패 판단, 재시도 트리거 |
@@ -161,21 +163,26 @@ ros2_ws/
   ├─ /camera/rgb   (sensor_msgs/Image, 30Hz)
   └─ /camera/depth (sensor_msgs/Image, 30Hz)
       │
-      ▼
-[vlm_node] ◀── /reflection_feedback (재시도 요청)
-  └─ /object_pose (geometry_msgs/PoseStamped, 0.4Hz)
-      │
-      ▼
-[act_node] ◀── /joint_states
-  └─ /joint_command (sensor_msgs/JointState, 30Hz)
-      │
-      ▼
-[robot_controller_node]
-  └─ /joint_states (sensor_msgs/JointState, 1000Hz)
-      │
-      ▼
-[state_monitor_node]
-  └─ /reflection_feedback (std_msgs/String) ──▶ [vlm_node]
+      ├──────────────────────────┐
+      ▼                          ▼
+[vlm_node]               [yolo_node] ◀── /target_class
+◀── /reflection_feedback    └─ /object_pose (geometry_msgs/PoseStamped, 30Hz)
+  └─ /target_class                │
+     (std_msgs/String, 0.4Hz)     │
+      │                           │
+      └───────────────────────────┘
+                    │
+                    ▼
+            [act_node] ◀── /joint_states
+              └─ /joint_command (sensor_msgs/JointState, 30Hz)
+                    │
+                    ▼
+            [robot_controller_node]
+              └─ /joint_states (sensor_msgs/JointState, 1000Hz)
+                    │
+                    ▼
+            [state_monitor_node]
+              └─ /reflection_feedback (std_msgs/String) ──▶ [vlm_node]
 ```
 
 ---
@@ -201,10 +208,14 @@ ros2 run robot_arm_pkg camera_node
   -m ~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
   --host 0.0.0.0 --port 8080
 
-# VLM 노드
+# VLM 노드 (/target_class 발행)
 ros2 run robot_arm_pkg vlm_node \
   --ros-args -p model_path:=~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
              -p server_url:=http://localhost:8080
+
+# YOLO 노드 (/object_pose 30Hz 발행)
+ros2 run robot_arm_pkg yolo_node \
+  --ros-args -p model_path:=~/models/yolo/yolo_model.pt
 
 # ACT Policy (LeRobot .pth 체크포인트)
 ros2 run robot_arm_pkg act_node \
@@ -329,9 +340,13 @@ ros2 run robot_arm_pkg camera_node
   -m ~/models/vlm/vlm_qwen3.5_4b_q4.gguf \
   --host 0.0.0.0 --port 8080
 
-# 4. VLM 노드 실행 (/object_pose 발행)
+# 4. VLM 노드 실행 (/target_class 발행)
 ros2 run robot_arm_pkg vlm_node \
   --ros-args -p server_url:=http://localhost:8080
+
+# 4-1. YOLO 노드 실행 (/object_pose 발행)
+ros2 run robot_arm_pkg yolo_node \
+  --ros-args -p model_path:=~/models/yolo/yolo_model.pt
 
 # 5. 데이터 수집 스크립트 실행
 python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
@@ -374,7 +389,8 @@ python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
 | 파일 | 미구현 항목 | 선행 조건 |
 |------|------------|----------|
 | `camera_node.py` | ~~`PlaceholderAdapter.get_frames()`~~ 구현 완료 (ROS2 드라이버 릴레이) | - |
-| `vlm_node.py` | `_run_inference()` | Part C 완료 |
+| `vlm_node.py` | `_run_inference()` → `/target_class` 발행으로 변경 | Part C 완료 |
+| `yolo_node.py` | 신규 구현: `/target_class` 구독 → YOLO 탐지 → Depth 3D 변환 → `/object_pose` 발행 | - |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
 | `state_monitor_node.py` | `_evaluate()` | 성공/실패 기준 확정 |
 | `record_with_vlm.py` | ~~카메라 채널 추가~~ 구현 완료 (`observation.images.top`) | - |
