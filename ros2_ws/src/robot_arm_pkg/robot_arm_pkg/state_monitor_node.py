@@ -9,9 +9,11 @@ joint_states를 모니터링하여 태스크 성공/실패를 판단하고,
   ROS2     Humble (Humboldt, 22.04 LTS)
 
 구독 토픽:
+  /task_command (std_msgs/String)    — 태스크 시작 트리거
   /joint_states (sensor_msgs/JointState) — robot_controller 피드백
 
 발행 토픽:
+  /task_active         (std_msgs/Bool)   — 태스크 활성 여부 (yolo_node, act_node 제어)
   /reflection_feedback (std_msgs/String) — vlm_node로 재시도 요청
 
 파라미터:
@@ -28,7 +30,7 @@ from typing import Optional
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 
 
 class StateMonitorNode(Node):
@@ -49,11 +51,14 @@ class StateMonitorNode(Node):
         self._retry_count:    int                  = 0
         self._task_start_sec: Optional[float]      = None
         self._latest_joints:  Optional[JointState] = None
+        self._task_active:    bool                 = False
 
         # ── 구독 ──────────────────────────────────
-        self.create_subscription(JointState, '/joint_states', self._joints_callback, 10)
+        self.create_subscription(String,     '/task_command', self._task_command_callback, 10)
+        self.create_subscription(JointState, '/joint_states', self._joints_callback,       10)
 
         # ── 발행 ──────────────────────────────────
+        self.active_pub   = self.create_publisher(Bool,   '/task_active',        10)
         self.feedback_pub = self.create_publisher(String, '/reflection_feedback', 10)
 
         # ── 모니터 타이머 (10Hz) ──────────────────
@@ -68,14 +73,31 @@ class StateMonitorNode(Node):
 
     # ── 구독 콜백 ─────────────────────────────────
 
+    def _task_command_callback(self, msg: String) -> None:
+        """태스크 명령 수신 → 태스크 시작. 이전 상태를 초기화하고 task_active=True 발행."""
+        self.get_logger().info(f'태스크 시작: {msg.data!r}')
+        self._retry_count    = 0
+        self._task_start_sec = time.time()
+        self._latest_joints  = None
+        self._task_active    = True
+        self._publish_active(True)
+
     def _joints_callback(self, msg: JointState) -> None:
-        if self._task_start_sec is None:
-            self._task_start_sec = time.time()
         self._latest_joints = msg
+
+    # ── 발행 헬퍼 ────────────────────────────────
+
+    def _publish_active(self, active: bool) -> None:
+        msg = Bool()
+        msg.data = active
+        self.active_pub.publish(msg)
 
     # ── 모니터 콜백 (10Hz) ────────────────────────
 
     def _monitor_callback(self) -> None:
+        if not self._task_active:
+            return
+
         if self._latest_joints is None or self._task_start_sec is None:
             return
 
@@ -83,6 +105,7 @@ class StateMonitorNode(Node):
 
         if elapsed > self.timeout_sec:
             self.get_logger().warn(f'태스크 타임아웃 ({elapsed:.1f}s)')
+            self._publish_active(False)
             self._handle_failure(reason='timeout')
             return
 
@@ -90,6 +113,7 @@ class StateMonitorNode(Node):
 
         if result == 'success':
             self.get_logger().info('태스크 성공')
+            self._publish_active(False)
             self._reset()
         elif result == 'failure':
             self.get_logger().warn('태스크 실패 감지')
@@ -120,6 +144,7 @@ class StateMonitorNode(Node):
             self.get_logger().error(
                 f'최대 재시도 횟수 초과 ({self.max_retry}회). 태스크 중단.'
             )
+            self._publish_active(False)
             self._reset()
             return
 
@@ -137,6 +162,7 @@ class StateMonitorNode(Node):
         self._retry_count    = 0
         self._task_start_sec = None
         self._latest_joints  = None
+        self._task_active    = False
 
 
 # ──────────────────────────────────────────────
