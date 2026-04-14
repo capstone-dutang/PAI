@@ -1,22 +1,22 @@
 Software part of jetson-stats 4.3.2 - (c) 2024, Raffaello Bonghi
-[91m[1mJetpack missing![0m[0m
- - Model: [1mNVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super[0m
- - L4T: [1m36.4.7[0m
-[92m[1mNV Power Mode[0m[0m[[1m0[0m]: [1m15W[0m
-[92m[1mSerial Number:[0m[0m [XXX Show with: jetson_release -s XXX]
-[92m[1mHardware:[0m[0m
- - [1mP-Number[0m: p3767-0005
- - [1mModule[0m: NVIDIA Jetson Orin Nano (Developer kit)
-[92m[1mPlatform:[0m[0m
- - [1mDistribution[0m: Ubuntu 22.04 Jammy Jellyfish
- - [1mRelease[0m: 5.15.148-tegra
-[92m[1mjtop:[0m[0m
- - [1mVersion[0m: 4.3.2
- - [1mService[0m: [92mActive[0m
-[92m[1mLibraries:[0m[0m
- - [1mCUDA[0m: 12.6.68
- - [1mcuDNN[0m: 9.3.0.75
- - [1mTensorRT[0m: 10.3.0.30
- - [1mVPI[0m: 3.2.4
- - [1mVulkan[0m: 1.3.204
- - [1mOpenCV[0m: 4.8.0 - with CUDA: [91mNO[0m
+Jetpack missing!
+ - Model: NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super
+ - L4T: 36.4.7
+NV Power Mode[0]: 15W
+Serial Number: [XXX Show with: jetson_release -s XXX]
+Hardware:
+ - P-Number: p3767-0005
+ - Module: NVIDIA Jetson Orin Nano (Developer kit)
+Platform:
+ - Distribution: Ubuntu 22.04 Jammy Jellyfish
+ - Release: 5.15.148-tegra
+jtop:
+ - Version: 4.3.2
+ - Service: Active
+Libraries:
+ - CUDA: 12.6.68
+ - cuDNN: 9.3.0.75
+ - TensorRT: 10.3.0.30
+ - VPI: 3.2.4
+ - Vulkan: 1.3.204
+ - OpenCV: 4.8.0 - with CUDA: NO
