@@ -89,53 +89,78 @@ Part A  하드웨어 세팅 (카메라 캘리브레이션)
 
 ---
 
-## 소프트웨어 의존성
+## Jetson 환경 설치
 
-### ROS2 패키지
+저장소 루트의 스크립트로 환경을 구성합니다.
 
-```bash
-sudo apt install ros-humble-rclpy \
-                 ros-humble-sensor-msgs \
-                 ros-humble-std-msgs \
-                 ros-humble-geometry-msgs \
-                 ros-humble-realsense2-camera \
-                 ros-humble-realsense2-description
-```
-
-### Python 패키지
+| 스크립트 | 대상 작업 |
+|----------|-----------|
+| `scripts/setup_jetson_base.sh` | 모방 데이터 수집 (Part D), 실제 로봇 구동 (Part F) |
+| `scripts/setup_calibration.sh` | 카메라 캘리브레이션 (Part A) — base 설치 후 실행 |
 
 ```bash
-pip install -r ros2_ws/src/robot_arm_pkg/requirements.txt
+# 1. 기본 환경 설치 (Part D, F 공통)
+chmod +x scripts/setup_jetson_base.sh
+./scripts/setup_jetson_base.sh
+
+# 2. 캘리브레이션 환경 추가 설치 (Part A, 필요 시)
+chmod +x scripts/setup_calibration.sh
+./scripts/setup_calibration.sh
 ```
+
+### 소프트웨어 의존성 상세
+
+#### apt 패키지
+
+| 패키지 | 설치 스크립트 | 용도 |
+|--------|--------------|------|
+| `python3-opencv`, `libopencv-dev` | base, calibration | OpenCV |
+| `ros-humble-realsense2-camera/description` | base | RealSense 드라이버 |
+| `ros-humble-message-filters` | base | 카메라 토픽 동기화 |
+| `ros-humble-cv-bridge` | base | ROS2 ↔ OpenCV 변환 |
+| `ros-humble-robot-state-publisher` | calibration | URDF → TF |
+| `ros-humble-rqt`, `ros-humble-rqt-gui` | calibration | EasyHandeye2 GUI |
+| `aruco_opencv` (소스 빌드) | calibration | ArUco 마커 검출 |
+| `easy_handeye2` (소스 빌드) | calibration | Hand-Eye 캘리브레이션 |
+
+#### Python 패키지 (`requirements.txt`)
 
 | 패키지 | 버전 | 용도 |
 |--------|------|------|
 | setuptools | ≥58.2.0 | ROS2 Humble 빌드 호환 |
 | numpy | ≥1.21.0 | 이미지/텐서 데이터 처리 |
-| torch | ≥2.0.0 | ACT Policy 추론 |
+| Pillow | - | 카메라 이미지 처리 |
 | requests | ≥2.28.0 | llama.cpp 서버 HTTP 통신 |
-| lerobot | 0.4.4 | SO-101 모터 제어 SDK, 데이터 수집, ACT 학습 |
+| torch | ≥2.0.0 | ACT Policy 추론, SO-101 모터 제어 |
+| lerobot | 0.4.4 | SO-101 SDK, LeRobotDataset, ACTPolicy |
+| ultralytics | ≥8.0.0 | YOLOv8n 탐지 (yolo_node) |
+| PyYAML | ≥6.0 | camera_robot_transform.yaml 파싱 (yolo_node) |
 
 ---
 
 ## ROS2 패키지 구조
 
 ```
-ros2_ws/
-└── src/
-    └── robot_arm_pkg/
-        ├── robot_arm_pkg/
-        │   ├── camera_node.py           # RGB-D 카메라 입력
-        │   ├── vlm_node.py              # VLM 추론 (Qwen3.5-4B GGUF) → /target_class
-        │   ├── yolo_node.py             # YOLO 실시간 탐지 → /object_pose (30Hz)
-        │   ├── act_node.py              # ACT Policy 추론 (LeRobot .pth)
-        │   ├── robot_controller_node.py # SO-101 팔로워 모터 제어 (LeRobot SDK)
-        │   └── state_monitor_node.py    # 태스크 성공/실패 판단
-        ├── scripts/
-        │   └── record_with_vlm.py       # 데이터 수집 스크립트 (Part D)
-        ├── package.xml
-        ├── setup.py
-        └── requirements.txt
+PAI/
+├── scripts/
+│   ├── setup_jetson_base.sh             # 기본 환경 설치 (Part D, F)
+│   └── setup_calibration.sh             # 캘리브레이션 환경 설치 (Part A)
+│
+└── ros2_ws/
+    └── src/
+        └── robot_arm_pkg/
+            ├── robot_arm_pkg/
+            │   ├── camera_node.py           # RGB-D 카메라 입력
+            │   ├── vlm_node.py              # VLM 추론 (Qwen3.5-4B GGUF) → /target_class
+            │   ├── yolo_node.py             # YOLO 실시간 탐지 → /object_pose (30Hz)
+            │   ├── act_node.py              # ACT Policy 추론 (LeRobot .pth)
+            │   ├── robot_controller_node.py # SO-101 팔로워 모터 제어 (LeRobot SDK)
+            │   └── state_monitor_node.py    # 태스크 성공/실패 판단
+            ├── scripts/
+            │   └── record_with_vlm.py       # 데이터 수집 스크립트 (Part D)
+            ├── package.xml
+            ├── setup.py
+            └── requirements.txt
 ```
 
 ---
@@ -156,33 +181,34 @@ ros2_ws/
 ### 토픽 구조
 
 ```
-/task_command  (std_msgs/String)        ← 사용자 입력
-      │
-      ▼
-[camera_node]
-  ├─ /camera/rgb   (sensor_msgs/Image, 30Hz)
-  └─ /camera/depth (sensor_msgs/Image, 30Hz)
-      │
-      ├──────────────────────────┐
-      ▼                          ▼
-[vlm_node]               [yolo_node] ◀── /target_class
-◀── /reflection_feedback    └─ /object_pose (geometry_msgs/PoseStamped, 30Hz)
-  └─ /target_class                │
-     (std_msgs/String, 0.4Hz)     │
-      │                           │
-      └───────────────────────────┘
-                    │
-                    ▼
-            [act_node] ◀── /joint_states
-              └─ /joint_command (sensor_msgs/JointState, 30Hz)
-                    │
-                    ▼
-            [robot_controller_node]
-              └─ /joint_states (sensor_msgs/JointState, 1000Hz)
-                    │
-                    ▼
-            [state_monitor_node]
-              └─ /reflection_feedback (std_msgs/String) ──▶ [vlm_node]
+사용자
+  └─ /task_command (std_msgs/String)
+        │
+        ├──────────────────────────────────────────────────▶ [state_monitor_node]
+        │                                                         │  └─ /task_active (std_msgs/Bool)
+        │                                                         │        │
+        ▼                                                         │        ├──▶ [vlm_node]
+[vlm_node] ◀── /reflection_feedback ◀─────────────────────────── │        ├──▶ [yolo_node]
+  └─ /target_class (std_msgs/String, 0.4Hz)                       │        └──▶ [act_node]
+        │                                                         │
+        ▼                                                         │
+[camera_node]                                                     │
+  ├─ /camera/rgb   (sensor_msgs/Image, 30Hz)                      │
+  └─ /camera/depth (sensor_msgs/Image, 30Hz)                      │
+        │                                                         │
+        ├─────────────────────────────────────────────────────────┤
+        ▼                                                         │
+[yolo_node] ◀── /target_class                                     │
+  └─ /object_pose (geometry_msgs/PoseStamped, base_link, 30Hz)   │
+        │                                                         │
+        ▼                                                         │
+[act_node] ◀── /joint_states ◀────────────────────────────────────┤
+  └─ /joint_command (sensor_msgs/JointState, 30Hz)               │
+        │                                                         │
+        ▼                                                         │
+[robot_controller_node]                                           │
+  └─ /joint_states (sensor_msgs/JointState, 1000Hz) ─────────────┘
+                                                     (state_monitor도 구독)
 ```
 
 ---
@@ -243,20 +269,11 @@ Hand-Eye 캘리브레이션 (Eye-to-Hand 방식): 카메라 고정, SO-101 엔�
 ### Jetson 사전 설치
 
 ```bash
-# 1. ArUco 검출 패키지
-sudo apt install ros-humble-aruco-opencv
-
-# 2. robot_state_publisher
-sudo apt install ros-humble-robot-state-publisher
-
-# 3. easy_handeye2 (소스 빌드)
-cd ~/ros2_ws/src
-git clone https://github.com/marcoesposito1988/easy_handeye2.git
-cd ~/ros2_ws
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --packages-select easy_handeye2
-source install/setup.bash
+# setup_jetson_base.sh 실행 후 아래 스크립트 실행
+./scripts/setup_calibration.sh
 ```
+
+aruco_opencv, easy_handeye2 소스 빌드 및 관련 apt 패키지가 자동으로 설치됩니다.
 
 ### SO-101 URDF 배치
 
@@ -364,7 +381,7 @@ python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
 | 채널 | shape | 내용 |
 |------|-------|------|
 | `observation.state` | (6,) | 팔로워 관절 위치 (SO-101 6축) |
-| `observation.object_pose` | (3,) | VLM 추론 결과 (x, y, z) |
+| `observation.object_pose` | (3,) | YOLO 추론 결과 — robot base_link frame 3D 좌표 (x, y, z) |
 | `action` | (6,) | 리더 관절 값 (정답 행동) |
 
 > 카메라 채널(`observation.images.top`)은 Intel RealSense `/camera/color/image_raw` 토픽을 사용
@@ -389,8 +406,8 @@ python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
 | 파일 | 미구현 항목 | 선행 조건 |
 |------|------------|----------|
 | `camera_node.py` | ~~`PlaceholderAdapter.get_frames()`~~ 구현 완료 (ROS2 드라이버 릴레이) | - |
-| `vlm_node.py` | `_run_inference()` → `/target_class` 발행으로 변경 | Part C 완료 |
-| `yolo_node.py` | 신규 구현: `/target_class` 구독 → YOLO 탐지 → Depth 3D 변환 → `/object_pose` 발행 | - |
+| `vlm_node.py` | `_run_inference()` 구현 (llama.cpp 서버 HTTP 통신, 응답 파싱) | Part C 완료 |
+| `yolo_node.py` | YOLO 모델 학습/변환 후 `model_path` 파라미터 지정 (코드 구현 완료) | YOLO 모델 준비 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
 | `state_monitor_node.py` | `_evaluate()` | 성공/실패 기준 확정 |
 | `record_with_vlm.py` | ~~카메라 채널 추가~~ 구현 완료 (`observation.images.top`) | - |
