@@ -1,7 +1,7 @@
 """
 record_with_vlm.py
 
-LeRobot record 루프를 커스터마이징하여 VLM의 object_pose와
+LeRobot record 루프를 커스터마이징하여 YOLO의 object_pose와
 카메라 이미지(observation.images.top)를 observation에 포함시키는 데이터 수집 스크립트.
 
 실행 환경:
@@ -12,15 +12,21 @@ LeRobot record 루프를 커스터마이징하여 VLM의 object_pose와
 전제조건:
   1. realsense2_camera 드라이버 실행 중:
        ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true
-  2. camera_node 실행 중 (/camera/rgb 발행):
+  2. camera_node 실행 중 (/camera/rgb, /camera/depth 발행):
        ros2 run robot_arm_pkg camera_node
-  3. vlm_node 실행 중 (/object_pose 발행):
+  3. llama.cpp 서버 실행 중 (vlm_node 추론용):
+       ~/llama.cpp/llama-server -m ~/models/vlm/vlm_qwen3.5_4b_q4.gguf --host 0.0.0.0 --port 8080
+  4. vlm_node 실행 중 (/target_class 발행):
        ros2 run robot_arm_pkg vlm_node --ros-args -p server_url:=http://localhost:8080
-  4. SO-101 팔로워/리더 USB 포트 확인
-  5. LeRobot 캘리브레이션 완료 (lerobot-calibrate)
+  5. yolo_node 실행 중 (/object_pose 30Hz 발행):
+       ros2 run robot_arm_pkg yolo_node --ros-args -p model_path:=~/models/yolo/yolo_model.pt
+  6. SO-101 팔로워/리더 USB 포트 확인
+  7. LeRobot 캘리브레이션 완료 (lerobot-calibrate)
 
 동작 방식:
-  - SensorCache 노드가 /object_pose(0.4Hz)와 /camera/rgb(30Hz)를 구독하여
+  - 스크립트 시작 시 /task_command 와 /task_active=True 를 발행하여
+    vlm_node(추론 시작)와 yolo_node(탐지 시작)를 활성화함
+  - SensorCache 노드가 /object_pose(30Hz)와 /camera/rgb(30Hz)를 구독하여
     최신 값을 캐싱함
   - record 루프(30Hz)가 매 프레임마다 캐시에서 최신 값을 읽어 데이터셋에 삽입
   - pose 미수신 프레임: zero tensor (shape: [3]) 삽입
@@ -51,6 +57,7 @@ from rclpy.node import Node
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, String
 from PIL import Image as PILImage
 
 # LeRobot 0.4.4 기준 경로
@@ -67,7 +74,8 @@ class SensorCache(Node):
     """
     /object_pose 와 /camera/rgb 를 구독하여 최신 값을 캐싱하는 ROS2 노드.
 
-    VLM(0.4Hz)과 카메라(30Hz)의 주기 차이를 캐싱으로 처리.
+    데이터 수집 시작 시 /task_command 와 /task_active=True 를 발행하여
+    vlm_node(추론)와 yolo_node(탐지)를 활성화한다.
     미수신 시 각각 zero tensor / 검정 이미지 반환.
     """
 
@@ -77,22 +85,29 @@ class SensorCache(Node):
         self._image_height = image_height
         self._image_width  = image_width
 
-        # VLM pose 상태
+        # YOLO pose 상태
         self._latest_pose: torch.Tensor     = torch.zeros(3)
         self._pose_received: bool           = False
 
         # 카메라 이미지 상태
         self._latest_image: Optional[PILImage.Image] = None
 
+        # 구독
         self.create_subscription(
             PoseStamped, '/object_pose', self._pose_callback, 10
         )
         self.create_subscription(
             Image, '/camera/rgb', self._image_callback, 10
         )
+
+        # 발행 — vlm_node / yolo_node 활성화용
+        self._task_cmd_pub    = self.create_publisher(String, '/task_command', 10)
+        self._task_active_pub = self.create_publisher(Bool,   '/task_active',  10)
+
         self.get_logger().info(
             'SensorCache 시작\n'
-            '  구독: /object_pose, /camera/rgb'
+            '  구독: /object_pose, /camera/rgb\n'
+            '  발행: /task_command, /task_active'
         )
 
     # ── 콜백 ──────────────────────────────────
@@ -134,6 +149,34 @@ class SensorCache(Node):
     @property
     def has_image(self) -> bool:
         return self._latest_image is not None
+
+    # ── 태스크 제어 ───────────────────────────
+
+    def start_task(self, task: str) -> None:
+        """
+        /task_command 와 /task_active=True 발행.
+
+        vlm_node가 추론을 시작하고 yolo_node가 /object_pose 발행을 시작하도록
+        트리거한다. 에피소드 루프 진입 전 한 번만 호출한다.
+        """
+        cmd_msg = String()
+        cmd_msg.data = task
+        self._task_cmd_pub.publish(cmd_msg)
+
+        active_msg = Bool()
+        active_msg.data = True
+        self._task_active_pub.publish(active_msg)
+
+        self.get_logger().info(
+            f'/task_command={task!r}, /task_active=True 발행 → vlm_node/yolo_node 활성화'
+        )
+
+    def stop_task(self) -> None:
+        """/task_active=False 발행 — 수집 종료 시 yolo_node 탐지 중단."""
+        active_msg = Bool()
+        active_msg.data = False
+        self._task_active_pub.publish(active_msg)
+        self.get_logger().info('/task_active=False 발행 → yolo_node 탐지 중단')
 
 
 # ──────────────────────────────────────────────
@@ -221,6 +264,15 @@ def record_with_vlm(
     print(f'  FPS: {fps}')
     print(f'  이미지 해상도: {image_width}x{image_height}')
 
+    # ── vlm_node / yolo_node 활성화 ───────────
+    # publisher가 subscriber에 연결될 때까지 잠시 대기 후 발행
+    time.sleep(0.5)
+    sensor_cache.start_task(single_task)
+    # vlm_node가 첫 번째 /target_class를 발행하고
+    # yolo_node가 /object_pose를 발행하기까지 여유 시간 확보
+    print('[record_with_vlm] vlm_node / yolo_node 활성화 대기 중 (3s)...')
+    time.sleep(3.0)
+
     try:
         for episode_idx in range(num_episodes):
             print(f'\n[에피소드 {episode_idx + 1}/{num_episodes}] 워밍업 {warmup_time_s}s...')
@@ -229,7 +281,7 @@ def record_with_vlm(
             if not sensor_cache.has_pose:
                 print(
                     '[경고] /object_pose 미수신. '
-                    'vlm_node가 실행 중인지 확인하세요. zero tensor로 기록합니다.'
+                    'yolo_node가 실행 중인지 확인하세요. zero tensor로 기록합니다.'
                 )
             if not sensor_cache.has_image:
                 print(
@@ -274,6 +326,7 @@ def record_with_vlm(
                 time.sleep(reset_time_s)
 
     finally:
+        sensor_cache.stop_task()
         stop_event.set()
         robot.disconnect()
         teleop.disconnect()
