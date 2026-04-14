@@ -15,15 +15,18 @@ setuptools>=58.2.0   # ROS2 Humble 호환 버전
 
 # ── 공통 ─────────────────────────────────────────────────────
 numpy>=1.21.0        # 이미지/텐서 데이터 처리 (act_node, vlm_node)
+Pillow               # PIL.Image — record_with_vlm.py 카메라 이미지 처리
 
 # ── vlm_node: llama.cpp 서버 HTTP 통신 ───────────────────────
 requests>=2.28.0     # HTTP POST → llama.cpp 서버
 
-# ── act_node: TensorRT 추론 ───────────────────────────────────
-# TensorRT는 NVIDIA 공식 경로로 별도 설치 필요:
-#   https://docs.nvidia.com/deeplearning/tensorrt/install-guide
-# 설치 후 Python 바인딩은 아래 패키지로 사용 가능:
-tensorrt             # NVIDIA TensorRT Python 바인딩
+# ── act_node / robot_controller_node: PyTorch 추론 ───────────
+# LeRobot ACTPolicy(.pth)를 torch로 직접 추론 (TensorRT 미사용)
+torch>=2.0.0         # act_node, robot_controller_node
+
+# ── yolo_node: YOLO 실시간 탐지 ──────────────────────────────
+ultralytics>=8.0.0   # YOLOv8n 탐지 (TensorRT .engine 또는 .pt)
+PyYAML>=6.0          # camera_robot_transform.yaml 파싱
 
 # ── robot_controller_node: LeRobot API ───────────────────────
-lerobot              # HuggingFace LeRobot (모터 제어 API)
+lerobot==0.4.4       # HuggingFace LeRobot (모터 제어 API, ACTPolicy)
