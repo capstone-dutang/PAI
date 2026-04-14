@@ -2,7 +2,7 @@
 act_node.py
 
 LeRobot ACT Policy (.pth 체크포인트) 로 관절 시퀀스를 추론하는 노드.
-VLM이 발행한 object_pose를 캐싱하고, 30Hz로 joint_command를 발행.
+yolo_node가 발행한 object_pose를 캐싱하고, 30Hz로 joint_command를 발행.
 
 환경:
   Python   3.10
@@ -12,8 +12,10 @@ VLM이 발행한 object_pose를 캐싱하고, 30Hz로 joint_command를 발행.
 구독 토픽:
   /camera/rgb    (sensor_msgs/Image)
   /camera/depth  (sensor_msgs/Image)
-  /object_pose   (geometry_msgs/PoseStamped) — vlm_node에서 수신, 캐싱
-  /joint_states  (sensor_msgs/JointState)    — robot_controller 피드백
+  /target_class  (std_msgs/String)            — vlm_node: 타겟 클래스 변경 시 chunk 리셋
+  /object_pose   (geometry_msgs/PoseStamped)  — yolo_node: 최신 위치 캐싱만 (chunk 유지)
+  /joint_states  (sensor_msgs/JointState)     — robot_controller 피드백
+  /task_active   (std_msgs/Bool)              — state_monitor: 태스크 활성 여부
 
 발행 토픽:
   /joint_command (sensor_msgs/JointState)    — 30Hz
@@ -27,7 +29,7 @@ observation 구성 (학습 시와 동일해야 함):
   observation.image        — RGB 이미지 텐서
   observation.depth        — Depth 맵 텐서
   observation.state        — 관절 상태 텐서 (6축, SO-101 순서)
-  observation.object_pose  — VLM 추론 결과 (x, y, z)
+  observation.object_pose  — YOLO 추론 결과 (x, y, z)
 
 TODO (Part E 완료 후 구현):
   _load_policy()  — 체크포인트 로드 및 normalizer 설정 확인
@@ -43,6 +45,7 @@ import torch
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, JointState
+from std_msgs.msg import String, Bool
 from geometry_msgs.msg import PoseStamped
 
 # SO-101 관절 이름 — robot_controller_node.py 와 동일한 순서 유지
@@ -77,7 +80,7 @@ class ACTNode(Node):
         # ── 입력 캐시 ─────────────────────────────
         self._latest_rgb:    Optional[Image]       = None
         self._latest_depth:  Optional[Image]       = None
-        self._latest_pose:   Optional[PoseStamped] = None  # VLM 결과 캐싱
+        self._latest_pose:   Optional[PoseStamped] = None  # YOLO 결과 캐싱
         self._latest_joints: Optional[JointState]  = None
 
         # chunk 실행 상태
@@ -86,11 +89,17 @@ class ACTNode(Node):
         self._chunk:     Optional[List[JointState]] = None
         self._chunk_idx: int                        = 0
 
+        # ── 태스크 상태 ───────────────────────────
+        self._task_active:         bool            = False
+        self._current_target_class: Optional[str] = None  # chunk 리셋 판단용
+
         # ── 구독 ──────────────────────────────────
-        self.create_subscription(Image,       '/camera/rgb',   self._rgb_callback,    10)
-        self.create_subscription(Image,       '/camera/depth', self._depth_callback,  10)
-        self.create_subscription(PoseStamped, '/object_pose',  self._pose_callback,   10)
-        self.create_subscription(JointState,  '/joint_states', self._joints_callback, 10)
+        self.create_subscription(Image,       '/camera/rgb',    self._rgb_callback,           10)
+        self.create_subscription(Image,       '/camera/depth',  self._depth_callback,         10)
+        self.create_subscription(String,      '/target_class',  self._target_class_callback,  10)
+        self.create_subscription(PoseStamped, '/object_pose',   self._pose_callback,          10)
+        self.create_subscription(JointState,  '/joint_states',  self._joints_callback,        10)
+        self.create_subscription(Bool,        '/task_active',   self._task_active_callback,   10)
 
         # ── 발행 ──────────────────────────────────
         self.cmd_pub = self.create_publisher(JointState, '/joint_command', 10)
@@ -133,16 +142,36 @@ class ACTNode(Node):
     def _depth_callback(self, msg: Image) -> None:
         self._latest_depth = msg
 
+    def _target_class_callback(self, msg: String) -> None:
+        """
+        타겟 클래스 변경 시에만 chunk를 리셋.
+        YOLO가 30Hz로 /object_pose를 발행하므로 pose 수신마다 리셋하면
+        ACT가 chunk를 절대 실행하지 못함 — 클래스 변경 시에만 재계획.
+        """
+        if self._current_target_class != msg.data:
+            self.get_logger().info(
+                f'target_class 변경: {self._current_target_class!r} → {msg.data!r} '
+                f'→ chunk 리셋'
+            )
+            self._current_target_class = msg.data
+            self._chunk     = None
+            self._chunk_idx = 0
+
     def _pose_callback(self, msg: PoseStamped) -> None:
         """
-        VLM이 발행한 물체 위치 수신.
-        새 pose 수신 시 chunk를 새로 예측.
+        YOLO가 발행한 물체 위치 수신.
+        최신 위치만 캐싱 — chunk는 유지 (target_class 변경 시에만 리셋).
         """
         self._latest_pose = msg
-        self.get_logger().info('새 object_pose 수신 → 다음 주기에 chunk 재예측')
-        # 새 pose가 오면 현재 chunk 리셋 → 다음 타이머에서 재예측
-        self._chunk     = None
-        self._chunk_idx = 0
+
+    def _task_active_callback(self, msg: Bool) -> None:
+        """태스크 활성 상태 수신. False가 되면 chunk를 초기화."""
+        if self._task_active and not msg.data:
+            self.get_logger().info('태스크 비활성화 → chunk 초기화')
+            self._chunk                = None
+            self._chunk_idx            = 0
+            self._current_target_class = None
+        self._task_active = msg.data
 
     def _joints_callback(self, msg: JointState) -> None:
         self._latest_joints = msg
@@ -150,6 +179,9 @@ class ACTNode(Node):
     # ── 타이머 콜백 (30Hz) ────────────────────────
 
     def _timer_callback(self) -> None:
+        if not self._task_active:
+            return
+
         if self._latest_pose is None:
             self.get_logger().warn('/object_pose 미수신, 대기 중', throttle_duration_sec=5.0)
             return
