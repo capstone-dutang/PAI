@@ -24,6 +24,7 @@ setup(
         'console_scripts': [
             'camera_node           = robot_arm_pkg.camera_node:main',
             'vlm_node              = robot_arm_pkg.vlm_node:main',
+            'yolo_node             = robot_arm_pkg.yolo_node:main',
             'act_node              = robot_arm_pkg.act_node:main',
             'robot_controller_node = robot_arm_pkg.robot_controller_node:main',
             'state_monitor_node    = robot_arm_pkg.state_monitor_node:main',
