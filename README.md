@@ -9,18 +9,25 @@ RGB-D 카메라로 물체를 인식하고, VLM이 3D 위치를 추론한 뒤 ACT
 ```
 Part A  하드웨어 세팅 (카메라 캘리브레이션)
   │
-  ├─▶ Part B  Isaac Sim 합성 데이터 생성
+  ├─▶ Part B  Isaac Sim 합성 데이터 생성 (외부 PC)
+  │     ├─ B-1  VLM 학습용 합성 이미지/라벨 생성
+  │     │         → Part C 입력
+  │     └─ B-2  ACT 학습용 시연 데이터 생성 (스크립트 IK 전문가 + DR)
+  │               pre_grasp → grasp → lift → place 4단계 waypoints
+  │               → Sim LeRobotDataset (대량, ~1000 에피소드)
   │     │
   │     ▼
   │   Part C  VLM LoRA 파인튜닝 (외부 PC)
   │     │         → vlm_qwen3.5_4b_q4.gguf
   │     │
   │     ▼
-  │   Part D  시연 데이터 수집 (Jetson) ← VLM 실시간 구동 필요
+  │   Part D  실제 시연 데이터 수집 (Jetson, 축소 운영) ← VLM 실시간 구동 필요
   │             record_with_vlm.py 사용
-  │             → LeRobot dataset (observation.state + object_pose + action)
+  │             → Real LeRobotDataset (소량, 50~100 에피소드)
+  │             (observation.state + object_pose + action)
   │
-  └─▶ Part E  ACT 모방학습 (외부 PC, LeRobot)
+  └─▶ Part E  ACT Co-training (외부 PC, LeRobot 0.4.4 멀티 데이터셋)
+                Sim dataset (B-2) + Real dataset (D) 공동 학습
                 → act_policy.pth
                     │
                     ▼
@@ -28,9 +35,15 @@ Part A  하드웨어 세팅 (카메라 캘리브레이션)
                     │
                     ▼
               Part G  Isaac Sim 시뮬레이션 검증 및 비교 실험
+                      (학습에 쓰지 않은 DR 파라미터로 held-out 평가)
 ```
 
 > Part C 완료 후 Part D 시작 가능 (데이터 수집 중 VLM 실시간 구동 필요)
+>
+> Part E는 Part B-2(Sim)와 Part D(Real) 두 데이터셋이 모두 준비된 후 시작.
+> ACT는 Sim-to-Real Co-training 방식으로 학습하며, Sim-only/Real-only가 아님.
+> Sim 측 Domain Randomization: 조명·텍스처·카메라 FOV, 질량·마찰·PD 게인,
+> joint/이미지/depth 노이즈. Sim action space는 실기와 동일하게 position control.
 
 ---
 
@@ -95,17 +108,17 @@ Part A  하드웨어 세팅 (카메라 캘리브레이션)
 
 | 스크립트 | 대상 작업 |
 |----------|-----------|
-| `scripts/setup_jetson_base.sh` | 모방 데이터 수집 (Part D), 실제 로봇 구동 (Part F) |
-| `scripts/setup_calibration.sh` | 카메라 캘리브레이션 (Part A) — base 설치 후 실행 |
+| `deploy/scripts/setup_jetson_base.sh` | 모방 데이터 수집 (Part D), 실제 로봇 구동 (Part F) |
+| `deploy/scripts/setup_calibration.sh` | 카메라 캘리브레이션 (Part A) — base 설치 후 실행 |
 
 ```bash
 # 1. 기본 환경 설치 (Part D, F 공통)
-chmod +x scripts/setup_jetson_base.sh
-./scripts/setup_jetson_base.sh
+chmod +x deploy/scripts/setup_jetson_base.sh
+./deploy/scripts/setup_jetson_base.sh
 
 # 2. 캘리브레이션 환경 추가 설치 (Part A, 필요 시)
-chmod +x scripts/setup_calibration.sh
-./scripts/setup_calibration.sh
+chmod +x deploy/scripts/setup_calibration.sh
+./deploy/scripts/setup_calibration.sh
 ```
 
 ### 소프트웨어 의존성 상세
@@ -138,30 +151,53 @@ chmod +x scripts/setup_calibration.sh
 
 ---
 
-## ROS2 패키지 구조
+## 저장소 구조
+
+본 저장소는 **데이터 생성(sim) / 학습(training) / 배포(deploy)** 3가지 목적을
+top-level 폴더로 분리하여 관리합니다.
 
 ```
 PAI/
-├── scripts/
-│   ├── setup_jetson_base.sh             # 기본 환경 설치 (Part D, F)
-│   └── setup_calibration.sh             # 캘리브레이션 환경 설치 (Part A)
+├── deploy/                                     # [배포 목적] Jetson에서 실행
+│   ├── scripts/
+│   │   ├── setup_jetson_base.sh                # 기본 환경 설치 (Part D, F)
+│   │   └── setup_calibration.sh                # 캘리브레이션 환경 설치 (Part A)
+│   ├── config/                                 # Jetson 런타임 설정
+│   ├── calibration/                            # 실기 캘리브레이션 결과
+│   └── ros2_ws/
+│       └── src/
+│           └── robot_arm_pkg/
+│               ├── robot_arm_pkg/
+│               │   ├── camera_node.py          # RGB-D 카메라 입력
+│               │   ├── vlm_node.py             # VLM 추론 (Qwen3.5-4B GGUF) → /target_class
+│               │   ├── yolo_node.py            # YOLO 실시간 탐지 → /object_pose (30Hz)
+│               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
+│               │   ├── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
+│               │   └── state_monitor_node.py   # 태스크 성공/실패 판단
+│               ├── scripts/
+│               │   └── record_with_vlm.py      # 데이터 수집 스크립트 (Part D)
+│               ├── launch/
+│               ├── resource/
+│               ├── package.xml
+│               ├── setup.py
+│               └── requirements.txt
 │
-└── ros2_ws/
-    └── src/
-        └── robot_arm_pkg/
-            ├── robot_arm_pkg/
-            │   ├── camera_node.py           # RGB-D 카메라 입력
-            │   ├── vlm_node.py              # VLM 추론 (Qwen3.5-4B GGUF) → /target_class
-            │   ├── yolo_node.py             # YOLO 실시간 탐지 → /object_pose (30Hz)
-            │   ├── act_node.py              # ACT Policy 추론 (LeRobot .pth)
-            │   ├── robot_controller_node.py # SO-101 팔로워 모터 제어 (LeRobot SDK)
-            │   └── state_monitor_node.py    # 태스크 성공/실패 판단
-            ├── scripts/
-            │   └── record_with_vlm.py       # 데이터 수집 스크립트 (Part D)
-            ├── package.xml
-            ├── setup.py
-            └── requirements.txt
+├── sim/                                        # [데이터 생성 목적] Isaac Sim 전용
+│   ├── generate_act_dataset.py                 # Part B-2: ACT 시연 데이터 생성
+│   └── config/
+│       └── dr_config.yaml                      # Domain Randomization 설정
+│
+├── training/                                   # [학습 목적] 외부 PC 전용
+│   └── scripts/
+│       └── train_act_cotraining.sh             # Part E: ACT Co-training
+│
+├── shared/                                     # 3목적 공통 자산 (예정: URDF 등)
+├── docs/
+└── README.md
 ```
+
+> `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/` 이중 폴더는 ament_python 패키지의
+> 표준 레이아웃이며, 바깥쪽은 ROS2 패키지명 / 안쪽은 Python 모듈 경로입니다.
 
 ---
 
@@ -218,9 +254,12 @@ PAI/
 ### 빌드
 
 ```bash
-cd ros2_ws
+# 저장소 루트 기준 (개발 PC에서 확인용)
+cd deploy/ros2_ws
 colcon build --packages-select robot_arm_pkg
 source install/setup.bash
+
+# Jetson 실기 배포 시: deploy/ros2_ws 내용을 Jetson의 ~/ros2_ws 로 복사 후 빌드
 ```
 
 ### 배포 실행 (Part F)
@@ -270,7 +309,7 @@ Hand-Eye 캘리브레이션 (Eye-to-Hand 방식): 카메라 고정, SO-101 엔�
 
 ```bash
 # setup_jetson_base.sh 실행 후 아래 스크립트 실행
-./scripts/setup_calibration.sh
+./deploy/scripts/setup_calibration.sh
 ```
 
 aruco_opencv, easy_handeye2 소스 빌드 및 관련 apt 패키지가 자동으로 설치됩니다.
@@ -366,7 +405,7 @@ ros2 run robot_arm_pkg yolo_node \
   --ros-args -p model_path:=~/models/yolo/yolo_model.pt
 
 # 5. 데이터 수집 스크립트 실행
-python ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
+python ~/ros2_ws/src/robot_arm_pkg/scripts/record_with_vlm.py \
   --robot-port      /dev/ttyACM0 \
   --robot-id        follower \
   --teleop-port     /dev/ttyACM1 \
