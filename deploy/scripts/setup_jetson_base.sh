@@ -62,6 +62,7 @@ sudo apt install -y \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-vcstool \
+    ros-humble-ros-base \
     ros-humble-ros2cli \
     ros-humble-ros2launch \
     ros-humble-realsense2-camera \
@@ -94,12 +95,16 @@ echo -e "${GREEN}pip 패키지 설치 완료${NC}"
 #             바이너리 호환되지 않아 ROS 노드 import 시 충돌. user-local에
 #             깔아 sys.path 우선순위로 해결.
 #   - transforms3d: easy_handeye2 런타임 의존성.
+#   - lerobot[feetech]: SO-101 모터 통신용 Feetech SDK(scservo_sdk)가
+#                       lerobot의 feetech extras에 묶여 있다. 이게 없으면
+#                       robot_controller_node가 import 단계에서 죽는다.
 echo -e "\n${YELLOW}[4/7] ROS 노드용 user-local 패키지 설치${NC}"
 
 /usr/bin/python3 -m pip install --user "setuptools<60"
 /usr/bin/python3 -m pip install --user --upgrade \
     pandas \
     transforms3d
+/usr/bin/python3 -m pip install --user --upgrade "lerobot[feetech]==0.4.4"
 
 echo -e "${GREEN}user-local 패키지 설치 완료${NC}"
 
