@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import setup
 
 package_name = 'robot_arm_pkg'
@@ -11,8 +13,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch',  ['launch/calibration.launch.py']),
         ('share/' + package_name + '/scripts', ['scripts/record_teleop.py']),
-        # urdf/so101.urdf 파일을 배치한 뒤 아래 주석 해제
-        # ('share/' + package_name + '/urdf', ['urdf/so101.urdf']),
+        ('share/' + package_name + '/urdf',        ['urdf/so101.urdf']),
+        ('share/' + package_name + '/urdf/assets', glob('urdf/assets/*.stl')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

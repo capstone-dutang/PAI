@@ -141,7 +141,7 @@ def generate_launch_description():
             # 로봇 TF 프레임
             # TODO: SO-101 URDF의 실제 프레임 이름으로 수정
             'robot_base_frame':     'base_link',
-            'robot_effector_frame': 'Fixed_Jaw',   # LeRobot SO-101 URDF 기준
+            'robot_effector_frame': 'gripper_frame_link',   # LeRobot SO-101 URDF 기준
 
             # 마커 TF 프레임 (aruco_opencv가 발행)
             'tracking_base_frame':   'camera_color_optical_frame',
