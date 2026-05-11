@@ -1,0 +1,243 @@
+[INFO] [launch]: All log files can be found below /home/hansungai/.ros/log/2026-05-11-20-13-35-285934-ubuntu-27125
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [realsense2_camera_node-1]: process started with pid [27126]
+[INFO] [single-2]: process started with pid [27128]
+[INFO] [robot_controller_node-3]: process started with pid [27130]
+[INFO] [robot_state_publisher-4]: process started with pid [27132]
+[INFO] [static_transform_publisher-5]: process started with pid [27136]
+[INFO] [handeye_server-6]: process started with pid [27138]
+[INFO] [rqt_calibrator.py-7]: process started with pid [27144]
+[static_transform_publisher-5] [INFO] [1778498015.662224566] [dummy_publisher]: Spinning until stopped - publishing transform
+[static_transform_publisher-5] translation: ('1.000000', '0.000000', '0.000000')
+[static_transform_publisher-5] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-5] from 'base_link' to 'camera_color_optical_frame'
+[robot_state_publisher-4] [WARN] [1778498015.691345166] [kdl_parser]: The root link base_link has an inertia specified in the URDF, but KDL does not support a root link with an inertia.  As a workaround, you can add an extra dummy link to your URDF.
+[robot_state_publisher-4] [INFO] [1778498015.693488590] [robot_state_publisher]: got segment base_link
+[robot_state_publisher-4] [INFO] [1778498015.694563358] [robot_state_publisher]: got segment gripper_frame_link
+[robot_state_publisher-4] [INFO] [1778498015.696281579] [robot_state_publisher]: got segment gripper_link
+[robot_state_publisher-4] [INFO] [1778498015.697412766] [robot_state_publisher]: got segment lower_arm_link
+[robot_state_publisher-4] [INFO] [1778498015.698082300] [robot_state_publisher]: got segment moving_jaw_so101_v1_link
+[robot_state_publisher-4] [INFO] [1778498015.698960643] [robot_state_publisher]: got segment shoulder_link
+[robot_state_publisher-4] [INFO] [1778498015.699783144] [robot_state_publisher]: got segment upper_arm_link
+[robot_state_publisher-4] [INFO] [1778498015.700404804] [robot_state_publisher]: got segment wrist_link
+[realsense2_camera_node-1] [INFO] [1778498015.801437615] [camera.realsense2_camera]: RealSense ROS v4.57.7
+[realsense2_camera_node-1] [INFO] [1778498015.801666105] [camera.realsense2_camera]: Built with LibRealSense v2.57.7
+[realsense2_camera_node-1] [INFO] [1778498015.801688730] [camera.realsense2_camera]: Running with LibRealSense v2.57.7
+[realsense2_camera_node-1]  11/05 20:13:35,829 ERROR [281472140044512] (context.cpp:41) No valid configuration file found at : /home/hansungai/.realsense-config.json loading defaults
+[single-2] [INFO] [1778498015.850395039] [aruco_single]: Threshold method: THRESH_ADAPTIVE
+[single-2] [INFO] [1778498015.851302855] [aruco_single]: Marker size min: 0.02 of image area
+[single-2] [INFO] [1778498015.851355402] [aruco_single]: Detection mode: 
+[realsense2_camera_node-1] [INFO] [1778498015.881226851] [camera.realsense2_camera]: Device with serial number 919122073151 was found.
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [INFO] [1778498015.881369449] [camera.realsense2_camera]: Device with physical ID /sys/devices/platform/bus@0/3610000.usb/usb1/1-2/1-2.2/1-2.2:1.0/video4linux/video0 was found.
+[realsense2_camera_node-1] [INFO] [1778498015.881395754] [camera.realsense2_camera]: Device with name Intel RealSense D435 was found.
+[realsense2_camera_node-1] [INFO] [1778498015.881892769] [camera.realsense2_camera]: Device with port number 1-2.2 was found.
+[realsense2_camera_node-1] [INFO] [1778498015.881978629] [camera.realsense2_camera]: Device USB type: 2.1
+[realsense2_camera_node-1] [WARN] [1778498015.882006182] [camera.realsense2_camera]: Device 919122073151 is connected using a 2.1 port. Reduced performance is expected.
+[realsense2_camera_node-1] [INFO] [1778498015.882319828] [camera.realsense2_camera]: getParameters...
+[realsense2_camera_node-1] [INFO] [1778498015.882944688] [camera.realsense2_camera]: JSON file is not provided
+[realsense2_camera_node-1] [INFO] [1778498015.882988626] [camera.realsense2_camera]: Device Name: Intel RealSense D435
+[realsense2_camera_node-1] [INFO] [1778498015.883008403] [camera.realsense2_camera]: Device Serial No: 919122073151
+[realsense2_camera_node-1] [INFO] [1778498015.883022131] [camera.realsense2_camera]: Device physical port: /sys/devices/platform/bus@0/3610000.usb/usb1/1-2/1-2.2/1-2.2:1.0/video4linux/video0
+[realsense2_camera_node-1] [INFO] [1778498015.883043572] [camera.realsense2_camera]: Device FW version: 5.17.0.10
+[realsense2_camera_node-1] [INFO] [1778498015.883055349] [camera.realsense2_camera]: Device Product ID: 0x0B07
+[realsense2_camera_node-1] [INFO] [1778498015.883065141] [camera.realsense2_camera]: Sync Mode: Off
+[single-2] [INFO] [1778498015.975890321] [aruco_single]: ArUco node started with marker size of 0.050000 m and marker id to track: 0
+[single-2] [INFO] [1778498015.977648704] [aruco_single]: ArUco node will publish pose to TF with camera_color_optical_frame as parent and aruco_marker_frame as child.
+[single-2] [INFO] [1778498015.979033470] [aruco_single]: Setup of aruco_simple node is successful!
+[realsense2_camera_node-1] [WARN] [1778498016.094608722] [camera.realsense2_camera]: Could not set param: rgb_camera.power_line_frequency with 3 Range: [0, 2]: parameter 'rgb_camera.power_line_frequency' could not be set: Parameter {rgb_camera.power_line_frequency} doesn't comply with integer range.
+[realsense2_camera_node-1] [INFO] [1778498016.117485010] [camera.realsense2_camera]: Stopping Sensor: Depth Module
+[realsense2_camera_node-1] [INFO] [1778498016.117723069] [camera.realsense2_camera]: Stopping Sensor: RGB Camera
+[realsense2_camera_node-1] [INFO] [1778498016.193671812] [camera.realsense2_camera]: Starting Sensor: Depth Module
+[realsense2_camera_node-1]  11/05 20:13:36,196 ERROR [281472140044512] (librealsense-exception.h:52) xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1]  11/05 20:13:36,196 ERROR [281472140044512] (rs.cpp:280) [rs2_open_multiple( sensor:0xffff48009220, profiles:0xffff48032b60, count:3 ) Backend] xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [ERROR] [1778498016.196961719] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:550:An exception has been thrown: xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [ERROR] [1778498016.197217538] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:432:An exception has been thrown: xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] Failed to start device: xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [INFO] [1778498016.197542481] [camera.realsense2_camera]: Stopping Sensor: Depth Module
+[realsense2_camera_node-1] [INFO] [1778498016.197703640] [camera.realsense2_camera]: Stopping Sensor: RGB Camera
+[realsense2_camera_node-1] [INFO] [1778498016.227661301] [camera.realsense2_camera]: Starting Sensor: Depth Module
+[realsense2_camera_node-1]  11/05 20:13:36,231 ERROR [281471788771552] (librealsense-exception.h:52) xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1]  11/05 20:13:36,232 ERROR [281471788771552] (rs.cpp:280) [rs2_open_multiple( sensor:0xffff48009220, profiles:0xffff48032b60, count:3 ) Backend] xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [ERROR] [1778498016.232089851] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:550:An exception has been thrown: xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [ERROR] [1778498016.232254818] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:432:An exception has been thrown: xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [ERROR] [1778498016.232301924] [camera.realsense2_camera]: Error updating the sensors: xioctl(VIDIOC_S_FMT) failed, errno=16 Last Error: Device or resource busy
+[realsense2_camera_node-1] [INFO] [1778498016.252575120] [camera.realsense2_camera]: Device with serial number 919122073151 was found.
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [INFO] [1778498016.252688341] [camera.realsense2_camera]: Device with physical ID /sys/devices/platform/bus@0/3610000.usb/usb1/1-2/1-2.2/1-2.2:1.0/video4linux/video0 was found.
+[realsense2_camera_node-1] [INFO] [1778498016.252711254] [camera.realsense2_camera]: Device with name Intel RealSense D435 was found.
+[realsense2_camera_node-1] [INFO] [1778498016.253063238] [camera.realsense2_camera]: Device with port number 1-2.2 was found.
+[realsense2_camera_node-1] [INFO] [1778498016.253095687] [camera.realsense2_camera]: Device USB type: 2.1
+[realsense2_camera_node-1] [WARN] [1778498016.253114696] [camera.realsense2_camera]: Device 919122073151 is connected using a 2.1 port. Reduced performance is expected.
+[realsense2_camera_node-1] [ERROR] [1778498017.109421143] [camera.realsense2_camera]: The device has been disconnected!
+[realsense2_camera_node-1]  11/05 20:13:37,195 ERROR [281471814133984] (librealsense-exception.h:52) map_device_descriptor Cannot open '/dev/video0 Last Error: No such file or directory
+[realsense2_camera_node-1]  11/05 20:13:37,195 ERROR [281471814133984] (uvc-sensor.cpp:428) acquire_power failed: map_device_descriptor Cannot open '/dev/video0 Last Error: No such file or directory
+[realsense2_camera_node-1]  11/05 20:13:37,195 ERROR [281471814133984] (error-handling.cpp:99) Error during polling error handler: map_device_descriptor Cannot open '/dev/video0 Last Error: No such file or directory
+[realsense2_camera_node-1]  11/05 20:13:37,206 ERROR [281472140044512] (rs.cpp:280) [rs2_get_device_info( dev:nullptr, info:Name ) UNKNOWN] null pointer passed for argument "dev"
+[realsense2_camera_node-1] [ERROR] [1778498017.206250851] [camera.realsense2_camera]: Error starting device: null pointer passed for argument "dev"
+[handeye_server-6] [INFO] [1778498017.228673326] [handeye_server]: Read parameters for calibration "eye_on_base_calibration"
+[realsense2_camera_node-1] [WARN] [1778498017.240629093] [camera.realsense2_camera]: No RealSense devices were found!
+[rqt_calibrator.py-7] [INFO] [1778498017.447567278] [handeye_rqt_calibrator]: Configuring HandeyeClient for calibration with namespace: eye_on_base_calibration
+[rqt_calibrator.py-7] [INFO] [1778498017.448433877] [handeye_rqt_calibrator]: Waiting for sampling services
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[robot_state_publisher-4] [INFO] [1778498017.824457290] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[single-2] [INFO] [1778498017.824666804] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[realsense2_camera_node-1] [INFO] [1778498017.824658163] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[rqt_calibrator.py-7] [INFO] [1778498017.824770904] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[rqt_calibrator.py-7] [31mPluginHandler.save_settings() plugin "easy_handeye2/RqtHandeyeCalibrator#0" raised an exception:
+[rqt_calibrator.py-7] Traceback (most recent call last):
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 191, in save_settings
+[rqt_calibrator.py-7]     self._save_settings(plugin_settings, instance_settings)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler_direct.py", line 114, in _save_settings
+[rqt_calibrator.py-7]     self.emit_save_settings_completed()
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 207, in emit_save_settings_completed
+[rqt_calibrator.py-7]     callback(self._instance_id)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 462, in _close_application_save_callback
+[rqt_calibrator.py-7]     self._close_application_shutdown_plugins()
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 469, in _close_application_shutdown_plugins
+[rqt_calibrator.py-7]     self._shutdown_plugin(
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 355, in _shutdown_plugin
+[rqt_calibrator.py-7]     handler.close_signal.disconnect(self.unload_plugin)
+[rqt_calibrator.py-7] TypeError: disconnect() failed between 'close_signal' and 'unload_plugin'
+[rqt_calibrator.py-7] [0m
+[static_transform_publisher-5] [INFO] [1778498017.826325502] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[handeye_server-6] Exception in thread Thread-1 (run_func):
+[handeye_server-6] Traceback (most recent call last):
+[handeye_server-6]   File "/usr/lib/python3.10/threading.py", line 1016, in _bootstrap_inner
+[handeye_server-6]     self.run()
+[handeye_server-6]   File "/usr/lib/python3.10/threading.py", line 953, in run
+[handeye_server-6]     self._target(*self._args, **self._kwargs)
+[handeye_server-6]   File "/opt/ros/humble/lib/python3.10/site-packages/tf2_ros/transform_listener.py", line 95, in run_func
+[handeye_server-6]     self.executor.spin()
+[handeye_server-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 323, in spin
+[handeye_server-6]     self.spin_once()
+[handeye_server-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 808, in spin_once
+[handeye_server-6]     self._spin_once_impl(timeout_sec)
+[handeye_server-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 797, in _spin_once_impl
+[handeye_server-6]     handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+[handeye_server-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 780, in wait_for_ready_callbacks
+[handeye_server-6]     return next(self._cb_iter)
+[handeye_server-6]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 681, in _wait_for_ready_callbacks
+[handeye_server-6]     raise ExternalShutdownException()
+[handeye_server-6] rclpy.executors.ExternalShutdownException
+[INFO] [robot_state_publisher-4]: process has finished cleanly [pid 27132]
+[INFO] [static_transform_publisher-5]: process has finished cleanly [pid 27136]
+[rqt_calibrator.py-7] Traceback (most recent call last):
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 191, in save_settings
+[rqt_calibrator.py-7]     self._save_settings(plugin_settings, instance_settings)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler_direct.py", line 114, in _save_settings
+[rqt_calibrator.py-7]     self.emit_save_settings_completed()
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 207, in emit_save_settings_completed
+[rqt_calibrator.py-7]     callback(self._instance_id)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 462, in _close_application_save_callback
+[rqt_calibrator.py-7]     self._close_application_shutdown_plugins()
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 469, in _close_application_shutdown_plugins
+[rqt_calibrator.py-7]     self._shutdown_plugin(
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 355, in _shutdown_plugin
+[rqt_calibrator.py-7]     handler.close_signal.disconnect(self.unload_plugin)
+[rqt_calibrator.py-7] TypeError: disconnect() failed between 'close_signal' and 'unload_plugin'
+[rqt_calibrator.py-7] 
+[rqt_calibrator.py-7] During handling of the above exception, another exception occurred:
+[rqt_calibrator.py-7] 
+[rqt_calibrator.py-7] Traceback (most recent call last):
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 456, in close_application
+[rqt_calibrator.py-7]     self._save_settings(
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 432, in _save_settings
+[rqt_calibrator.py-7]     self._save_plugin_settings(info['instance_id'], callback)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_manager.py", line 343, in _save_plugin_settings
+[rqt_calibrator.py-7]     handler.save_settings(plugin_settings, instance_settings, callback)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 195, in save_settings
+[rqt_calibrator.py-7]     self.emit_save_settings_completed()
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 202, in emit_save_settings_completed
+[rqt_calibrator.py-7]     self._call_method_on_all_dock_widgets('save_settings', self.__instance_settings)
+[rqt_calibrator.py-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/qt_gui/plugin_handler.py", line 213, in _call_method_on_all_dock_widgets
+[rqt_calibrator.py-7]     settings = instance_settings.get_settings(name)
+[rqt_calibrator.py-7] AttributeError: 'NoneType' object has no attribute 'get_settings'
+[rqt_calibrator.py-7] [31mPluginHandler.load() failed[0m
+[INFO] [single-2]: process has finished cleanly [pid 27128]
+[realsense2_camera_node-1] [INFO] [1778498018.066804674] [camera.realsense2_camera]: Checking new devices...
+[realsense2_camera_node-1] [INFO] [1778498018.096188324] [camera.realsense2_camera]: Device with serial number 919122073151 was found.
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [INFO] [1778498018.096236262] [camera.realsense2_camera]: Device with physical ID /sys/devices/platform/bus@0/3610000.usb/usb1/1-2/1-2.2/1-2.2:1.0/video4linux/video1 was found.
+[realsense2_camera_node-1] [INFO] [1778498018.096243623] [camera.realsense2_camera]: Device with name Intel RealSense D435 was found.
+[realsense2_camera_node-1] [INFO] [1778498018.096623352] [camera.realsense2_camera]: Device with port number 1-2.2 was found.
+[realsense2_camera_node-1] [INFO] [1778498018.096637848] [camera.realsense2_camera]: Device USB type: 2.1
+[realsense2_camera_node-1] [WARN] [1778498018.096644409] [camera.realsense2_camera]: Device 919122073151 is connected using a 2.1 port. Reduced performance is expected.
+[realsense2_camera_node-1] [INFO] [1778498018.096699803] [camera.realsense2_camera]: getParameters...
+[realsense2_camera_node-1] [INFO] [1778498018.096915813] [camera.realsense2_camera]: JSON file is not provided
+[realsense2_camera_node-1] [INFO] [1778498018.096926725] [camera.realsense2_camera]: Device Name: Intel RealSense D435
+[realsense2_camera_node-1] [INFO] [1778498018.096931461] [camera.realsense2_camera]: Device Serial No: 919122073151
+[realsense2_camera_node-1] [INFO] [1778498018.096936038] [camera.realsense2_camera]: Device physical port: /sys/devices/platform/bus@0/3610000.usb/usb1/1-2/1-2.2/1-2.2:1.0/video4linux/video1
+[realsense2_camera_node-1] [INFO] [1778498018.096940198] [camera.realsense2_camera]: Device FW version: 5.17.0.10
+[realsense2_camera_node-1] [INFO] [1778498018.096943846] [camera.realsense2_camera]: Device Product ID: 0x0B07
+[realsense2_camera_node-1] [INFO] [1778498018.096947526] [camera.realsense2_camera]: Sync Mode: Off
+[robot_controller_node-3] Traceback (most recent call last):
+[robot_controller_node-3]   File "/home/hansungai/PAI/deploy/ros2_ws/install/robot_arm_pkg/lib/robot_arm_pkg/robot_controller_node", line 33, in <module>
+[robot_controller_node-3]     sys.exit(load_entry_point('robot-arm-pkg==0.0.1', 'console_scripts', 'robot_controller_node')())
+[robot_controller_node-3]   File "/home/hansungai/PAI/deploy/ros2_ws/install/robot_arm_pkg/lib/robot_arm_pkg/robot_controller_node", line 25, in importlib_load_entry_point
+[robot_controller_node-3]     return next(matches).load()
+[robot_controller_node-3]   File "/usr/lib/python3.10/importlib/metadata/__init__.py", line 171, in load
+[robot_controller_node-3]     module = import_module(match.group('module'))
+[robot_controller_node-3]   File "/usr/lib/python3.10/importlib/__init__.py", line 126, in import_module
+[robot_controller_node-3]     return _bootstrap._gcd_import(name[level:], package, level)
+[robot_controller_node-3]   File "<frozen importlib._bootstrap>", line 1050, in _gcd_import
+[robot_controller_node-3]   File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+[robot_controller_node-3]   File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+[robot_controller_node-3]   File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+[robot_controller_node-3]   File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+[robot_controller_node-3]   File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+[robot_controller_node-3]   File "/home/hansungai/PAI/deploy/ros2_ws/install/robot_arm_pkg/lib/python3.10/site-packages/robot_arm_pkg/robot_controller_node.py", line 37, in <module>
+[robot_controller_node-3]     from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+[robot_controller_node-3]   File "/home/hansungai/.local/lib/python3.10/site-packages/lerobot/robots/__init__.py", line 18, in <module>
+[robot_controller_node-3]     from .robot import Robot
+[robot_controller_node-3]   File "/home/hansungai/.local/lib/python3.10/site-packages/lerobot/robots/robot.py", line 21, in <module>
+[robot_controller_node-3]     from lerobot.motors import MotorCalibration
+[robot_controller_node-3]   File "/home/hansungai/.local/lib/python3.10/site-packages/lerobot/motors/__init__.py", line 17, in <module>
+[robot_controller_node-3]     from .motors_bus import (
+[robot_controller_node-3]   File "/home/hansungai/.local/lib/python3.10/site-packages/lerobot/motors/motors_bus.py", line 39, in <module>
+[robot_controller_node-3]     from lerobot.utils.utils import enter_pressed, move_cursor_up
+[robot_controller_node-3]   File "/home/hansungai/.local/lib/python3.10/site-packages/lerobot/utils/utils.py", line 29, in <module>
+[robot_controller_node-3]     import torch
+[robot_controller_node-3]   File "/home/hansungai/.local/lib/python3.10/site-packages/torch/__init__.py", line 431, in <module>
+[robot_controller_node-3]     from torch._C import *  # noqa: F403
+[robot_controller_node-3]   File "<frozen importlib._bootstrap>", line 216, in _lock_unlock_module
+[robot_controller_node-3] KeyboardInterrupt
+[INFO] [handeye_server-6]: process has finished cleanly [pid 27138]
+[realsense2_camera_node-1] [WARN] [1778498018.329867414] [camera.realsense2_camera]: Could not set param: rgb_camera.power_line_frequency with 3 Range: [0, 2]: parameter 'rgb_camera.power_line_frequency' could not be set: Parameter {rgb_camera.power_line_frequency} doesn't comply with integer range.
+[realsense2_camera_node-1] [INFO] [1778498018.337938718] [camera.realsense2_camera]: Stopping Sensor: Depth Module
+[realsense2_camera_node-1] [INFO] [1778498018.338069508] [camera.realsense2_camera]: Stopping Sensor: RGB Camera
+[realsense2_camera_node-1] [ERROR] [1778498018.338506840] [camera.realsense2_camera]: Failed to load plugin image_transport/compressed_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.338598748] [camera.realsense2_camera]: Failed to load plugin image_transport/compressedDepth_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.338702433] [camera.realsense2_camera]: Failed to load plugin image_transport/raw_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.338803013] [camera.realsense2_camera]: Failed to load plugin image_transport/theora_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.338890665] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:550:An exception has been thrown: No plugins found! Does `rospack plugins --attrib=plugin image_transport` find any packages?
+[realsense2_camera_node-1] [ERROR] [1778498018.338914698] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:432:An exception has been thrown: No plugins found! Does `rospack plugins --attrib=plugin image_transport` find any packages?
+[realsense2_camera_node-1]  11/05 20:13:38,339 ERROR [281472123664608] (rs.cpp:1340) Exception thrown from user callback handler: No plugins found! Does `rospack plugins --attrib=plugin image_transport` find any packages?
+[realsense2_camera_node-1] [INFO] [1778498018.339102867] [camera.realsense2_camera]: Stopping Sensor: Depth Module
+[realsense2_camera_node-1] [INFO] [1778498018.339192599] [camera.realsense2_camera]: Stopping Sensor: RGB Camera
+[realsense2_camera_node-1] [ERROR] [1778498018.339403584] [camera.realsense2_camera]: Failed to load plugin image_transport/compressed_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.339464739] [camera.realsense2_camera]: Failed to load plugin image_transport/compressedDepth_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.339805106] [camera.realsense2_camera]: Failed to load plugin image_transport/raw_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.339883349] [camera.realsense2_camera]: Failed to load plugin image_transport/theora_pub, error string: could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:428
+[realsense2_camera_node-1] 
+[realsense2_camera_node-1] [ERROR] [1778498018.339936856] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:550:An exception has been thrown: No plugins found! Does `rospack plugins --attrib=plugin image_transport` find any packages?
+[realsense2_camera_node-1] [ERROR] [1778498018.339957305] [camera.realsense2_camera]: ./src/rs_node_setup.cpp:432:An exception has been thrown: No plugins found! Does `rospack plugins --attrib=plugin image_transport` find any packages?
+[realsense2_camera_node-1] [ERROR] [1778498018.339971961] [camera.realsense2_camera]: Error updating the sensors: No plugins found! Does `rospack plugins --attrib=plugin image_transport` find any packages?
+[ERROR] [robot_controller_node-3]: process has died [pid 27130, exit code -2, cmd '/home/hansungai/PAI/deploy/ros2_ws/install/robot_arm_pkg/lib/robot_arm_pkg/robot_controller_node --ros-args -r __node:=robot_controller_node --params-file /tmp/launch_params_scz8dq7w'].
+[ERROR] [rqt_calibrator.py-7]: process[rqt_calibrator.py-7] failed to terminate '5' seconds after receiving 'SIGINT', escalating to 'SIGTERM'
+[INFO] [rqt_calibrator.py-7]: sending signal 'SIGTERM' to process[rqt_calibrator.py-7]
+[ERROR] [realsense2_camera_node-1]: process[realsense2_camera_node-1] failed to terminate '5' seconds after receiving 'SIGINT', escalating to 'SIGTERM'
+[rqt_calibrator.py-7] [INFO] [1778498022.881395767] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[INFO] [realsense2_camera_node-1]: sending signal 'SIGTERM' to process[realsense2_camera_node-1]
+[realsense2_camera_node-1] [INFO] [1778498022.887117719] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[INFO] [realsense2_camera_node-1]: process has finished cleanly [pid 27126]
+[ERROR] [rqt_calibrator.py-7]: process[rqt_calibrator.py-7] failed to terminate '10.0' seconds after receiving 'SIGTERM', escalating to 'SIGKILL'
+[INFO] [rqt_calibrator.py-7]: sending signal 'SIGKILL' to process[rqt_calibrator.py-7]
+[ERROR] [rqt_calibrator.py-7]: process has died [pid 27144, exit code -9, cmd '/home/hansungai/PAI/deploy/ros2_ws/install/easy_handeye2/lib/easy_handeye2/rqt_calibrator.py --ros-args -r __node:=handeye_rqt_calibrator --params-file /tmp/launch_params_1s3p96ms'].
