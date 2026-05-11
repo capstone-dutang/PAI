@@ -2,51 +2,57 @@
 act_node.py
 
 LeRobot ACT Policy (.pth 체크포인트) 로 관절 시퀀스를 추론하는 노드.
-yolo_node가 발행한 object_pose를 캐싱하고, 30Hz로 joint_command를 발행.
+
+이전 설계와 달리 본 노드는 다음 의존을 모두 제거한다:
+  - /target_class (vlm_node)
+  - /object_pose  (yolo_node)
+  - /task_active  (state_monitor_node)
+  - observation.object_pose 채널
+
+대신 agent_node가 보낸 SubtaskCommand(language_embedding 포함)를 받아
+ACT 추론을 시작하고, chunk 실행이 끝나면 ExecutionStatus를 발행한다.
+language_embedding은 SubtaskCommand 안에 사전 임베딩되어 도착하므로
+act_node는 추론 시점에 임베딩 변환 지연이 없다.
 
 환경:
   Python   3.10
-  ROS2     Humble (Humboldt, 22.04 LTS)
-  LeRobot  ACT Policy — .pth 체크포인트를 torch로 직접 추론 (TensorRT 미사용)
+  ROS2     Humble (Ubuntu 22.04 LTS)
+  LeRobot  ACT Policy — .pth 체크포인트를 torch로 직접 추론
 
 구독 토픽:
-  /camera/rgb    (sensor_msgs/Image)
-  /camera/depth  (sensor_msgs/Image)
-  /target_class  (std_msgs/String)            — vlm_node: 타겟 클래스 변경 시 chunk 리셋
-  /object_pose   (geometry_msgs/PoseStamped)  — yolo_node: 최신 위치 캐싱만 (chunk 유지)
-  /joint_states  (sensor_msgs/JointState)     — robot_controller 피드백
-  /task_active   (std_msgs/Bool)              — state_monitor: 태스크 활성 여부
+  /camera/rgb       (sensor_msgs/Image, BestEffort+KeepLast(1))
+  /joint_states     (sensor_msgs/JointState) — robot_controller 피드백
+  /subtask_command  (robot_arm_msgs/SubtaskCommand) — agent_node 발행
 
 발행 토픽:
-  /joint_command (sensor_msgs/JointState)    — 30Hz
+  /joint_command    (sensor_msgs/JointState) — 30Hz (subtask 활성 시)
+  /execution_status (robot_arm_msgs/ExecutionStatus) — subtask 종료 시 1회
 
 파라미터:
   model_path  (str)   — LeRobot ACT 체크포인트 경로 (.pth)
   chunk_size  (int)   — 한 번에 예측할 스텝 수 (기본 100)
   publish_hz  (float) — 발행 주기 (기본 30Hz)
 
-observation 구성 (학습 시와 동일해야 함):
-  observation.image        — RGB 이미지 텐서
-  observation.depth        — Depth 맵 텐서
-  observation.state        — 관절 상태 텐서 (6축, SO-101 순서)
-  observation.object_pose  — YOLO 추론 결과 (x, y, z)
+학습 시 obs 스키마(LeRobotDataset)와 추론 시 obs dict 키는 일치해야 함:
+  observation.images.top         — RGB 이미지 텐서
+  observation.state              — 관절 상태 텐서 (6축, SO-101 순서)
+  observation.language_embedding — 자연어 타겟 묘사 임베딩 (D차원)
 
 TODO (Part E 완료 후 구현):
-  _load_policy()  — 체크포인트 로드 및 normalizer 설정 확인
-  _predict_chunk() 내부 — 입력 텐서 전처리 및 policy.select_action() 호출
-  입력 전처리 방식은 체크포인트에 포함된 normalizer 설정에 따라 결정됨
+  _load_policy()    — 체크포인트 로드 및 normalizer 설정 확인
+  _predict_chunk()  — 입력 텐서 전처리 + policy.select_action() 호출
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 
-import torch
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image, JointState
-from std_msgs.msg import String, Bool
-from geometry_msgs.msg import PoseStamped
+
+from robot_arm_msgs.msg import SubtaskCommand, ExecutionStatus
 
 # SO-101 관절 이름 — robot_controller_node.py 와 동일한 순서 유지
 SO101_JOINT_NAMES: List[str] = [
@@ -65,7 +71,7 @@ class ACTNode(Node):
         super().__init__('act_node')
 
         # ── 파라미터 ──────────────────────────────
-        self.declare_parameter('model_path', '/home/user/models/act_policy.pth')
+        self.declare_parameter('model_path', '/home/user/models/act/act.pth')
         self.declare_parameter('chunk_size', 100)
         self.declare_parameter('publish_hz', 30.0)
 
@@ -78,37 +84,40 @@ class ACTNode(Node):
         self.policy = self._load_policy()
 
         # ── 입력 캐시 ─────────────────────────────
-        self._latest_rgb:    Optional[Image]       = None
-        self._latest_depth:  Optional[Image]       = None
-        self._latest_pose:   Optional[PoseStamped] = None  # YOLO 결과 캐싱
-        self._latest_joints: Optional[JointState]  = None
+        self._latest_rgb:    Optional[Image]      = None
+        self._latest_joints: Optional[JointState] = None
 
-        # chunk 실행 상태
-        # _chunk: 현재 실행 중인 관절 시퀀스 (list of JointState)
-        # _chunk_idx: chunk 내 현재 스텝 인덱스
-        self._chunk:     Optional[List[JointState]] = None
-        self._chunk_idx: int                        = 0
+        # ── 활성 subtask 상태 ─────────────────────
+        # _active_cmd: 현재 실행 중인 SubtaskCommand (None이면 idle)
+        # _chunk:      현재 실행 중인 관절 시퀀스 (list of JointState)
+        # _chunk_idx:  chunk 내 현재 스텝 인덱스
+        self._active_cmd: Optional[SubtaskCommand]   = None
+        self._chunk:      Optional[List[JointState]] = None
+        self._chunk_idx:  int                        = 0
 
-        # ── 태스크 상태 ───────────────────────────
-        self._task_active:         bool            = False
-        self._current_target_class: Optional[str] = None  # chunk 리셋 판단용
+        # ── QoS ───────────────────────────────────
+        # camera는 BestEffort + KeepLast(1) — 30Hz 스트림에서 latest-only.
+        camera_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
 
         # ── 구독 ──────────────────────────────────
-        self.create_subscription(Image,       '/camera/rgb',    self._rgb_callback,           10)
-        self.create_subscription(Image,       '/camera/depth',  self._depth_callback,         10)
-        self.create_subscription(String,      '/target_class',  self._target_class_callback,  10)
-        self.create_subscription(PoseStamped, '/object_pose',   self._pose_callback,          10)
-        self.create_subscription(JointState,  '/joint_states',  self._joints_callback,        10)
-        self.create_subscription(Bool,        '/task_active',   self._task_active_callback,   10)
+        self.create_subscription(Image,          '/camera/rgb',      self._rgb_callback,     camera_qos)
+        self.create_subscription(JointState,     '/joint_states',    self._joints_callback,  10)
+        self.create_subscription(SubtaskCommand, '/subtask_command', self._subtask_callback, 10)
 
         # ── 발행 ──────────────────────────────────
-        self.cmd_pub = self.create_publisher(JointState, '/joint_command', 10)
+        self.cmd_pub    = self.create_publisher(JointState,      '/joint_command',    10)
+        self.status_pub = self.create_publisher(ExecutionStatus, '/execution_status', 10)
 
         # ── 타이머 ────────────────────────────────
         self.create_timer(1.0 / publish_hz, self._timer_callback)
 
         self.get_logger().info(
-            f'act_node 시작 | 모델: {self.model_path} | chunk_size: {self.chunk_size} | {publish_hz}Hz'
+            f'act_node 시작 | 모델: {self.model_path} | '
+            f'chunk_size: {self.chunk_size} | {publish_hz}Hz'
         )
 
     # ── Policy 로드 ───────────────────────────────
@@ -139,66 +148,79 @@ class ACTNode(Node):
     def _rgb_callback(self, msg: Image) -> None:
         self._latest_rgb = msg
 
-    def _depth_callback(self, msg: Image) -> None:
-        self._latest_depth = msg
-
-    def _target_class_callback(self, msg: String) -> None:
-        """
-        타겟 클래스 변경 시에만 chunk를 리셋.
-        YOLO가 30Hz로 /object_pose를 발행하므로 pose 수신마다 리셋하면
-        ACT가 chunk를 절대 실행하지 못함 — 클래스 변경 시에만 재계획.
-        """
-        if self._current_target_class != msg.data:
-            self.get_logger().info(
-                f'target_class 변경: {self._current_target_class!r} → {msg.data!r} '
-                f'→ chunk 리셋'
-            )
-            self._current_target_class = msg.data
-            self._chunk     = None
-            self._chunk_idx = 0
-
-    def _pose_callback(self, msg: PoseStamped) -> None:
-        """
-        YOLO가 발행한 물체 위치 수신.
-        최신 위치만 캐싱 — chunk는 유지 (target_class 변경 시에만 리셋).
-        """
-        self._latest_pose = msg
-
-    def _task_active_callback(self, msg: Bool) -> None:
-        """태스크 활성 상태 수신. False가 되면 chunk를 초기화."""
-        if self._task_active and not msg.data:
-            self.get_logger().info('태스크 비활성화 → chunk 초기화')
-            self._chunk                = None
-            self._chunk_idx            = 0
-            self._current_target_class = None
-        self._task_active = msg.data
-
     def _joints_callback(self, msg: JointState) -> None:
         self._latest_joints = msg
+
+    def _subtask_callback(self, msg: SubtaskCommand) -> None:
+        """
+        agent_node가 보낸 SubtaskCommand 수신 → 새 subtask 활성화.
+
+        같은 subtask_id가 재수신되면 무시한다 (중복 방지).
+        다른 subtask_id가 도착하면 현재 chunk를 폐기하고 새로 시작한다.
+        """
+        if self._active_cmd is not None and self._active_cmd.subtask_id == msg.subtask_id:
+            return
+
+        self.get_logger().info(
+            f'SubtaskCommand 수신: id={msg.subtask_id!r} domain={msg.domain!r} '
+            f'target={msg.target_description!r} embed_dim={len(msg.language_embedding)}'
+        )
+        self._active_cmd = msg
+        self._chunk      = None
+        self._chunk_idx  = 0
 
     # ── 타이머 콜백 (30Hz) ────────────────────────
 
     def _timer_callback(self) -> None:
-        if not self._task_active:
-            return
+        if self._active_cmd is None:
+            return  # idle
 
-        if self._latest_pose is None:
-            self.get_logger().warn('/object_pose 미수신, 대기 중', throttle_duration_sec=5.0)
-            return
-
-        # chunk 소진 또는 미생성 시 새로 예측
-        if self._chunk is None or self._chunk_idx >= len(self._chunk):
-            self._chunk     = self._predict_chunk()
-            self._chunk_idx = 0
-
+        # chunk 미생성 시 새로 예측
         if self._chunk is None:
-            return  # 예측 실패 시 스킵
+            self._chunk = self._predict_chunk(self._active_cmd)
+            self._chunk_idx = 0
+            if self._chunk is None:
+                # 예측 실패 → 다음 주기 재시도. 영구 실패 처리는 추후 결정.
+                return
+
+        # chunk 소진 시 종료 → ExecutionStatus 발행
+        if self._chunk_idx >= len(self._chunk):
+            self._finish_subtask(status='success', failure_reason='', confidence=0.0)
+            return
 
         cmd = self._chunk[self._chunk_idx]
         self.cmd_pub.publish(cmd)
         self._chunk_idx += 1
 
-    def _predict_chunk(self) -> Optional[List[JointState]]:
+    # ── subtask 종료 처리 ─────────────────────────
+
+    def _finish_subtask(self, status: str, failure_reason: str, confidence: float) -> None:
+        """
+        ExecutionStatus를 1회 발행하고 idle 상태로 복귀.
+
+        status: "success" | "fail" | "timeout"
+        """
+        if self._active_cmd is None:
+            return
+
+        msg = ExecutionStatus()
+        msg.subtask_id     = self._active_cmd.subtask_id
+        msg.status         = status
+        msg.failure_reason = failure_reason
+        msg.confidence     = float(confidence)
+        self.status_pub.publish(msg)
+
+        self.get_logger().info(
+            f'ExecutionStatus 발행: id={msg.subtask_id!r} status={status!r}'
+        )
+
+        self._active_cmd = None
+        self._chunk      = None
+        self._chunk_idx  = 0
+
+    # ── 추론 ──────────────────────────────────────
+
+    def _predict_chunk(self, cmd: SubtaskCommand) -> Optional[List[JointState]]:
         """
         현재 입력으로 chunk_size 스텝의 관절 시퀀스 예측.
 
@@ -206,11 +228,11 @@ class ACTNode(Node):
           체크포인트의 normalizer 설정 확인 후 아래를 구현:
 
           1. 입력 텐서 구성 — normalizer 설정에 맞게 전처리
+             키 이름은 학습 시 LeRobotDataset 스키마와 반드시 일치해야 함:
              obs = {
-                 'observation.image':       _to_image_tensor(self._latest_rgb),
-                 'observation.depth':       _to_depth_tensor(self._latest_depth),
-                 'observation.state':       _to_state_tensor(self._latest_joints),
-                 'observation.object_pose': _to_pose_tensor(self._latest_pose),
+                 'observation.images.top':         _to_image_tensor(self._latest_rgb),
+                 'observation.state':              _to_state_tensor(self._latest_joints),
+                 'observation.language_embedding': torch.tensor(cmd.language_embedding),
              }
 
           2. LeRobot Policy 추론
@@ -221,10 +243,10 @@ class ACTNode(Node):
           3. 출력 텐서 → JointState 리스트 변환
              result = []
              for step in action_chunk:
-                 msg = JointState()
-                 msg.name     = SO101_JOINT_NAMES
-                 msg.position = step.tolist()
-                 result.append(msg)
+                 m = JointState()
+                 m.name     = SO101_JOINT_NAMES
+                 m.position = step.tolist()
+                 result.append(m)
              return result
 
         Returns:
@@ -234,6 +256,13 @@ class ACTNode(Node):
             self.get_logger().warn(
                 '[act_node] policy 미로드. _load_policy() 구현 후 사용 가능.',
                 throttle_duration_sec=5.0,
+            )
+            return None
+
+        if self._latest_rgb is None or self._latest_joints is None:
+            self.get_logger().warn(
+                '[act_node] RGB/joint_states 미수신, 예측 보류',
+                throttle_duration_sec=2.0,
             )
             return None
 

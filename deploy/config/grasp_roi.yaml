@@ -1,0 +1,31 @@
+# grasp_roi.yaml (템플릿)
+#
+# agent_node.verify_result의 depth 기반 grasp 보조 검증에 사용되는 ROI.
+# README 미구현 항목 — 캘리브레이션 완료 + 엔드이펙터 실측 후에 값 확정.
+#
+# 현재 값은 README의 예시 그대로이며, 실제 SO-101 엔드이펙터 위치/카메라
+# 배치에 맞게 측정한 뒤 갱신해야 한다.
+#
+# 운영 시 배포 위치:
+#   Jetson에서는 ~/calibration/grasp_roi.yaml 로 복사한 뒤
+#   agent_node 파라미터 grasp_roi 가 가리키도록 설정.
+#
+# 필드:
+#   roi.frame                 — "camera" 또는 "base_link"
+#                               base_link 사용 시 카메라-로봇 변환 행렬 적용 필요.
+#   roi.x_range/y_range/z_range — 해당 frame 기준 ROI 박스 (단위: m)
+#   depth_change_threshold    — ROI 내 depth 평균/중앙값의 변화량 임계 (단위: m)
+#                               이 이상이면 grasp 성공으로 간주.
+#
+# TODO (구현 시 결정):
+#   1) frame을 camera로 둘지 base_link로 둘지 → calibration 정확도와 trade-off
+#   2) 비교 기준: pre_grasp 시점의 depth와 비교 / 절대 임계 / 시간 차분
+#   3) 노이즈 처리: 중앙값 / Gaussian 평활 / morphology
+
+roi:
+  frame: camera           # camera | base_link
+  x_range: [-0.05, 0.05]  # m
+  y_range: [-0.05, 0.05]  # m
+  z_range: [0.20, 0.40]   # m
+
+depth_change_threshold: 0.02  # m

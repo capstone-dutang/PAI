@@ -1,0 +1,38 @@
+# multi_target_scenes.yaml (템플릿)
+#
+# Part B의 ACT shortcut learning 방지 — 한 장면에 여러 후보 객체를 배치하고
+# 같은 시각 입력에 대해 다른 언어 명령으로 다른 행동을 하는 에피소드를
+# 의도적으로 생성한다.
+#
+# generate_act_dataset.py가 매 에피소드 시작 시 본 파일을 로드하여 장면을 구성.
+# generate_language_labels.py가 후속으로 각 에피소드에 자연어 라벨을 부여.
+#
+# 미구현 항목 (사용자 결정 필요):
+#   - 도메인별 객체 셋 (recycling, library 등 각 도메인의 class 목록)
+#   - 객체 USD 경로 (object-usd-dir 하위 어떤 파일과 매핑되는지)
+#   - 객체 색상/크기 jitter 범위
+#   - target_rotation 표현 — 현재 단순 fstring placeholder
+
+scenes:
+  - name: recycling_table_3objects
+    domain: recycling
+    objects:
+      - {class: can,    color: [red, blue, green],   count: 1}
+      - {class: bottle, color: [transparent, green], count: 1}
+      - {class: paper,  color: [white],              count: 1}
+    # 같은 객체 배치에 대해 부여될 후보 타겟 명령 풀.
+    # 에피소드 단위로 한 항목을 무작위 선택하여 expert IK가 그 객체를 grasp.
+    target_rotation:
+      - "pick up the {color} {class}"
+      - "grab the {class} on the table"
+
+  # TODO: library 등 다른 도메인 장면 추가
+  #  - name: library_table_2books
+  #    domain: library
+  #    objects:
+  #      - {class: book, color: [red, blue], count: 1}
+  #      - {class: book, color: [green],     count: 1}
+
+# 전체 에피소드 중 multi-target 장면이 차지하는 비율.
+# 1.0 - multi_target_ratio 만큼은 단일 객체 장면으로 생성된다.
+multi_target_ratio: 0.6

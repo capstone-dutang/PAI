@@ -2,25 +2,30 @@
 # =============================================================================
 # train_act_cotraining.sh
 # -----------------------------------------------------------------------------
-# 목적: Part E — ACT Policy를 Sim dataset(B-2) + Real dataset(D) 혼합으로
+# 목적: Part E — ACT Policy를 Sim dataset(Part B) + Real dataset(Part D) 혼합으로
 #       Co-training 한다. LeRobot 0.4.4의 멀티 데이터셋 학습 기능을 사용.
 #
 # 실행 환경: 외부 PC (Ubuntu, GPU VRAM 16GB+)
-# 결과물: act_policy.pth → Part F에서 Jetson 배포
+# 결과물: act.pth → Part F에서 Jetson 배포 (~/models/act/act.pth)
 #
 # 선행 조건:
-#   - Part B-2 완료: Sim LeRobotDataset 생성 (~1000 에피소드)
+#   - Part B 완료: Sim LeRobotDataset 생성 (~1000 에피소드)
+#                  + sim/generate_language_labels.py로 language_embedding 채움
 #   - Part D 완료: Real LeRobotDataset 수집 (50~100 에피소드)
-#   - 두 데이터셋의 features 스펙 동일:
-#       observation.state (6,) / observation.object_pose (3,) /
-#       action (6,) / observation.images.top (RGB)
+#                  + record_teleop.py로 language_embedding 포함하여 기록
+#   - 두 데이터셋의 features 스펙이 정확히 일치해야 한다 (Co-training 가능 조건):
+#       observation.state              (6,)    float32
+#       observation.language_embedding (D,)    float32  ← 동일 D 강제
+#       observation.images.top         (H,W,3) uint8    (RGB만)
+#       action                         (6,)    float32
+#   - 임베딩 모델은 Part D, Part F의 embedding_node와도 동일해야 한다 (README #1).
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
 # [1] 환경 변수 (값은 사용자 환경에 맞게 수정 필요 — 현재 미확정)
 # -----------------------------------------------------------------------------
-# SIM_DATASET_REPO_ID   : Part B-2가 저장한 Sim dataset repo id
+# SIM_DATASET_REPO_ID   : Part B가 저장한 Sim dataset repo id
 # REAL_DATASET_REPO_ID  : Part D가 저장한 Real dataset repo id
 # OUTPUT_DIR            : 학습 결과(체크포인트, 로그) 저장 경로
 # DEVICE                : cuda:0 등
@@ -31,13 +36,16 @@
 # [2] LeRobot 학습 커맨드 (개념 구조)
 # -----------------------------------------------------------------------------
 # lerobot-train 또는 python -m lerobot.scripts.train 를 사용.
-# 멀티 데이터셋 지정 방식:
-#   --dataset.repo_id=[${SIM_DATASET_REPO_ID},${REAL_DATASET_REPO_ID}]
+# 멀티 데이터셋 지정 방식 (의사 코드 — README Part E 참조):
+#   datasets = [
+#       LeRobotDataset(SIM_DATASET_REPO_ID,  weight=0.7),
+#       LeRobotDataset(REAL_DATASET_REPO_ID, weight=0.3),
+#   ]
 #
 # 혼합 비율(샘플링 가중치) 고려:
 #   - 단순 concat 시 Sim(1000) : Real(100) = 10:1 로 Sim이 우세
-#   - Real의 가중치를 상향(예: 1:1 또는 3:1)하여 실기 분포를 충분히 반영
-#   - LeRobot 0.4.4의 멀티 dataset weight 인자 확인 필요 (미확정)
+#   - Real의 가중치를 상향(예: 0.7/0.3 또는 0.5/0.5)하여 실기 분포 반영
+#   - LeRobot 0.4.4의 weight 인자 정확한 형태는 운영 시점에 확인 필요 (미확정)
 #
 # 주요 하이퍼파라미터 (ACT):
 #   --policy.type=act
@@ -48,10 +56,13 @@
 #   --training.save_checkpoint_freq : 체크포인트 주기
 #   --training.eval_freq            : 검증 주기
 #
-# 입력 feature:
-#   - observation.images.top  (visual encoder)
-#   - observation.state       (proprioception)
-#   - observation.object_pose (VLM/YOLO 3D 좌표 — Sim은 GT, Real은 추론값)
+# 학습 입력 obs (act_node._predict_chunk()의 obs dict 키와 정확히 일치):
+#   - observation.images.top         (visual encoder)
+#   - observation.state              (proprioception)
+#   - observation.language_embedding (language conditioning, D차원)
+#
+# 학습 타겟:
+#   - action (chunk_size=100 시퀀스)
 
 
 # -----------------------------------------------------------------------------
@@ -59,7 +70,7 @@
 # -----------------------------------------------------------------------------
 # - ${OUTPUT_DIR}/checkpoints/last.pt
 # - ${OUTPUT_DIR}/checkpoints/best.pt
-# → Jetson ~/models/act/act_policy.pth 로 복사하여 Part F 배포
+# → Jetson ~/models/act/act.pth 로 복사하여 Part F 배포
 
 
 # -----------------------------------------------------------------------------
@@ -71,10 +82,12 @@
 
 
 # -----------------------------------------------------------------------------
-# TODO (구현 전 확인 필요)
+# 미구현 / 결정 필요 항목
 # -----------------------------------------------------------------------------
-# [ ] LeRobot 0.4.4가 멀티 데이터셋 + 샘플링 가중치를 공식 지원하는지 확인
+# [ ] LeRobot 0.4.4의 멀티 데이터셋 + 샘플링 가중치 공식 지원 여부
 #     (미지원 시 dataset concat + WeightedRandomSampler 커스텀 필요)
-# [ ] Sim:Real 혼합 비율 결정 (1:1 / 3:1 / 10:1 실험 필요)
+# [ ] Sim:Real 혼합 비율 결정 (0.7:0.3 / 0.5:0.5 / 0.3:0.7 실험 필요)
 # [ ] batch_size, offline_steps, learning rate 확정
 # [ ] Real dataset 검증 split 분리 방식
+# [ ] features의 language_embedding 차원 D가 두 데이터셋에서 일치하는지를
+#     학습 진입 전에 검증하는 단계 추가 (불일치 시 즉시 abort)

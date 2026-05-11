@@ -1,0 +1,23 @@
+# domain_map.yaml
+#
+# agent_node가 /user_command를 받았을 때 도메인을 분류하는 데 사용하는 매핑.
+# 현재 구현은 단순 substring 매칭 (agent_node._classify_domain).
+# 가장 먼저 매칭되는 항목의 domain이 선택된다.
+#
+# 매칭 우선순위(앞쪽 entry 우선), 동의어 정규화, 대소문자/형태소 처리 같은
+# 정교한 분류 로직은 README 미확정. 여기서는 placeholder 키워드만 둔다.
+#
+# 도메인 이름 규약:
+#   adapter_<domain>.gguf 파일명과 동일해야 한다.
+#   예: domain "recycling"  →  ~/models/gemma/adapters/adapter_recycling.gguf
+
+mapping:
+  - keywords: ["쓰레기", "분리수거", "재활용", "캔", "페트병", "병"]
+    domain: recycling
+
+  - keywords: ["책", "도서", "도서관", "정리"]
+    domain: library
+
+  # TODO: 도메인 추가 시 위 형식대로 entry 추가.
+  #       매칭 실패 시 fallback 정책(default 도메인 / 사용자에게 재질문)은
+  #       agent_node에서 미구현 — 현재는 에러 로그 후 명령 폐기.

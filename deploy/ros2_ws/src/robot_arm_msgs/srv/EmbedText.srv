@@ -1,0 +1,20 @@
+# EmbedText
+#
+# agent_node / record_teleop.py → embedding_node
+# 자연어 텍스트를 임베딩 벡터로 변환한다.
+#
+# 응답의 dim은 임베딩 모델 로드 시점에 자동으로 결정되며, 호출 측은 dim을 사전에
+# 알 필요가 없다 (모델 변경 시 학습 데이터셋 재생성이 강제되므로 운영 중 변경
+# 가능성은 없다).
+#
+# request:
+#   text       : 임베딩할 자연어 문자열
+#
+# response:
+#   embedding  : 임베딩 벡터 (길이 = dim)
+#   dim        : 임베딩 차원
+
+string text
+---
+float32[] embedding
+int32 dim
