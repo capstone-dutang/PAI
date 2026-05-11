@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-import torch
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
@@ -38,7 +37,9 @@ from sensor_msgs.msg import JointState
 from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 
-# SO-101 관절 이름 — LeRobot observation.state 텐서 차원 순서와 일치
+# SO-101 관절 이름 — LeRobot SDK의 모터 이름과 일치.
+# SDK는 get_observation()에서 {motor}.pos 형태로 위치를 반환하고,
+# send_action()도 같은 dict 형식을 받는다.
 SO101_JOINT_NAMES: List[str] = [
     'shoulder_pan',
     'shoulder_lift',
@@ -113,27 +114,26 @@ class RobotControllerNode(Node):
         JointState 메시지를 받아 SO-101 모터로 전송.
         cmd.position 은 SO101_JOINT_NAMES 순서의 6개 값이어야 함.
         """
-        action = torch.tensor(list(cmd.position), dtype=torch.float32)
+        action = {
+            f'{name}.pos': float(pos)
+            for name, pos in zip(SO101_JOINT_NAMES, cmd.position)
+        }
         self._robot.send_action(action)
 
     def _read_joints(self) -> Optional[JointState]:
         """
         SO-101 현재 관절 상태를 읽어 JointState 메시지로 반환.
 
-        Returns:
-            JointState — 현재 관절 상태. 실패 시 None.
+        SDK 반환 dict에서 {motor}.pos 키만 추려 6개 값을 모은다.
+        (카메라 등록 시 obs에 이미지 키가 함께 들어올 수 있어 명시적으로 골라야 한다.)
         """
         obs = self._robot.get_observation()
-
-        # observation.state: shape (6,) torch.Tensor
-        # 순서: shoulder_pan, shoulder_lift, elbow_flex,
-        #        wrist_flex, wrist_roll, gripper
-        state_tensor: torch.Tensor = obs['observation.state']
+        positions = [float(obs[f'{name}.pos']) for name in SO101_JOINT_NAMES]
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name         = SO101_JOINT_NAMES
-        msg.position     = state_tensor.tolist()
+        msg.position     = positions
         return msg
 
     def destroy_node(self) -> None:
