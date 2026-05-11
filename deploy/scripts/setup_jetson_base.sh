@@ -59,6 +59,9 @@ sudo apt update
 sudo apt install -y \
     python3-opencv \
     libopencv-dev \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    python3-vcstool \
     ros-humble-realsense2-camera \
     ros-humble-realsense2-description \
     ros-humble-message-filters \
