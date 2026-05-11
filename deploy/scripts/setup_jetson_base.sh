@@ -62,6 +62,8 @@ sudo apt install -y \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-vcstool \
+    ros-humble-ros2cli \
+    ros-humble-ros2launch \
     ros-humble-realsense2-camera \
     ros-humble-realsense2-description \
     ros-humble-message-filters \
@@ -84,12 +86,17 @@ echo -e "${GREEN}pip 패키지 설치 완료${NC}"
 # ROS 2 노드는 시스템 Python(/usr/bin/python3)으로 실행되므로 학습용 venv와는
 # 별개로 ~/.local site-packages에도 핵심 의존성이 필요하다. venv 활성화 여부와
 # 무관하게 시스템 python3를 명시적으로 호출해 user-local로만 설치한다.
+#   - setuptools<60: ROS 2 humble의 ament_python은 setuptools 58 기준으로
+#                    install_scripts 위치를 lib/<pkg>/로 redirect한다. 60+
+#                    에서 동작이 변경돼 console_scripts가 bin/으로 가버려
+#                    `ros2 launch`가 노드를 못 찾는다.
 #   - pandas: 시스템 dist-packages의 구버전이 user-local numpy(2.x)와
 #             바이너리 호환되지 않아 ROS 노드 import 시 충돌. user-local에
 #             깔아 sys.path 우선순위로 해결.
 #   - transforms3d: easy_handeye2 런타임 의존성.
 echo -e "\n${YELLOW}[4/7] ROS 노드용 user-local 패키지 설치${NC}"
 
+/usr/bin/python3 -m pip install --user "setuptools<60"
 /usr/bin/python3 -m pip install --user --upgrade \
     pandas \
     transforms3d
