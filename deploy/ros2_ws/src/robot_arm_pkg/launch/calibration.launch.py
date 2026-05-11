@@ -19,7 +19,7 @@ Part A — 카메라-로봇 Hand-Eye 캘리브레이션 (Eye-to-Hand)
   3. 각 포즈에서 'Take Sample' 클릭
   4. 'Compute' → 'Save' 클릭
   5. 결과 파일 확인:
-     ~/.ros/easy_handeye2/eye_to_hand_calibration.yaml
+     ~/.ros/easy_handeye2/eye_on_base_calibration.yaml
 
 파라미터 조정:
   marker_id   : 출력한 ArUco 마커 ID (기본 0)
@@ -34,7 +34,8 @@ TODO — URDF 설정:
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -134,30 +135,29 @@ def generate_launch_description():
         output='screen',
     )
 
-    # ── 5. easy_handeye2 캘리브레이션 노드 ─────────────────────────
-    # 패키지: easy_handeye2 (소스 빌드 필요)
-    # GUI: ros2 run rqt_gui rqt_gui --force-discover 후 EasyHandeye2 플러그인
-    easy_handeye2_node = Node(
-        package='easy_handeye2',
-        executable='calibrate',
-        name='easy_handeye2',
-        parameters=[{
-            # Eye-to-Hand: 카메라 고정, 마커가 로봇에 부착
-            'calibration_type':     'eye_to_hand',
-
-            # 로봇 TF 프레임
+    # ── 5. easy_handeye2 캘리브레이션 (헬퍼 런치 포함) ──────────────
+    # easy_handeye2는 단일 노드가 아니라 calibrate.launch.py가
+    # handeye_server + rqt_calibrator 등을 한꺼번에 띄우는 구조이므로
+    # IncludeLaunchDescription으로 포함시킨다.
+    #   calibration_type 값은 easy_handeye2 용어로 'eye_in_hand' 또는
+    #   'eye_on_base'. 우리 구성(카메라 고정 + 마커가 로봇 손)은 'eye_on_base'.
+    easy_handeye2_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('easy_handeye2'),
+                'launch',
+                'calibrate.launch.py',
+            ])
+        ),
+        launch_arguments={
+            'name':                  'eye_on_base_calibration',
+            'calibration_type':      'eye_on_base',
             # TODO: SO-101 URDF의 실제 프레임 이름으로 수정
-            'robot_base_frame':     'base_link',
-            'robot_effector_frame': 'gripper_frame_link',   # LeRobot SO-101 URDF 기준
-
-            # 마커 TF 프레임 (aruco_ros가 발행)
+            'robot_base_frame':      'base_link',
+            'robot_effector_frame':  'gripper_frame_link',
             'tracking_base_frame':   'camera_color_optical_frame',
             'tracking_marker_frame': 'aruco_marker_frame',
-
-            # 캘리브레이션 저장 이름
-            'name': 'eye_to_hand_calibration',
-        }],
-        output='screen',
+        }.items(),
     )
 
     return LaunchDescription([
@@ -168,5 +168,5 @@ def generate_launch_description():
         aruco_node,
         robot_controller_node,
         robot_state_publisher_node,
-        easy_handeye2_node,
+        easy_handeye2_launch,
     ])
