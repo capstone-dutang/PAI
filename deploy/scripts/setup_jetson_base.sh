@@ -11,8 +11,8 @@
 #   - ROS2 Humble 설치 완료
 #
 # 실행 방법:
-#   chmod +x scripts/setup_jetson_base.sh
-#   ./scripts/setup_jetson_base.sh
+#   chmod +x deploy/scripts/setup_jetson_base.sh
+#   ./deploy/scripts/setup_jetson_base.sh
 # =============================================================================
 
 set -e
@@ -23,8 +23,8 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROS2_WS="$REPO_ROOT/ros2_ws"
+DEPLOY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROS2_WS="$DEPLOY_ROOT/ros2_ws"
 REQUIREMENTS="$ROS2_WS/src/robot_arm_pkg/requirements.txt"
 
 echo -e "${GREEN}==============================${NC}"
@@ -129,4 +129,4 @@ echo "  source /opt/ros/humble/setup.bash"
 echo "  source $ROS2_WS/install/setup.bash"
 echo ""
 echo "캘리브레이션이 필요하다면 추가로 실행하세요:"
-echo "  ./scripts/setup_calibration.sh"
+echo "  ./deploy/scripts/setup_calibration.sh"

@@ -9,8 +9,8 @@
 #   - setup_jetson_base.sh 실행 완료
 #
 # 실행 방법:
-#   chmod +x scripts/setup_calibration.sh
-#   ./scripts/setup_calibration.sh
+#   chmod +x deploy/scripts/setup_calibration.sh
+#   ./deploy/scripts/setup_calibration.sh
 # =============================================================================
 
 set -e
@@ -21,8 +21,8 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROS2_WS="$REPO_ROOT/ros2_ws"
+DEPLOY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROS2_WS="$DEPLOY_ROOT/ros2_ws"
 
 echo -e "${GREEN}==============================${NC}"
 echo -e "${GREEN} 캘리브레이션 환경 설치 시작${NC}"
@@ -34,17 +34,19 @@ echo -e "${GREEN}==============================${NC}"
 if [ ! -d "$ROS2_WS/install/robot_arm_pkg" ]; then
     echo -e "${RED}[오류] robot_arm_pkg가 빌드되어 있지 않습니다.${NC}"
     echo "먼저 setup_jetson_base.sh를 실행하세요:"
-    echo "  ./scripts/setup_jetson_base.sh"
+    echo "  ./deploy/scripts/setup_jetson_base.sh"
     exit 1
 fi
 
 # =============================================================================
 # 1. apt 패키지 설치
 # =============================================================================
-echo -e "\n${YELLOW}[1/4] apt 패키지 설치${NC}"
+echo -e "\n${YELLOW}[1/5] apt 패키지 설치${NC}"
 
 sudo apt update
 sudo apt install -y \
+    python3-rosdep \
+    python3-colcon-common-extensions \
     ros-humble-robot-state-publisher \
     ros-humble-rqt \
     ros-humble-rqt-gui
@@ -52,9 +54,22 @@ sudo apt install -y \
 echo -e "${GREEN}apt 패키지 설치 완료${NC}"
 
 # =============================================================================
-# 2. aruco_opencv 소스 빌드
+# 2. rosdep 초기화
 # =============================================================================
-echo -e "\n${YELLOW}[2/4] aruco_opencv 소스 빌드${NC}"
+echo -e "\n${YELLOW}[2/5] rosdep 초기화${NC}"
+
+if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+    sudo rosdep init
+    echo -e "${GREEN}rosdep init 완료${NC}"
+else
+    echo "rosdep 이미 초기화됨. 스킵."
+fi
+rosdep update
+
+# =============================================================================
+# 3. aruco_opencv 소스 클론
+# =============================================================================
+echo -e "\n${YELLOW}[3/5] aruco_opencv 소스 클론${NC}"
 
 cd "$ROS2_WS/src"
 
@@ -66,9 +81,9 @@ else
 fi
 
 # =============================================================================
-# 3. easy_handeye2 소스 빌드
+# 4. easy_handeye2 소스 클론
 # =============================================================================
-echo -e "\n${YELLOW}[3/4] easy_handeye2 소스 빌드${NC}"
+echo -e "\n${YELLOW}[4/5] easy_handeye2 소스 클론${NC}"
 
 if [ -d "easy_handeye2" ]; then
     echo "easy_handeye2 이미 클론됨. 스킵."
@@ -78,9 +93,9 @@ else
 fi
 
 # =============================================================================
-# 4. 빌드
+# 5. 빌드
 # =============================================================================
-echo -e "\n${YELLOW}[4/4] 빌드${NC}"
+echo -e "\n${YELLOW}[5/5] 빌드${NC}"
 
 source /opt/ros/humble/setup.bash
 cd "$ROS2_WS"
