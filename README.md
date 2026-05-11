@@ -469,7 +469,7 @@ cd ~/ros2_ws && colcon build --packages-select robot_arm_pkg
 
 ```bash
 # 패키지 빌드 및 소스
-cd ~/ros2_ws
+cd ~/PAI/deploy/ros2_ws
 colcon build --packages-select robot_arm_pkg
 source install/setup.bash
 
