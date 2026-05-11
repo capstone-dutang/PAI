@@ -95,9 +95,11 @@ Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
 ```
 ~/
 ├── ros2_ws/
-│   └── src/
-│       ├── robot_arm_msgs/        # 커스텀 메시지 패키지 (신규)
-│       └── robot_arm_pkg/
+│   ├── src/
+│   │   ├── robot_arm_msgs/        # 커스텀 메시지 패키지 (신규)
+│   │   └── robot_arm_pkg/
+│   └── config/
+│       └── domain_map.yaml        # deploy/config/domain_map.yaml에서 복사
 │
 ├── models/
 │   ├── gemma/
@@ -113,7 +115,7 @@ Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
 ├── calibration/
 │   ├── camera_intrinsics.yaml
 │   ├── camera_robot_transform.yaml
-│   └── grasp_roi.yaml             # verify_result용 엔드이펙터 ROI 정의 (신규)
+│   └── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
 │
 └── llama.cpp/
     └── llama-server               # systemd 서비스, --jinja 활성
@@ -230,9 +232,13 @@ PAI/
 │               ├── scripts/
 │               │   └── record_teleop.py        # 데이터 수집 스크립트 (Part D, 신규)
 │               ├── launch/
+│               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
+│               │   ├── so101.urdf
+│               │   └── assets/                 # *.stl 메쉬 자산
 │               ├── resource/
 │               ├── package.xml
 │               ├── setup.py
+│               ├── setup.cfg
 │               └── requirements.txt
 │
 ├── sim/                                        # [데이터 생성 목적] Isaac Sim 전용
@@ -252,7 +258,7 @@ PAI/
 │       ├── convert_lora_to_gguf.sh             # Part C-3: GGUF 변환
 │       └── train_act_cotraining.sh             # Part E: ACT Co-training
 │
-├── shared/                                     # 3목적 공통 자산 (예정: URDF 등)
+├── shared/                                     # 3목적 공통 자산 (현재 비어 있음)
 ├── docs/
 └── README.md
 ```
@@ -383,8 +389,23 @@ PAI/
 cd deploy/ros2_ws
 colcon build --packages-select robot_arm_msgs robot_arm_pkg
 source install/setup.bash
+```
 
-# Jetson 실기 배포 시: deploy/ros2_ws 내용을 Jetson의 ~/ros2_ws 로 복사 후 빌드
+Jetson 실기 배포 시 다음을 복사한 후 빌드:
+
+```bash
+# 1) 저장소의 deploy/ros2_ws/src/* 를 Jetson의 ~/ros2_ws/src/ 로 복사
+cp -r <repo>/deploy/ros2_ws/src/* ~/ros2_ws/src/
+
+# 2) 런타임 설정 복사
+mkdir -p ~/ros2_ws/config ~/calibration
+cp <repo>/deploy/config/domain_map.yaml ~/ros2_ws/config/domain_map.yaml
+cp <repo>/deploy/config/grasp_roi.yaml  ~/calibration/grasp_roi.yaml   # 캘리브레이션 후 실측값으로 갱신
+
+# 3) 빌드
+cd ~/ros2_ws
+colcon build --packages-select robot_arm_msgs robot_arm_pkg
+source install/setup.bash
 ```
 
 ### 배포 실행 (Part F)
@@ -452,15 +473,13 @@ aruco_opencv, easy_handeye2 소스 빌드 및 관련 apt 패키지가 자동으�
 
 ### SO-101 URDF 배치
 
-```bash
-# LeRobot 저장소에서 SO-101 URDF 복사
-# 경로 예시 (LeRobot 설치 위치에 따라 다를 수 있음):
-#   ~/.local/lib/python3.10/site-packages/lerobot/robots/so101/urdf/
-cp <lerobot_urdf_path>/so101.urdf ~/ros2_ws/src/robot_arm_pkg/urdf/so101.urdf
+저장소에 SO-101 URDF와 STL 자산이 포함되어 있다:
 
-# setup.py의 urdf 주석 해제 후 재빌드
-cd ~/ros2_ws && colcon build --packages-select robot_arm_pkg
-```
+- `deploy/ros2_ws/src/robot_arm_pkg/urdf/so101.urdf`
+- `deploy/ros2_ws/src/robot_arm_pkg/urdf/assets/*.stl`
+
+`setup.py`가 빌드 시 `share/robot_arm_pkg/urdf/`로 복사하도록 활성화되어 있어
+별도 외부 복사 없이 그대로 사용 가능하다.
 
 > URDF의 엔드이펙터 링크 이름을 확인하여 `calibration.launch.py`의
 > `robot_effector_frame` 파라미터와 일치시킬 것.
@@ -469,7 +488,7 @@ cd ~/ros2_ws && colcon build --packages-select robot_arm_pkg
 
 ```bash
 # 패키지 빌드 및 소스
-cd ~/PAI/deploy/ros2_ws
+cd ~/ros2_ws
 colcon build --packages-select robot_arm_pkg
 source install/setup.bash
 
@@ -498,6 +517,10 @@ cp ~/.ros/easy_handeye2/eye_to_hand_calibration.yaml \
 
 # camera_intrinsics는 RealSense camera_info 토픽에서 추출
 ros2 topic echo /camera/color/camera_info --once > ~/calibration/camera_intrinsics.yaml
+
+# 저장소에도 보관 (백업 / 외부 PC Sim 학습에서 동일 intrinsics 사용)
+cp ~/calibration/camera_intrinsics.yaml      <repo>/deploy/calibration/
+cp ~/calibration/camera_robot_transform.yaml <repo>/deploy/calibration/
 ```
 
 ### `grasp_roi.yaml` 작성
@@ -526,7 +549,7 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 
 1. SO-101 리더/팔로워 USB 포트 확인
 2. LeRobot 캘리브레이션 완료 (`lerobot-calibrate`)
-3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 배치
+3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
 4. 임베딩 모델 결정 및 배치 (Part C/E와 동일 모델 사용 필수)
 
 ### 실행 순서
@@ -785,31 +808,39 @@ datasets = [
 
 ## 미구현 항목 (TODO)
 
-| 파일 | 미구현 항목 | 선행 조건 |
-|------|------------|----------|
-| `robot_arm_msgs/` | 패키지 신규 생성 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` 메시지 + `EmbedText` 서비스) | 메시지/서비스 스키마 확정 |
-| `agent_node.py` | 신규 작성. Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, 사용자 명령→도메인 분류, `verify_result` 내부 depth grasp 검증, `embedding_node` Service 호출, max_iteration=3 | Part C, llama-server 구동, embedding_node |
-| `embedding_node.py` | 신규 작성. `/embed_text` Service 제공. 임베딩 모델 로드 및 추론 | 임베딩 모델 확정 |
-| `llama_server_manager.py` | 신규 작성. `/domain_selection` 수신 → llama-server `/lora-adapter` HTTP 요청 → `/selected_domain` 발행 | adapter GGUF 준비 |
-| `act_node.py` | `_load_policy()`, `_predict_chunk()`, `SubtaskCommand` (language_embedding) 입력 처리, `ExecutionStatus` 발행 | Part E 완료 |
-| `camera_node.py` | ~~`PlaceholderAdapter.get_frames()`~~ 구현 완료 | - |
-| `record_teleop.py` | 신규 작성. 자연어 라벨 입력 + 임베딩 채널 기록. 라벨링 방식(Option A/B/C) 결정 후 구현 | embedding_node, 라벨링 방식 결정 |
-| `setup.py` | `entry_points` 갱신 — 추가: `agent_node`, `embedding_node`, `llama_server_manager` / 제거: `vlm_node`, `yolo_node`, `state_monitor_node` | 신규 노드 작성 |
-| `sim/generate_act_dataset.py` | IK 전문가 + DR + multi-target 장면 기반 시연 생성 | SO-101 USD, IK 솔버 결정 |
-| `sim/generate_language_labels.py` | 신규 작성. Gemma 자체 라벨링 + 외부 LLM paraphrase 합성 | Gemma 4 E2B 추론 환경 |
-| `sim/config/dr_config.yaml` | DR 파라미터 정의 (조명·텍스처·카메라 FOV·질량·마찰·PD 게인·이미지 노이즈) | - |
-| `sim/config/multi_target_scenes.yaml` | 장면 템플릿 정의 (다중 객체 배치, 타겟 rotation) | 도메인 객체 셋 결정 |
-| `training/scripts/generate_qa_from_pdf.py` | 신규 작성. 도메인 PDF → Cat-A 도메인 지식 Q&A | 도메인 문서 수집 |
-| `training/scripts/generate_function_call_qa.py` | 신규 작성. 외부 LLM 합성 Cat-B 함수 호출 시나리오 | 함수 시그니처 확정 |
-| `training/scripts/generate_verify_qa.py` | 신규 작성. Sim 렌더링 + 자동 라벨링으로 Cat-C 검증 시나리오 | Sim 환경, ground truth 라벨러 |
-| `training/scripts/merge_qa_dataset.py` | 신규 작성. 3종 Q&A를 비율 옵션에 따라 혼합 | Cat-A/B/C 데이터 |
-| `training/scripts/train_gemma_qlora.py` | 신규 작성. Unsloth QLoRA 학습 스크립트 | 혼합 Q&A 데이터셋 |
-| `training/scripts/convert_lora_to_gguf.sh` | 신규 작성. HF LoRA → GGUF 변환 (`convert_lora_to_gguf.py`) | llama.cpp 빌드 |
-| `training/scripts/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 (Sim+Real) | LeRobot 멀티 데이터셋 가중치 지원 확인, language_embedding 채널 검증 |
-| `deploy/config/grasp_roi.yaml` | 엔드이펙터 ROI 정의 (carrera frame 기준) | 캘리브레이션 완료, 엔드이펙터 측정 |
+아래 항목은 **스켈레톤(인터페이스/CLI/파라미터)은 작성 완료**이고 핵심 로직이
+미구현인 상태이다. 각 파일은 `NotImplementedError` 또는 warn 로그로
+미구현 영역을 명시한다.
 
-> **제거 예정 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
-> `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_teleop.py`로 대체.
+| 파일 | 미구현 핵심 로직 | 선행 조건 |
+|------|------------------|----------|
+| `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체 | Part C, llama-server 구동, embedding_node |
+| `embedding_node.py` | `_load_model()`, `_embed()` (인터페이스는 완성) | 임베딩 모델 확정 |
+| `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
+| `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
+| `record_teleop.py` | `prompt_episode_label()`, `open_dataset()`, `connect_so101()`, `record_episode()` | embedding_node, 라벨링 방식 결정 |
+| `sim/generate_act_dataset.py` | IK 전문가 + DR + multi-target 장면 기반 시연 생성 본체 | SO-101 USD 변환, IK 솔버 결정 |
+| `sim/generate_language_labels.py` | Gemma 자체 라벨링 + 외부 LLM paraphrase + 임베딩 채널 채우기 | 임베딩 모델 확정 |
+| `sim/config/dr_config.yaml` | DR 파라미터 실측값 (조명·텍스처·FOV·질량·마찰·PD 게인) | 실기 측정 |
+| `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 | 도메인 객체 결정 |
+| `training/scripts/generate_qa_from_pdf.py` | PDF 추출 + LLM Q&A 생성 + 필터링 | 도메인 문서 수집 |
+| `training/scripts/generate_function_call_qa.py` | LLM 합성, 함수 시그니처는 agent_node와 정확히 일치 | 함수 시그니처 확정 |
+| `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 | Sim 환경, ground truth 라벨러 |
+| `training/scripts/merge_qa_dataset.py` | 부족분 처리 정책 결정 후 본체 구현 | Cat-A/B/C 데이터 |
+| `training/scripts/train_gemma_qlora.py` | Unsloth 모델/데이터/학습 루프 | 혼합 Q&A 데이터셋, Unsloth 호환 확인 |
+| `training/scripts/convert_lora_to_gguf.sh` | llama.cpp 변환 호출 활성화 | llama.cpp 빌드, 변환 스크립트 경로 확인 |
+| `training/scripts/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
+| `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 | 캘리브레이션 완료, 엔드이펙터 측정 |
+| `deploy/calibration/` | `camera_intrinsics.yaml`, `camera_robot_transform.yaml` 배치 | Part A 캘리브레이션 수행 |
+
+> **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
+> - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
+> - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
+> - `deploy/config/domain_map.yaml` 템플릿
+> - `camera_node.py`
+
+> **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
+> `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_teleop.py`로 대체됨.
 
 > **이전 설계 대비 추가 제거 항목**: `agent_node`의 3D 좌표 산출 로직,
 > `observation.target_position` 채널, `SubtaskCommand`의 `target_class` /
