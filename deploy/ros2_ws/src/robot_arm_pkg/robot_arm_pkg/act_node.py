@@ -45,6 +45,7 @@ TODO (Part E 완료 후 구현):
 
 from __future__ import annotations
 
+import os
 from typing import List, Optional
 
 import rclpy
@@ -71,7 +72,10 @@ class ACTNode(Node):
         super().__init__('act_node')
 
         # ── 파라미터 ──────────────────────────────
-        self.declare_parameter('model_path', '/home/user/models/act/act.pth')
+        self.declare_parameter(
+            'model_path',
+            os.path.expanduser('~/models/act/act.pth'),
+        )
         self.declare_parameter('chunk_size', 100)
         self.declare_parameter('publish_hz', 30.0)
 

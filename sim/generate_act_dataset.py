@@ -34,12 +34,16 @@
 # [2] 씬 구성 (multi-target 포함)
 # -----------------------------------------------------------------------------
 # - SO-101 로봇 팔 로드:
-#     * USD 경로 필요 (현재 미확보. ros2_ws/src/robot_arm_pkg/urdf/so101.urdf를
-#       URDF Importer로 USD 변환해야 함)
+#     * 저장소에 URDF와 STL 자산이 포함됨:
+#         deploy/ros2_ws/src/robot_arm_pkg/urdf/so101.urdf
+#         deploy/ros2_ws/src/robot_arm_pkg/urdf/assets/*.stl
+#       (setup.py가 share에도 복사하도록 활성화되어 있음)
+#     * Isaac Sim에서 사용하려면 URDF Importer로 USD 변환 1회 필요.
 #     * joint 6개, end-effector link 이름 확인 필요
 #     * Action space는 position control (실기 SO-101과 반드시 일치)
 # - RealSense 모사 카메라:
-#     * intrinsics는 calibration/camera_intrinsics.yaml과 일치
+#     * intrinsics는 deploy/calibration/camera_intrinsics.yaml과 일치
+#       (Part A 캘리브레이션 후 산출되며 Jetson에서는 ~/calibration/ 하위로 배치)
 #     * RGB 출력 (depth는 ACT 학습 obs에 포함되지 않음)
 #     * 카메라 위치는 학습/배포 일관성을 위해 일정하게 유지하되, DR로 약간의
 #       offset을 준다 (실기 캘리브레이션 정밀도 요구가 낮아진 만큼 분포는 폭넓게)
@@ -115,7 +119,7 @@
 # 미구현 / 결정 필요 항목
 # -----------------------------------------------------------------------------
 # [ ] Isaac Sim 버전 (API import 경로 결정)
-# [ ] SO-101 USD 파일 보유 여부 및 경로
+# [ ] SO-101 USD (저장소의 URDF/STL에서 변환 1회 수행 + 산출 경로 확정)
 # [ ] IK 솔버 선택 (Lula IK / cuRobo)
 # [ ] 대상 물체 종류 및 USD (multi_target_scenes.yaml의 class 항목과 매칭)
 # [ ] 작업 공간 범위 (x, y, z bounds)
