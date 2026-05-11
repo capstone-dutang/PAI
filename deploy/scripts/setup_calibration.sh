@@ -50,7 +50,9 @@ sudo apt install -y \
     ros-humble-rosidl-runtime-py \
     ros-humble-robot-state-publisher \
     ros-humble-rqt \
-    ros-humble-rqt-gui
+    ros-humble-rqt-gui \
+    ros-humble-image-transport \
+    ros-humble-image-transport-plugins
 
 echo -e "${GREEN}apt 패키지 설치 완료${NC}"
 
