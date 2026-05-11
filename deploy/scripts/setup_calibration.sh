@@ -47,6 +47,7 @@ sudo apt update
 sudo apt install -y \
     python3-rosdep \
     python3-colcon-common-extensions \
+    ros-humble-rosidl-runtime-py \
     ros-humble-robot-state-publisher \
     ros-humble-rqt \
     ros-humble-rqt-gui

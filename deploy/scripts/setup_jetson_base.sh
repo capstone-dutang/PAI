@@ -70,18 +70,36 @@ sudo apt install -y \
 echo -e "${GREEN}apt 패키지 설치 완료${NC}"
 
 # =============================================================================
-# 3. pip 패키지 설치
+# 3. pip 패키지 설치 (학습/추론용 venv 대상)
 # =============================================================================
-echo -e "\n${YELLOW}[3/6] pip 패키지 설치${NC}"
+echo -e "\n${YELLOW}[3/7] pip 패키지 설치 (venv)${NC}"
 
 pip install -r "$REQUIREMENTS"
 
 echo -e "${GREEN}pip 패키지 설치 완료${NC}"
 
 # =============================================================================
-# 4. torch CUDA 확인
+# 4. ROS 런타임용 user-local Python 패키지 설치
 # =============================================================================
-echo -e "\n${YELLOW}[4/6] torch CUDA 확인${NC}"
+# ROS 2 노드는 시스템 Python(/usr/bin/python3)으로 실행되므로 학습용 venv와는
+# 별개로 ~/.local site-packages에도 핵심 의존성이 필요하다. venv 활성화 여부와
+# 무관하게 시스템 python3를 명시적으로 호출해 user-local로만 설치한다.
+#   - pandas: 시스템 dist-packages의 구버전이 user-local numpy(2.x)와
+#             바이너리 호환되지 않아 ROS 노드 import 시 충돌. user-local에
+#             깔아 sys.path 우선순위로 해결.
+#   - transforms3d: easy_handeye2 런타임 의존성.
+echo -e "\n${YELLOW}[4/7] ROS 노드용 user-local 패키지 설치${NC}"
+
+/usr/bin/python3 -m pip install --user --upgrade \
+    pandas \
+    transforms3d
+
+echo -e "${GREEN}user-local 패키지 설치 완료${NC}"
+
+# =============================================================================
+# 5. torch CUDA 확인
+# =============================================================================
+echo -e "\n${YELLOW}[5/7] torch CUDA 확인${NC}"
 
 CUDA_AVAILABLE=$(python3 -c "import torch; print(torch.cuda.is_available())")
 if [ "$CUDA_AVAILABLE" = "True" ]; then
@@ -93,9 +111,9 @@ else
 fi
 
 # =============================================================================
-# 5. SO-101 USB 권한 설정
+# 6. SO-101 USB 권한 설정
 # =============================================================================
-echo -e "\n${YELLOW}[5/6] SO-101 USB 권한 설정${NC}"
+echo -e "\n${YELLOW}[6/7] SO-101 USB 권한 설정${NC}"
 
 if groups "$USER" | grep -q dialout; then
     echo "dialout 그룹 이미 설정됨. 스킵."
@@ -106,9 +124,9 @@ else
 fi
 
 # =============================================================================
-# 6. robot_arm_pkg 빌드
+# 7. robot_arm_pkg 빌드
 # =============================================================================
-echo -e "\n${YELLOW}[6/6] robot_arm_pkg 빌드${NC}"
+echo -e "\n${YELLOW}[7/7] robot_arm_pkg 빌드${NC}"
 
 source /opt/ros/humble/setup.bash
 cd "$ROS2_WS"
