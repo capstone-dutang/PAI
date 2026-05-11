@@ -67,17 +67,20 @@ fi
 rosdep update
 
 # =============================================================================
-# 3. aruco_opencv 소스 클론
+# 3. aruco_ros 소스 클론
 # =============================================================================
-echo -e "\n${YELLOW}[3/5] aruco_opencv 소스 클론${NC}"
+# NVIDIA Jetson OpenCV 4.8.0 빌드에 aruco contrib 모듈이 빠져 있어
+# fictionlab/ros_aruco_opencv 대신 자체 aruco 라이브러리를 묶은
+# pal-robotics/aruco_ros (humble-devel)를 사용한다.
+echo -e "\n${YELLOW}[3/5] aruco_ros 소스 클론${NC}"
 
 cd "$ROS2_WS/src"
 
-if [ -d "ros_aruco_opencv" ]; then
-    echo "ros_aruco_opencv 이미 클론됨. 스킵."
+if [ -d "aruco_ros" ]; then
+    echo "aruco_ros 이미 클론됨. 스킵."
 else
-    git clone https://github.com/fictionlab/ros_aruco_opencv.git
-    echo -e "${GREEN}ros_aruco_opencv 클론 완료${NC}"
+    git clone -b humble-devel https://github.com/pal-robotics/aruco_ros.git
+    echo -e "${GREEN}aruco_ros 클론 완료${NC}"
 fi
 
 # =============================================================================
@@ -98,10 +101,20 @@ fi
 echo -e "\n${YELLOW}[5/5] 빌드${NC}"
 
 source /opt/ros/humble/setup.bash
+export ROS_DISTRO="${ROS_DISTRO:-humble}"
 cd "$ROS2_WS"
 
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --packages-select aruco_opencv aruco_opencv_msgs easy_handeye2 robot_arm_pkg
+# transforms3d: rosdep이 venv 환경에서 import 검증에 실패하는 경우가 있어
+# 활성 Python 환경에 직접 설치하고 rosdep 키에서는 스킵한다.
+pip install transforms3d
+
+rosdep install --from-paths src --ignore-src -r -y \
+    --rosdistro "$ROS_DISTRO" \
+    --skip-keys "transforms3d"
+colcon build --packages-select \
+    aruco aruco_msgs aruco_ros \
+    easy_handeye2 easy_handeye2_msgs \
+    robot_arm_pkg robot_arm_msgs
 source install/setup.bash
 
 echo -e "${GREEN}빌드 완료${NC}"

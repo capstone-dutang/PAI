@@ -74,19 +74,26 @@ def generate_launch_description():
     )
 
     # ── 2. ArUco 마커 검출 ──────────────────────────────────────────
-    # 패키지: ros-humble-aruco-opencv
-    # 검출 결과를 TF로 발행: camera_color_optical_frame → aruco_marker_0
+    # 패키지: aruco_ros (pal-robotics, humble-devel)
+    #   - 자체 aruco C++ 라이브러리 사용 → OpenCV contrib 의존 없음
+    #   - TF 발행: camera_color_optical_frame → aruco_marker_frame
     aruco_node = Node(
-        package='aruco_opencv',
-        executable='aruco_tracker_autostart',
-        name='aruco_tracker',
+        package='aruco_ros',
+        executable='single',
+        name='aruco_single',
         parameters=[{
-            'marker_size':    marker_size,
-            'marker_dict':    'DICT_4X4_50',   # 일반적인 4x4 ArUco 딕셔너리
-            'camera_frame':   'camera_color_optical_frame',
-            'image_topic':    '/camera/color/image_raw',
-            'camera_info_topic': '/camera/color/camera_info',
+            'marker_size':        marker_size,
+            'marker_id':          marker_id,
+            'reference_frame':    'camera_color_optical_frame',
+            'camera_frame':       'camera_color_optical_frame',
+            'marker_frame':       'aruco_marker_frame',
+            'image_is_rectified': True,
+            'corner_refinement':  'LINES',
         }],
+        remappings=[
+            ('/image',       '/camera/color/image_raw'),
+            ('/camera_info', '/camera/color/camera_info'),
+        ],
         output='screen',
     )
 
@@ -143,9 +150,9 @@ def generate_launch_description():
             'robot_base_frame':     'base_link',
             'robot_effector_frame': 'gripper_frame_link',   # LeRobot SO-101 URDF 기준
 
-            # 마커 TF 프레임 (aruco_opencv가 발행)
+            # 마커 TF 프레임 (aruco_ros가 발행)
             'tracking_base_frame':   'camera_color_optical_frame',
-            'tracking_marker_frame': f'aruco_marker_{marker_id}',
+            'tracking_marker_frame': 'aruco_marker_frame',
 
             # 캘리브레이션 저장 이름
             'name': 'eye_to_hand_calibration',
