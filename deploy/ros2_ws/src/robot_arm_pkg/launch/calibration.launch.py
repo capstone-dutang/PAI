@@ -75,26 +75,22 @@ def generate_launch_description():
     )
 
     # ── 2. ArUco 마커 검출 ──────────────────────────────────────────
-    # 패키지: aruco_ros (pal-robotics, humble-devel)
-    #   - 자체 aruco C++ 라이브러리 사용 → OpenCV contrib 의존 없음
-    #   - TF 발행: camera_color_optical_frame → aruco_marker_frame
+    # 패키지: aruco_opencv (fictionlab/ros_aruco_opencv)
+    #   - OpenCV contrib의 표준 ArUco API 사용
+    #   - aruco_ros의 OpenCV 4.8 호환성 버그 회피
+    #   - TF 발행: camera_color_optical_frame → marker_<id>
     aruco_node = Node(
-        package='aruco_ros',
-        executable='single',
-        name='aruco_single',
+        package='aruco_opencv',
+        executable='aruco_tracker_autostart',
+        name='aruco_tracker',
         parameters=[{
+            'cam_base_topic':     '/camera/realsense2_camera/color/image_raw',
             'marker_size':        marker_size,
-            'marker_id':          marker_id,
-            'reference_frame':    'camera_color_optical_frame',
-            'camera_frame':       'camera_color_optical_frame',
-            'marker_frame':       'aruco_marker_frame',
+            'marker_dict':        'ARUCO_ORIGINAL',
             'image_is_rectified': True,
-            'corner_refinement':  'LINES',
+            'transform_poses':    True,
+            'output_frame':       'camera_color_optical_frame',
         }],
-        remappings=[
-            ('/image',       '/camera/realsense2_camera/color/image_raw'),
-            ('/camera_info', '/camera/realsense2_camera/color/camera_info'),
-        ],
         output='screen',
     )
 
@@ -156,7 +152,7 @@ def generate_launch_description():
             'robot_base_frame':      'base_link',
             'robot_effector_frame':  'gripper_frame_link',
             'tracking_base_frame':   'camera_color_optical_frame',
-            'tracking_marker_frame': 'aruco_marker_frame',
+            'tracking_marker_frame': ['marker_', marker_id],
         }.items(),
     )
 
