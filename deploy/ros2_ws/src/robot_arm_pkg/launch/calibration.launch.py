@@ -104,9 +104,10 @@ def generate_launch_description():
         executable='robot_controller_node',
         name='robot_controller_node',
         parameters=[{
-            'robot_port': robot_port,
-            'robot_id':   'follower',
-            'publish_hz': 50.0,   # 캘리브레이션 중엔 50Hz로 충분
+            'robot_port':     robot_port,
+            'robot_id':       'follower',
+            'publish_hz':     50.0,   # 캘리브레이션 중엔 50Hz로 충분
+            'disable_torque': True,   # 수동으로 팔을 옮길 수 있도록 토크 해제
         }],
         output='screen',
     )

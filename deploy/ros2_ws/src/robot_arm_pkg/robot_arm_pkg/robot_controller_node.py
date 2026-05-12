@@ -56,13 +56,15 @@ class RobotControllerNode(Node):
         super().__init__('robot_controller_node')
 
         # ── 파라미터 ──────────────────────────────
-        self.declare_parameter('robot_port', '/dev/ttyACM0')
-        self.declare_parameter('robot_id',   'follower')
-        self.declare_parameter('publish_hz', 1000.0)
+        self.declare_parameter('robot_port',     '/dev/ttyACM0')
+        self.declare_parameter('robot_id',       'follower')
+        self.declare_parameter('publish_hz',     1000.0)
+        self.declare_parameter('disable_torque', False)
 
-        robot_port = self.get_parameter('robot_port').value
-        robot_id   = self.get_parameter('robot_id').value
-        publish_hz = self.get_parameter('publish_hz').value
+        robot_port     = self.get_parameter('robot_port').value
+        robot_id       = self.get_parameter('robot_id').value
+        publish_hz     = self.get_parameter('publish_hz').value
+        disable_torque = self.get_parameter('disable_torque').value
 
         # ── SO-101 LeRobot SDK 초기화 ─────────────
         robot_cfg = SO101FollowerConfig(
@@ -74,6 +76,23 @@ class RobotControllerNode(Node):
         self.get_logger().info(
             f'SO-101 연결 완료 | 포트: {robot_port} | ID: {robot_id}'
         )
+
+        # ── 캘리브레이션용 토크 비활성화 ──────────
+        # connect()는 자동으로 토크를 켜서 모터가 자세를 유지함.
+        # 캘리브레이션 중엔 수동으로 팔을 옮겨야 하므로 토크를 끈다.
+        # encoder는 계속 동작하므로 /joint_states 발행에는 영향 없음.
+        if disable_torque:
+            try:
+                if hasattr(self._robot, 'bus') and hasattr(self._robot.bus, 'disable_torque'):
+                    self._robot.bus.disable_torque()
+                elif hasattr(self._robot, 'disable_torque'):
+                    self._robot.disable_torque()
+                else:
+                    for motor_name in SO101_JOINT_NAMES:
+                        self._robot.bus.write('Torque_Enable', motor_name, 0)
+                self.get_logger().info('토크 비활성화 완료 — 수동 이동 가능')
+            except Exception as e:
+                self.get_logger().warn(f'토크 비활성화 실패: {e}')
 
         # ── 최신 커맨드 캐시 ──────────────────────
         self._latest_cmd: Optional[JointState] = None
