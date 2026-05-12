@@ -92,8 +92,8 @@ def generate_launch_description():
             'corner_refinement':  'LINES',
         }],
         remappings=[
-            ('/image',       '/camera/color/image_raw'),
-            ('/camera_info', '/camera/color/camera_info'),
+            ('/image',       '/camera/realsense2_camera/color/image_raw'),
+            ('/camera_info', '/camera/realsense2_camera/color/camera_info'),
         ],
         output='screen',
     )
