@@ -49,11 +49,14 @@ def generate_launch_description():
                                             description='ArUco 마커 ID')
     marker_size_arg = DeclareLaunchArgument('marker_size', default_value='0.05',
                                             description='ArUco 마커 크기 (미터)')
+    marker_dict_arg = DeclareLaunchArgument('marker_dict', default_value='ARUCO_ORIGINAL',
+                                            description='ArUco 딕셔너리 (예: 4X4_50, 5X5_100, 6X6_250, ARUCO_MIP_36h12)')
     robot_port_arg  = DeclareLaunchArgument('robot_port',  default_value='/dev/ttyACM0',
                                             description='SO-101 USB 포트')
 
     marker_id   = LaunchConfiguration('marker_id')
     marker_size = LaunchConfiguration('marker_size')
+    marker_dict = LaunchConfiguration('marker_dict')
     robot_port  = LaunchConfiguration('robot_port')
 
     # ── URDF 경로 ────────────────────────────────────────────────────
@@ -86,7 +89,7 @@ def generate_launch_description():
         parameters=[{
             'cam_base_topic':     '/camera/realsense2_camera/color/image_raw',
             'marker_size':        marker_size,
-            'marker_dict':        'ARUCO_ORIGINAL',
+            'marker_dict':        marker_dict,
             'image_is_rectified': True,
             'transform_poses':    True,
             'output_frame':       'camera_color_optical_frame',
@@ -159,6 +162,7 @@ def generate_launch_description():
     return LaunchDescription([
         marker_id_arg,
         marker_size_arg,
+        marker_dict_arg,
         robot_port_arg,
         realsense_node,
         aruco_node,
