@@ -101,16 +101,16 @@ from robot_arm_msgs.srv import EmbedText
 #         최신 1프레임만 캐싱한다 (BestEffort + KeepLast(1)).
 #         (LeRobot 자체 카메라 플러그인 직접 사용 안 함)
 #
-#   [4] 이미지 해상도 (H, W)
+#   [3] 이미지 해상도 (H, W)
 #         --img-h / --img-w CLI 인자로 결정. 기본 480 x 640 (RealSense 기본).
 #         Sim Part B 의 dataset feature shape 과 반드시 일치해야 Co-training 가능.
 #
-#   [6] 에피소드 종료 정책 — 'q' + Enter
+#   [4] 에피소드 종료 정책 — 'q' + Enter
 #         녹화 루프 중 stdin 에 'q'(또는 'Q') + Enter 가 들어오면 정상 종료.
 #         KeyboardInterrupt (Ctrl+C) 도 같은 경로로 흡수. 자동 타임아웃은
 #         사용하지 않음 — 시연 자유도 우선. Linux/macOS 전용 (Jetson 타깃).
 #
-#   [7] 에피소드 간 reset — follower 자동 home 복귀 (파일 영구화)
+#   [5] 에피소드 간 reset — follower 자동 home 복귀 (파일 영구화)
 #         녹화 직후 follower 를 *home pose* 로 자동 복귀시킨다.
 #         home pose 는 --home-pose-file 이 가리키는 YAML (기본
 #         ~/calibration/home_pose.yaml) 에서 로드한다.
@@ -121,7 +121,7 @@ from robot_arm_msgs.srv import EmbedText
 #           추론(Part F) 단계에서도 task 종료 후 동일 자세로 복귀한다.
 #         복귀는 RETURN_HOME_DURATION_S 초 동안 선형 보간 (현재값 → home).
 #
-#   [8] fps — Jetson 실측 후 확정
+#   [6] fps — Jetson 실측 후 확정
 #         기본 30Hz (--fps). Jetson 측정 결과 30Hz 미달 시 15Hz 등으로 낮춰
 #         재기록 필요. Sim Part B 의 fps 와 학습 시 일치 또는 resample 처리 필요.
 #         본 루프는 deadline 기반 스케줄을 사용하므로 한 주기 이상 밀리면 자동
