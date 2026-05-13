@@ -64,13 +64,40 @@ Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
 
 ### Language-conditioned VLA 패턴 (RT-2 / OpenVLA / π0 계열)
 
-`agent_node`의 `look_scene` 함수는 Gemma 4 E2B VLM에 RGB 이미지를 입력하여 **자연어 타겟 묘사**(예: "blue can on the right side of the table")를 출력한다. 이 텍스트는 `embedding_node`에서 벡터로 변환되어 `SubtaskCommand`에 실려 `act_node`로 전달되고, ACT는 이 임베딩을 observation 채널 중 하나로 사용한다. 이전 설계의 3D 좌표 산출 방식은 폐기되었다.
+`agent_node`의 `look_scene` 함수는 Gemma 4 E2B VLM에 RGB 이미지를 입력하여 **자연어 타겟 묘사**(예: "the blue can on the right side of the table")를 출력한다. 이 텍스트는 `embedding_node`에서 벡터로 변환되어 `SubtaskCommand`에 실려 `act_node`로 전달되고, ACT는 이 임베딩을 observation 채널 중 하나로 사용한다. 이전 설계의 3D 좌표 산출 방식은 폐기되었다.
 
 **이 결정의 결과**:
 - `agent_node`는 depth/intrinsics/hand-eye calibration에 의존하지 않는다 (좌표 산출 책임 없음)
 - ACT가 RGB + 언어 임베딩으로 perception을 직접 학습 (end-to-end 표현 학습)
 - Sim/Real 라벨링 일관성 부담이 줄어든다 (좌표 정확도가 아닌 자연어 일치만 요구)
 - depth는 ACT 학습 obs에서 제외되며, `verify_result`의 grasp 검증 보조 신호로만 사용된다
+
+### `target_description` 형식 — 확정
+
+| 항목 | 값 |
+|------|----|
+| 언어 | **영어 고정** |
+| 스키마 | 반구조화 자연어 템플릿 `"the {attribute} {object} {spatial}"` |
+| 길이 | 5~15 단어 |
+| 필수 구성요소 | `attribute` (색/재질 등 변별 가능 1개), `object` (단일 명사), `spatial` (위치/관계 표현) |
+| 어휘 사전 | [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) — Sim/Real/배포 분포 일치 강제 |
+| 예시 | `"the blue can on the right side of the table"`, `"the transparent bottle next to the paper"` |
+| 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
+
+이 형식은 **Sim 라벨(Part B) / Real 라벨(Part D) / 배포 시 Gemma 출력(Part F)** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_teleop.py`는 vocabulary 외 입력을 거부한다.
+
+### 임베딩 모델 — 확정
+
+| 항목 | 값 |
+|------|----|
+| 모델 | **`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`** |
+| 차원 D | **384** |
+| 크기 | ~120MB |
+| 언어 | 다국어 (50+ 언어, 영어 코어가 가장 안정) |
+| 정규화 | L2 정규화 (코사인 유사도 기반 학습 친화) |
+| 강제 범위 | Part B Sim 라벨링 / Part D Real 수집 / Part E 학습 / Part F 배포 전 구간 |
+
+paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Part B](#학습-파이프라인--sim-데이터-생성-part-b))과 Real의 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
 
 ### 자율성 범위
 
@@ -107,8 +134,8 @@ Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
 │   │   └── adapters/              # 도메인별 LoRA, hot-swap
 │   │       ├── adapter_library.gguf
 │   │       └── adapter_recycling.gguf
-│   ├── embedding/                 # 텍스트 임베딩 모델 (모델 미확정, TBD)
-│   │   └── <model_files>          # 예: MiniLM-L6 / DistilBERT / CLIP text encoder
+│   ├── embedding/                 # paraphrase-multilingual-MiniLM-L12-v2 (D=384)
+│   │   └── <model_files>          # HF hub 캐시 또는 사전 다운로드
 │   └── act/
 │       └── act.pth                # ACT Policy 체크포인트 (단일)
 │
@@ -190,7 +217,7 @@ chmod +x deploy/scripts/setup_calibration.sh
 | torch | ≥2.0.0 | ACT Policy 추론, SO-101 모터 제어, 임베딩 모델 추론 |
 | lerobot | 0.4.4 | SO-101 SDK, LeRobotDataset, ACTPolicy |
 | PyYAML | ≥6.0 | calibration / config YAML 파싱 |
-| (TBD) 임베딩 라이브러리 | TBD | sentence-transformers / transformers — 임베딩 모델 확정 후 추가 |
+| sentence-transformers | ≥2.2.0 | `embedding_node` — paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
 
 ---
 
@@ -207,6 +234,7 @@ PAI/
 │   │   └── setup_calibration.sh                # 캘리브레이션 환경 설치 (Part A)
 │   ├── config/                                 # Jetson 런타임 설정
 │   │   ├── domain_map.yaml                     # 사용자 명령 → 도메인 매핑
+│   │   ├── label_vocab.yaml                    # Part D / Cat-B / Sim 공유 vocabulary
 │   │   └── grasp_roi.yaml                      # verify_result용 엔드이펙터 ROI
 │   ├── calibration/                            # 실기 캘리브레이션 결과
 │   └── ros2_ws/
@@ -230,7 +258,8 @@ PAI/
 │               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
 │               │   └── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
 │               ├── scripts/
-│               │   └── record_teleop.py        # 데이터 수집 스크립트 (Part D, 신규)
+│               │   ├── record_teleop.py             # 데이터 수집 스크립트 (Part D, 신규)
+│               │   └── postprocess_real_labels.py   # Real 라벨 paraphrase + 임베딩 후처리 (신규)
 │               ├── launch/
 │               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
 │               │   ├── so101.urdf
@@ -399,8 +428,9 @@ cp -r <repo>/deploy/ros2_ws/src/* ~/ros2_ws/src/
 
 # 2) 런타임 설정 복사
 mkdir -p ~/ros2_ws/config ~/calibration
-cp <repo>/deploy/config/domain_map.yaml ~/ros2_ws/config/domain_map.yaml
-cp <repo>/deploy/config/grasp_roi.yaml  ~/calibration/grasp_roi.yaml   # 캘리브레이션 후 실측값으로 갱신
+cp <repo>/deploy/config/domain_map.yaml  ~/ros2_ws/config/domain_map.yaml
+cp <repo>/deploy/config/label_vocab.yaml ~/ros2_ws/config/label_vocab.yaml
+cp <repo>/deploy/config/grasp_roi.yaml   ~/calibration/grasp_roi.yaml   # 캘리브레이션 후 실측값으로 갱신
 
 # 3) 빌드
 cd ~/ros2_ws
@@ -493,6 +523,8 @@ colcon build --packages-select robot_arm_pkg
 source install/setup.bash
 
 # 캘리브레이션 launch (마커 크기 5cm 기준)
+export DISPLAY=:1
+ros2 launch robot_arm_pkg calibration.launch.py robot_port:=/dev/follower
 ros2 launch robot_arm_pkg calibration.launch.py \
   marker_id:=0 \
   marker_size:=0.05 \
@@ -500,6 +532,10 @@ ros2 launch robot_arm_pkg calibration.launch.py \
 
 # 별도 터미널: rqt GUI에서 EasyHandeye2 플러그인 실행
 ros2 run rqt_gui rqt_gui --force-discover
+
+# aruco_tracker의 debug 영상 보기
+export DISPLAY=:1
+ros2 run rqt_image_view rqt_image_view /aruco_tracker/debug
 ```
 
 ### 캘리브레이션 절차
@@ -552,6 +588,21 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
 4. 임베딩 모델 결정 및 배치 (Part C/E와 동일 모델 사용 필수)
 
+teleoperation 동작 검증
+```bash
+source ~/venv/lerobot/bin/activate
+sudo chmod 666 /dev/follower /dev/leader
+lerobot-teleoperate \
+  --robot.type=so101_follower \
+  --robot.port=/dev/follower \
+  --robot.id=follower \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/leader \
+  --teleop.id=leader \
+  --robot.cameras='{"front": {"type": "intelrealsense", "serial_number_or_name": "919122073151", "width": 640, "height": 480, "fps": 15}}' \
+  --display_data=true
+```
+
 ### 실행 순서
 
 ```bash
@@ -565,44 +616,65 @@ ros2 run robot_arm_pkg camera_node
 ros2 run robot_arm_pkg embedding_node \
   --ros-args -p model_path:=~/models/embedding/
 
-# 4. teleop 데이터 수집 스크립트 실행
+# 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
 python ~/ros2_ws/src/robot_arm_pkg/scripts/record_teleop.py \
   --robot-port      /dev/ttyACM0 \
   --robot-id        follower \
   --teleop-port     /dev/ttyACM1 \
   --teleop-id       leader \
   --dataset-repo-id myname/dataset_real \
-  --single-task     "pick and place" \
+  --domain          recycling \
+  --label-vocab     ~/ros2_ws/config/label_vocab.yaml \
   --num-episodes    50
+
+# 5. 수집 종료 후 paraphrase + 임베딩 후처리 (외부 PC 또는 Jetson 어디서나)
+python ~/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py \
+  --dataset                ~/datasets/myname/dataset_real \
+  --labels-jsonl           labels_myname_dataset_real.jsonl \
+  --external-llm           gpt-4 \
+  --paraphrase-per-episode 3
 ```
 
-> **언어 라벨 부여 방법 (확정 필요 — 3가지 옵션)**:
+> **언어 라벨 부여 방법 — Option C (템플릿+변수 슬롯) 확정**:
 >
-> - Option A: 에피소드 시작 시 작업자가 자유 텍스트 입력 (다양성↑, 일관성↓)
-> - Option B: `--single-task` CLI 인자로 전체 통일 (일관성↑, 다양성↓)
-> - Option C: 도메인별 prompt 템플릿 + 작업자가 변수만 입력 (균형형, 권장)
+> 작업자는 매 에피소드 시작 시 (object, attribute, spatial) 3개 슬롯을
+> [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) vocabulary 안에서만
+> 선택한다. canonical 라벨은 자동 생성된다:
 >
-> 결정 후 `record_teleop.py`에 해당 방식 구현. 학습 시 일관성을 위해 같은
-> 작업의 라벨이 너무 다르지 않도록 가이드라인 필요.
+>     "the {attribute} {object} {spatial}"
+>     예: "the blue can on the right side of the table"
+>
+> - 자유 텍스트 입력 금지 (vocabulary 외 입력 거부)
+> - 영어 고정 → Sim 라벨 / 배포 시 Gemma 출력과 분포 일치
+> - 같은 작업의 라벨이 너무 다르지 않도록 자동 보장
+> - 수집 후 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py)로
+>   paraphrase 3개 + 임베딩을 일괄 부여 → Part E 학습 시 random augmentation
+>
+> **Multi-target shortcut 방지 가이드라인** (50–100 에피소드 분포):
+> - 같은 객체에 대해 다른 spatial 선택 ≥ 30%
+> - 같은 spatial에 대해 다른 객체/attribute ≥ 30%
+> - 한 장면에 후보 객체 2개 이상 + 다른 라벨 부여 ≥ 40%
 
-> **임베딩 일관성**: 수집 단계에서 사용한 임베딩 모델은 Part C/E의 학습 단계와
-> Part F의 배포 단계에서 **반드시 동일한 모델**이어야 한다. 임베딩 모델 변경 시
-> 전체 데이터셋 재라벨링 필요.
+> **임베딩 일관성**: 모든 단계에서 `paraphrase-multilingual-MiniLM-L12-v2`
+> (D=384)로 고정. embedding_node / postprocess_real_labels / sim
+> generate_language_labels 셋이 같은 모델을 사용한다. 모델 변경 시 전체
+> 데이터셋 재라벨링 필요.
 
 ### 데이터셋 구조
 
 | 채널 | shape / dtype | 내용 |
 |------|-------|------|
 | `observation.state` | (6,) float32 | 팔로워 관절 위치 (SO-101 6축) |
-| `observation.language_embedding` | (D,) float32 | 자연어 타겟 묘사의 임베딩 벡터. D는 임베딩 모델에 따라 결정 |
+| `observation.language_embedding` | (384,) float32 | `target_description`의 임베딩 벡터 (paraphrase-multilingual-MiniLM-L12-v2) |
 | `observation.images.top` | (H,W,3) uint8 | RealSense RGB (`/camera/color/image_raw`) |
 | `action` | (6,) float32 | 리더 관절 값 (정답 행동) |
 
 > 이전 설계의 `observation.target_position` 채널은 제거되었다. depth는
 > `verify_result` 단계에서만 사용되고 ACT 학습 obs에 포함되지 않는다.
 
-> Sim 데이터셋(`dataset_sim`)도 동일 feature 스펙 + 동일 임베딩 모델을 따라야
-> Part E Co-training이 가능하다. 임베딩 차원 D가 일치하지 않으면 학습이 실패한다.
+> Sim 데이터셋(`dataset_sim`)도 동일 feature 스펙 + 동일 임베딩 모델
+> (paraphrase-multilingual-MiniLM-L12-v2, D=384)을 따라야 Part E Co-training이
+> 가능하다. 임베딩 차원 D가 384가 아니면 학습이 실패한다.
 
 ---
 
@@ -795,11 +867,11 @@ datasets = [
 | OS + ROS2 | ~1.5 GB | |
 | Gemma 4 E2B base (GGUF Q4) | ~3.0 GB | llama-server 상주 |
 | **도메인 LoRA (active 1개)** | ~수십 MB | **hot-swap — 동시 적재 금지** |
-| 임베딩 모델 (TBD) | ~50–300 MB | 모델 미확정. MiniLM(~80MB) ~ DistilBERT/CLIP(~250MB) |
+| 임베딩 모델 | ~120 MB | paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
 | ACT Policy | ~0.3 GB | 상주 |
 | RGB-D 드라이버 + 버퍼 | ~0.3 GB | |
 | KV Cache / 기타 | ~1.0 GB | Gemma 컨텍스트 윈도우 |
-| **합계** | **~6.2–6.4 GB** | 도메인 수가 늘어도 합계 불변 |
+| **합계** | **~6.2 GB** | 도메인 수가 늘어도 합계 불변 |
 
 > Gemma LoRA는 llama-server에 HTTP `/lora-adapter` 요청으로 hot-swap (서브-초 latency).
 > 한 태스크가 끝나는 시점(verify_result 직후)에 스왑하면 안정적이다.
@@ -815,17 +887,17 @@ datasets = [
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
 | `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체 | Part C, llama-server 구동, embedding_node |
-| `embedding_node.py` | `_load_model()`, `_embed()` (인터페이스는 완성) | 임베딩 모델 확정 |
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
-| `record_teleop.py` | `prompt_episode_label()`, `open_dataset()`, `connect_so101()`, `record_episode()` | embedding_node, 라벨링 방식 결정 |
+| `record_teleop.py` | `open_dataset()`, `connect_so101()`, `record_episode()` (라벨 슬롯 입력은 구현 완료) | LeRobot 0.4.4 features API |
+| `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `sim/generate_act_dataset.py` | IK 전문가 + DR + multi-target 장면 기반 시연 생성 본체 | SO-101 USD 변환, IK 솔버 결정 |
-| `sim/generate_language_labels.py` | Gemma 자체 라벨링 + 외부 LLM paraphrase + 임베딩 채널 채우기 | 임베딩 모델 확정 |
+| `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | DR 파라미터 실측값 (조명·텍스처·FOV·질량·마찰·PD 게인) | 실기 측정 |
-| `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 | 도메인 객체 결정 |
+| `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 (label_vocab.yaml과 동기화 필요) | 도메인 객체 결정 |
 | `training/scripts/generate_qa_from_pdf.py` | PDF 추출 + LLM Q&A 생성 + 필터링 | 도메인 문서 수집 |
-| `training/scripts/generate_function_call_qa.py` | LLM 합성, 함수 시그니처는 agent_node와 정확히 일치 | 함수 시그니처 확정 |
-| `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 | Sim 환경, ground truth 라벨러 |
+| `training/scripts/generate_function_call_qa.py` | LLM 합성 본체 (시스템 프롬프트/vocab 로딩은 구현 완료) | 외부 LLM 클라이언트 |
+| `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 (description 형식 강제 명시 완료) | Sim 환경, ground truth 라벨러 |
 | `training/scripts/merge_qa_dataset.py` | 부족분 처리 정책 결정 후 본체 구현 | Cat-A/B/C 데이터 |
 | `training/scripts/train_gemma_qlora.py` | Unsloth 모델/데이터/학습 루프 | 혼합 Q&A 데이터셋, Unsloth 호환 확인 |
 | `training/scripts/convert_lora_to_gguf.sh` | llama.cpp 변환 호출 활성화 | llama.cpp 빌드, 변환 스크립트 경로 확인 |
@@ -837,7 +909,9 @@ datasets = [
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
 > - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
 > - `deploy/config/domain_map.yaml` 템플릿
+> - `deploy/config/label_vocab.yaml` (Part D / Cat-B / Sim 공유 vocabulary)
 > - `camera_node.py`
+> - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_teleop.py`로 대체됨.
@@ -854,9 +928,13 @@ datasets = [
 
 | # | 항목 | 영향 범위 |
 |---|------|---------|
-| 1 | 임베딩 모델 선택 (MiniLM-L6 / DistilBERT / CLIP text encoder / T5-small 등) | `embedding_node`, ACT obs 차원 D, requirements.txt, 메모리 배분 |
-| 2 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | Part C-1 `merge_qa_dataset.py` |
-| 3 | Part D 언어 라벨링 방식 (Option A 자유 입력 / B CLI 통일 / C 템플릿+변수) | `record_teleop.py` |
-| 4 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
+| 1 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | Part C-1 `merge_qa_dataset.py` |
+| 2 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
+
+> **확정 완료** (이전 미확정 항목):
+> - 임베딩 모델: `paraphrase-multilingual-MiniLM-L12-v2` (D=384)
+> - Part D 언어 라벨링 방식: Option C (템플릿+변수 슬롯)
+> - `target_description` 형식: 영어 반구조화 `"the {attribute} {object} {spatial}"`,
+>   5–15 단어, [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) vocabulary 강제
 
 ---

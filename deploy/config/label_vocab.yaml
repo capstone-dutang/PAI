@@ -1,0 +1,57 @@
+# label_vocab.yaml
+#
+# Part D record_teleop의 자연어 라벨링 Option C (템플릿+변수 슬롯) 어휘 사전.
+#
+# 작업자는 (object, attribute, spatial) 3개 슬롯에 대해 도메인별 vocabulary
+# 안에서만 선택할 수 있다. canonical 라벨은 다음 템플릿으로 자동 생성된다:
+#
+#   "the {attribute} {object} {spatial}"
+#
+# 예: "the blue can on the right side of the table"
+#
+# 강제 제약 (record_teleop.py가 검증):
+#   - 세 슬롯 모두 필수
+#   - 자유 텍스트 입력 금지 (vocabulary 외 값 입력 시 에러)
+#   - 영어 고정 (임베딩 모델 paraphrase-multilingual-MiniLM-L12-v2의
+#     영어 분포가 가장 안정적)
+#
+# Sim과의 일관성 보장:
+#   본 파일의 objects / attributes 셋은 sim/config/multi_target_scenes.yaml의
+#   objects 셋과 같은 vocabulary로 유지해야 한다. Sim/Real 라벨 분포가
+#   어긋나면 ACT Co-training 시 임베딩 공간 불일치 발생.
+
+template: "the {attribute} {object} {spatial}"
+
+# 공간 한정자 — 도메인 무관, 작업 환경(테이블 위)에 일반화 가능한 표현 사용.
+# multi-target 장면에서 같은 객체끼리 변별 가능해야 하므로 위치/관계 표현을
+# 충분히 다양하게 둔다.
+spatial_qualifiers:
+  - "on the left side of the table"
+  - "on the right side of the table"
+  - "in the center of the table"
+  - "in front of the robot"
+  - "at the back of the table"
+  - "next to the bottle"
+  - "next to the can"
+  - "next to the paper"
+  - "next to the book"
+
+domains:
+
+  recycling:
+    objects:
+      can:
+        attributes: [red, blue, green, silver]
+      bottle:
+        attributes: [transparent, green, blue]
+      paper:
+        attributes: [white, crumpled, folded]
+
+  library:
+    objects:
+      book:
+        attributes: [red, blue, green, thick, thin]
+
+  # TODO: 도메인 추가 시 같은 형식으로 entry 추가.
+  #       각 도메인은 sim/config/multi_target_scenes.yaml의 동일 도메인 entry와
+  #       객체/속성 셋을 일치시킬 것.

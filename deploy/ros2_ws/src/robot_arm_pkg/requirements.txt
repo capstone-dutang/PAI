@@ -23,7 +23,7 @@ requests>=2.28.0     # agent_node, llama_server_manager → llama-server HTTP
 
 # ── PyTorch 추론 ────────────────────────────────────────────
 # act_node       : LeRobot ACTPolicy(.pth) 추론
-# embedding_node : 텍스트 임베딩 모델 추론 (모델은 미확정)
+# embedding_node : sentence-transformers 텍스트 임베딩 추론
 torch>=2.0.0
 
 # ── LeRobot SDK ─────────────────────────────────────────────
@@ -31,10 +31,7 @@ torch>=2.0.0
 # act_node              : ACTPolicy 클래스
 lerobot==0.4.4
 
-# ── 임베딩 라이브러리 (TBD) ──────────────────────────────────
-# README 미확정 항목 #1: 임베딩 모델 선택
-# 후보: sentence-transformers (MiniLM-L6 / DistilBERT) 또는
-#       transformers (CLIP text encoder / T5-small)
-# 모델 확정 시 아래 중 하나 활성화:
-# sentence-transformers>=2.2.0
-# transformers>=4.30.0
+# ── 임베딩 라이브러리 ────────────────────────────────────────
+# embedding_node     : paraphrase-multilingual-MiniLM-L12-v2 (D=384, ~120MB)
+# postprocess_real_labels.py / sim/generate_language_labels.py도 동일 모델 사용
+sentence-transformers>=2.2.0

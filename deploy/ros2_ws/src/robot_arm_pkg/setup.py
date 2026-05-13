@@ -12,7 +12,10 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch',  ['launch/calibration.launch.py']),
-        ('share/' + package_name + '/scripts', ['scripts/record_teleop.py']),
+        ('share/' + package_name + '/scripts', [
+            'scripts/record_teleop.py',
+            'scripts/postprocess_real_labels.py',
+        ]),
         ('share/' + package_name + '/urdf',        ['urdf/so101.urdf']),
         ('share/' + package_name + '/urdf/assets', glob('urdf/assets/*.stl')),
     ],

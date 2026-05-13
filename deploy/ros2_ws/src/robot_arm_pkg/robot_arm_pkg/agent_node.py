@@ -325,8 +325,20 @@ class AgentNode(Node):
         """
         Gemma VLM에 RGB + prompt 입력 → 자연어 target_description 반환.
 
+        반환 형식 (엄격, LoRA가 이 분포로 학습됨):
+          영어 반구조화 템플릿  "the {attribute} {object} {spatial}"
+          - 5~15 단어
+          - vocabulary: deploy/config/label_vocab.yaml과 일치
+          - 예: "the blue can on the right side of the table"
+
+        검증 권장 (구현 시):
+          - 정규식으로 템플릿 매칭, 실패 시 1회 재시도
+          - vocabulary 외 단어 포함 시 재시도 또는 강제 매핑
+
         TODO: 구현 시 결정
           - llama-server /v1/chat/completions 페이로드 (이미지 base64 임베드)
+          - 시스템 프롬프트는 generate_function_call_qa.FUNCTION_CALL_SYSTEM_PROMPT와
+            정확히 동일한 문자열 사용 (LoRA 학습 분포와 일치 보장)
           - 응답 파싱(JSON 함수 호출) 또는 그냥 본문 텍스트
           - 최신 RGB 미수신 시 처리 정책 (대기 / 즉시 실패)
         """
