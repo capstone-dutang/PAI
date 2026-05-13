@@ -565,7 +565,7 @@ ros2 run rqt_image_view rqt_image_view /aruco_tracker/debug
 6. 결과 파일 복사:
 
 ```bash
-cp ~/.ros/easy_handeye2/eye_to_hand_calibration.yaml \
+cp ~/.ros/easy_handeye2/eye_on_base_calibration.yaml \
    ~/calibration/camera_robot_transform.yaml
 
 # camera_intrinsics는 RealSense camera_info 토픽에서 추출
