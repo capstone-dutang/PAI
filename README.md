@@ -142,7 +142,9 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 ├── calibration/
 │   ├── camera_intrinsics.yaml
 │   ├── camera_robot_transform.yaml
-│   └── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
+│   ├── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
+│   └── home_pose.yaml             # SO-101 follower rest 자세. record_teleop 첫 실행 시 자동 생성.
+│                                  # robot_controller_node /go_home 서비스가 같은 파일을 읽는다.
 │
 └── llama.cpp/
     └── llama-server               # systemd 서비스, --jinja 활성
@@ -341,6 +343,17 @@ PAI/
 |--------|------|------|
 | `EmbedText` | `string text` | `float32[] embedding`, `int32 dim` |
 
+### 표준 서비스
+
+| 서비스 | 타입 | 제공 노드 | 호출 측 | 동작 |
+|--------|------|-----------|---------|------|
+| `/go_home` | `std_srvs/Trigger` | `robot_controller_node` | `agent_node` (task 종료 시) | 현재 follower 자세에서 `~/calibration/home_pose.yaml` 자세로 ~2초간 선형 보간 복귀. 진행 중 `/joint_command` 와 `/joint_states` 발행이 잠시 멈춤. |
+
+> **home_pose.yaml 의 단일 출처**: 같은 파일을 데이터 수집(Part D, `record_teleop.py`)
+> 과 배포(Part F, `robot_controller_node` `/go_home`)가 공유한다. 새 자세로 바꾸려면
+> follower 를 새 자세에 두고 파일을 삭제한 뒤 `record_teleop.py` 를 한 번 실행하면
+> 자동으로 재생성된다.
+
 ### 토픽 구조
 
 ```
@@ -356,7 +369,9 @@ PAI/
   ├─ /domain_selection (robot_arm_msgs/DomainSelection) ──▶ [llama_server_manager]
   ├─ /subtask_command  (robot_arm_msgs/SubtaskCommand)  ──▶ [act_node]
   ├─ /agent_log        (robot_arm_msgs/AgentLog)        ──▶ (디버그 콘솔/로그 파일)
-  └─ Service Client: /embed_text                        ──▶ [embedding_node]
+  ├─ Service Client: /embed_text                        ──▶ [embedding_node]
+  └─ Service Client: /go_home (std_srvs/Trigger)        ──▶ [robot_controller_node]
+                                                            (task 종료 시 1회 호출)
 
 [embedding_node]
   └─ Service Server: /embed_text (robot_arm_msgs/EmbedText)
@@ -369,8 +384,10 @@ PAI/
   └─ /execution_status (robot_arm_msgs/ExecutionStatus) ──▶ [agent_node]
 
 [robot_controller_node] (1000Hz)
-  └─ /joint_states (sensor_msgs/JointState) ──┬──▶ [act_node]
-                                               └──▶ [agent_node]
+  ├─ /joint_states (sensor_msgs/JointState) ──┬──▶ [act_node]
+  │                                            └──▶ [agent_node]
+  └─ Service Server: /go_home (std_srvs/Trigger)
+        └─ ~/calibration/home_pose.yaml 자세로 선형 보간 복귀
 ```
 
 > **QoS 정책**: 카메라 토픽(`/camera/rgb`, `/camera/depth`)은 BestEffort +
@@ -593,7 +610,7 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
 4. 임베딩 모델 결정 및 배치 (Part C/E와 동일 모델 사용 필수)
 5. `robot_controller_node` 가 떠 있다면 중지 (위 포트 점유 정책)
-6. follower 팔을 원하는 rest(home) 자세에 둔 채로 record_teleop 실행 — 그 자세가 에피소드 간 자동 복귀 지점으로 캡처된다 (결정 [7])
+6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포(Part F) `/go_home` 서비스에서 같은 파일을 공유한다. 자세를 바꾸려면 파일 삭제 후 재실행. (결정 [7])
 
 teleoperation 동작 검증
 ```bash
@@ -893,7 +910,7 @@ datasets = [
 
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
-| `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체 | Part C, llama-server 구동, embedding_node |
+| `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Part C, llama-server 구동, embedding_node |
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |

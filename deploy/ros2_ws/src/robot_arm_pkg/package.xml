@@ -11,8 +11,10 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>                     <!-- robot_controller_node: /go_home Trigger -->
   <depend>geometry_msgs</depend>
   <depend>message_filters</depend>              <!-- camera_node: ApproximateTimeSynchronizer -->
+  <depend>cv_bridge</depend>                    <!-- record_teleop: /camera/rgb → numpy -->
 
   <!-- 본 패키지의 커스텀 메시지/서비스 -->
   <depend>robot_arm_msgs</depend>

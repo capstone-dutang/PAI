@@ -43,7 +43,8 @@ CLI 사용 예:
     --num-episodes    50 \\
     --fps             30 \\
     --img-h           480 \\
-    --img-w           640
+    --img-w           640 \\
+    --home-pose-file  ~/calibration/home_pose.yaml
 
 운영 / 측정 결정 사항은 본 파일 상단 "운영 / 측정 결정 사항" 블록에 정리되어 있다.
 변경이 필요한 경우 그 블록 + 본 docstring + README "데이터 수집 (Part D)" 를 같이 갱신.
@@ -74,6 +75,14 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.robots.so_follower      import SO101Follower, SO101FollowerConfig
 from lerobot.teleoperators.so_leader import SO101Leader,   SO101LeaderConfig
 
+# 공유 유틸 — home_pose 파일 입출력 (robot_controller_node 와 같은 파일 공유)
+from robot_arm_pkg.home_pose import (
+    DEFAULT_HOME_POSE_PATH,
+    home_pose_exists,
+    load_home_pose,
+    save_home_pose,
+)
+
 from robot_arm_msgs.srv import EmbedText
 
 
@@ -101,10 +110,15 @@ from robot_arm_msgs.srv import EmbedText
 #         KeyboardInterrupt (Ctrl+C) 도 같은 경로로 흡수. 자동 타임아웃은
 #         사용하지 않음 — 시연 자유도 우선. Linux/macOS 전용 (Jetson 타깃).
 #
-#   [7] 에피소드 간 reset — follower 자동 home 복귀
+#   [7] 에피소드 간 reset — follower 자동 home 복귀 (파일 영구화)
 #         녹화 직후 follower 를 *home pose* 로 자동 복귀시킨다.
-#         home pose 는 connect 직후 follower 의 자세를 그대로 캡처한다.
-#         → 스크립트 실행 전 작업자가 팔을 원하는 rest 자세에 둔 채로 켜야 함.
+#         home pose 는 --home-pose-file 이 가리키는 YAML (기본
+#         ~/calibration/home_pose.yaml) 에서 로드한다.
+#         파일이 없으면 connect 직후의 follower 자세를 캡처해 *자동 저장* 한다.
+#         → 새 home 으로 바꾸려면 follower 를 새 자세에 두고 파일을 삭제한 뒤
+#           record_teleop 을 한 번 실행하면 된다.
+#         → 같은 파일을 robot_controller_node 의 /go_home 서비스가 공유하므로
+#           추론(Part F) 단계에서도 task 종료 후 동일 자세로 복귀한다.
 #         복귀는 RETURN_HOME_DURATION_S 초 동안 선형 보간 (현재값 → home).
 #
 #   [8] fps — Jetson 실측 후 확정
@@ -161,6 +175,7 @@ class RecordArgs:
     labels_jsonl:     str
     img_h:            int
     img_w:            int
+    home_pose_file:   str
 
 
 def parse_args() -> RecordArgs:
@@ -187,6 +202,11 @@ def parse_args() -> RecordArgs:
                         'Sim Part B feature shape 과 일치해야 Co-training 가능.')
     p.add_argument('--img-w',           type=int, default=DEFAULT_IMG_W,
                    help='이미지 너비 W (operational decision [4]).')
+    p.add_argument('--home-pose-file',  default=DEFAULT_HOME_POSE_PATH,
+                   help='home pose YAML 경로 (operational decision [7]). '
+                        '존재하면 그 자세로 에피소드 간 자동 복귀. '
+                        '없으면 connect 직후 follower 자세를 캡처해 같은 경로에 저장. '
+                        f'기본 {DEFAULT_HOME_POSE_PATH} — robot_controller_node /go_home 과 공유.')
     a = p.parse_args()
     return RecordArgs(
         robot_port      = a.robot_port,
@@ -201,6 +221,7 @@ def parse_args() -> RecordArgs:
         labels_jsonl    = os.path.expanduser(a.labels_jsonl) if a.labels_jsonl else '',
         img_h           = a.img_h,
         img_w           = a.img_w,
+        home_pose_file  = os.path.expanduser(a.home_pose_file),
     )
 
 
@@ -734,10 +755,21 @@ def main() -> None:
             args.robot_port, args.robot_id, args.teleop_port, args.teleop_id,
         )
 
-        # 5) Home pose 캡처 (operational decision [7])
-        #    → 스크립트 실행 전 작업자가 follower 를 rest 자세에 두고 켜야 함.
-        home_pose = _capture_home_pose(robot)
-        print(f'[record_teleop] home pose 캡처: {home_pose.tolist()}')
+        # 5) Home pose 결정 (operational decision [7] — 파일 영구화)
+        #    파일이 있으면 그 자세를 그대로 사용.
+        #    없으면 connect 직후 follower 자세를 캡처해 같은 경로에 저장 →
+        #    이후 record_teleop / robot_controller_node /go_home 이 공유.
+        if home_pose_exists(args.home_pose_file):
+            home_pose = load_home_pose(args.home_pose_file)
+            print(f'[record_teleop] home pose 로드: {args.home_pose_file} '
+                  f'→ {home_pose.tolist()}')
+        else:
+            home_pose = _capture_home_pose(robot)
+            save_home_pose(args.home_pose_file, home_pose)
+            print(f'[record_teleop] home pose 신규 캡처 후 저장: {args.home_pose_file} '
+                  f'→ {home_pose.tolist()}')
+            print('[record_teleop] 향후 변경 시: follower 를 새 자세에 두고 '
+                  f'{args.home_pose_file} 삭제 후 record_teleop 재실행.')
 
         # 6) 에피소드 루프
         for ep in range(args.num_episodes):
