@@ -40,13 +40,13 @@ CLI 사용 예:
     --dataset-repo-id myname/dataset_real \\
     --domain          recycling \\
     --label-vocab     ~/ros2_ws/config/label_vocab.yaml \\
-    --num-episodes    50
+    --num-episodes    50 \\
+    --fps             30 \\
+    --img-h           480 \\
+    --img-w           640
 
-미구현 항목 (LeRobot SDK 통합 시 결정 필요):
-  - LeRobotDataset 0.4.4 features 스키마에 language_embedding (384,) 추가 호출
-  - SO-101 리더/팔로워 연결 (lerobot SDK)
-  - 30Hz 동기화 루프 (rclpy 콜백 / LeRobot read 주기)
-  - 에피소드 종료 조건 (키 입력 / 타임아웃 / 리더 정지 감지)
+운영 / 측정 결정 사항은 본 파일 상단 "운영 / 측정 결정 사항" 블록에 정리되어 있다.
+변경이 필요한 경우 그 블록 + 본 docstring + README "데이터 수집 (Part D)" 를 같이 갱신.
 """
 
 from __future__ import annotations
@@ -54,20 +54,93 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import select
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import rclpy
 import yaml
+from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image
 
+# LeRobot 0.4.4 — features/SO-101 SDK 경로 (robot_controller_node 와 동일 규약)
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.robots.so_follower      import SO101Follower, SO101FollowerConfig
+from lerobot.teleoperators.so_leader import SO101Leader,   SO101LeaderConfig
+
 from robot_arm_msgs.srv import EmbedText
 
 
+# ──────────────────────────────────────────────
+# 운영 / 측정 결정 사항 (변경 시 본 블록 + README "데이터 수집 (Part D)" 갱신)
+# ──────────────────────────────────────────────
+#
+#   [1] USB 포트 점유 — record_teleop 단독 점유
+#         record_teleop 실행 중에는 robot_controller_node 를 끄고 본 스크립트가
+#         단독으로 follower 포트를 점유한다. LeRobot 표준 teleop 흐름과 일치.
+#         동시에 robot_controller_node 가 떠 있으면 SDK 의 포트 open 단계에서
+#         실패한다. README "데이터 수집 (Part D)" 실행 순서에도 명시.
+#
+#   [2] 이미지 소스 — ROS /camera/rgb
+#         camera_node 가 발행하는 /camera/rgb 토픽을 helper 노드가 구독하여
+#         최신 1프레임만 캐싱한다 (BestEffort + KeepLast(1)).
+#         (LeRobot 자체 카메라 플러그인 직접 사용 안 함)
+#
+#   [4] 이미지 해상도 (H, W)
+#         --img-h / --img-w CLI 인자로 결정. 기본 480 x 640 (RealSense 기본).
+#         Sim Part B 의 dataset feature shape 과 반드시 일치해야 Co-training 가능.
+#
+#   [6] 에피소드 종료 정책 — 'q' + Enter
+#         녹화 루프 중 stdin 에 'q'(또는 'Q') + Enter 가 들어오면 정상 종료.
+#         KeyboardInterrupt (Ctrl+C) 도 같은 경로로 흡수. 자동 타임아웃은
+#         사용하지 않음 — 시연 자유도 우선. Linux/macOS 전용 (Jetson 타깃).
+#
+#   [7] 에피소드 간 reset — follower 자동 home 복귀
+#         녹화 직후 follower 를 *home pose* 로 자동 복귀시킨다.
+#         home pose 는 connect 직후 follower 의 자세를 그대로 캡처한다.
+#         → 스크립트 실행 전 작업자가 팔을 원하는 rest 자세에 둔 채로 켜야 함.
+#         복귀는 RETURN_HOME_DURATION_S 초 동안 선형 보간 (현재값 → home).
+#
+#   [8] fps — Jetson 실측 후 확정
+#         기본 30Hz (--fps). Jetson 측정 결과 30Hz 미달 시 15Hz 등으로 낮춰
+#         재기록 필요. Sim Part B 의 fps 와 학습 시 일치 또는 resample 처리 필요.
+#         본 루프는 deadline 기반 스케줄을 사용하므로 한 주기 이상 밀리면 자동
+#         재동기화한다 (drift 방지).
+#
+# ──────────────────────────────────────────────
+
+
 EXPECTED_EMBED_DIM = 384  # paraphrase-multilingual-MiniLM-L12-v2
+
+# SO-101 관절 이름 — robot_controller_node.py 와 동일 순서.
+# LeRobot SDK 의 motor 키와 일치 (get_observation/send_action 은 {name}.pos 형식).
+SO101_JOINT_NAMES: List[str] = [
+    'shoulder_pan',
+    'shoulder_lift',
+    'elbow_flex',
+    'wrist_flex',
+    'wrist_roll',
+    'gripper',
+]
+
+# 이미지 기본값 (operational decision [4])
+DEFAULT_IMG_H = 480
+DEFAULT_IMG_W = 640
+
+# Home pose 복귀 시간 (operational decision [7])
+RETURN_HOME_DURATION_S = 2.0
+
+# LeRobot 데이터셋 카메라 채널 키 (act_node._predict_chunk obs 키와 일치 필수)
+CAMERA_KEY = 'observation.images.top'
+
+# cv_bridge 싱글톤 — /camera/rgb msg → numpy (rgb8) 변환에 사용
+_bridge = CvBridge()
 
 
 # ──────────────────────────────────────────────
@@ -86,6 +159,8 @@ class RecordArgs:
     num_episodes:     int
     fps:              int
     labels_jsonl:     str
+    img_h:            int
+    img_w:            int
 
 
 def parse_args() -> RecordArgs:
@@ -101,11 +176,17 @@ def parse_args() -> RecordArgs:
     p.add_argument('--label-vocab',     default='~/ros2_ws/config/label_vocab.yaml',
                    help='라벨 vocabulary YAML 경로')
     p.add_argument('--num-episodes',    type=int, default=50, help='수집 에피소드 수')
-    p.add_argument('--fps',             type=int, default=30, help='기록 주기 (Hz)')
+    p.add_argument('--fps',             type=int, default=30,
+                   help='기록 주기 (Hz). operational decision [8] — Jetson 실측 후 변경.')
     p.add_argument('--labels-jsonl',    default='',
                    help='canonical 라벨 + 슬롯 메타데이터 기록 JSONL 경로. '
-                        '비어 있으면 데이터셋 디렉터리 옆에 labels.jsonl로 자동 생성. '
+                        '비어 있으면 dataset.root 옆에 labels.jsonl 로 자동 생성. '
                         '이 파일은 postprocess_real_labels.py 입력으로 사용된다.')
+    p.add_argument('--img-h',           type=int, default=DEFAULT_IMG_H,
+                   help='이미지 높이 H (operational decision [4]). '
+                        'Sim Part B feature shape 과 일치해야 Co-training 가능.')
+    p.add_argument('--img-w',           type=int, default=DEFAULT_IMG_W,
+                   help='이미지 너비 W (operational decision [4]).')
     a = p.parse_args()
     return RecordArgs(
         robot_port      = a.robot_port,
@@ -118,6 +199,8 @@ def parse_args() -> RecordArgs:
         num_episodes    = a.num_episodes,
         fps             = a.fps,
         labels_jsonl    = os.path.expanduser(a.labels_jsonl) if a.labels_jsonl else '',
+        img_h           = a.img_h,
+        img_w           = a.img_w,
     )
 
 
@@ -253,13 +336,20 @@ def prompt_episode_label(
 # 라벨 메타데이터 JSONL 기록 (postprocess 입력)
 # ──────────────────────────────────────────────
 
-def _resolve_labels_jsonl(args: RecordArgs) -> str:
+def _resolve_labels_jsonl(args: RecordArgs, dataset: Optional[LeRobotDataset] = None) -> str:
+    """
+    labels.jsonl 저장 경로 결정.
+
+      1) --labels-jsonl 가 명시되면 그 경로 사용.
+      2) dataset 이 주어지면 dataset.root / 'labels.jsonl' (권장).
+         postprocess_real_labels.py 도 같은 곳을 기본 입력으로 본다.
+      3) 둘 다 아니면 CWD 에 labels_<repo>.jsonl 폴백.
+    """
     if args.labels_jsonl:
         path = args.labels_jsonl
+    elif dataset is not None:
+        path = str(Path(dataset.root) / 'labels.jsonl')
     else:
-        # 기본: dataset_repo_id 마지막 컴포넌트 옆에 labels.jsonl 생성
-        # repo id 형식 "user/name" → ~/.cache/huggingface/lerobot/user/name/labels.jsonl 등
-        # 실제 LeRobotDataset 경로 확정 후 보강 필요. 임시로 CWD에 둠.
         name = args.dataset_repo_id.replace('/', '_')
         path = os.path.join(os.getcwd(), f'labels_{name}.jsonl')
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -330,65 +420,278 @@ class RecordHelperNode(Node):
 
 
 # ──────────────────────────────────────────────
-# 데이터셋 / 로봇 연결 (LeRobot SDK 미구현)
+# 데이터셋 / 로봇 연결
 # ──────────────────────────────────────────────
 
-def open_dataset(args: RecordArgs, embedding_dim: int):
+def open_dataset(args: RecordArgs, embedding_dim: int) -> LeRobotDataset:
     """
-    LeRobotDataset (0.4.4)을 features 스키마와 함께 생성/오픈한다.
+    LeRobotDataset 0.4.4 인스턴스를 features 스키마와 함께 생성.
 
-    features:
-      observation.state              : float32, (6,)
-      observation.language_embedding : float32, (embedding_dim,)
-      observation.images.top         : video,   (H, W, 3)
-      action                         : float32, (6,)
+    features 스키마 (lerobot.datasets.utils 의 표준 컨벤션 따름):
+      observation.state              : float32 (6,)              — 팔로워 관절 위치
+      observation.language_embedding : float32 (embedding_dim,)  — paraphrase MiniLM D=384
+      observation.images.top         : video   (H, W, 3)         — RGB (rgb8 통일)
+      action                         : float32 (6,)              — 리더 관절 값
 
-    TODO: LeRobotDataset 0.4.4 API 호출부 구현.
-          embedding_dim은 호출 시점에 EXPECTED_EMBED_DIM(=384)으로 고정됨.
+    참고:
+      - dtype='video' + use_videos=True 가 표준. add_frame 시점엔 PNG 임시 저장,
+        save_episode 시점에 일괄 비디오 인코딩 (parallel_encoding=True 가 기본).
+      - 1D 비의미 벡터(language_embedding)는 names=None (DEFAULT_FEATURES 규약).
+      - 이미지 채널 names 는 ['height','width','channels'] (utils.py:661 형식).
     """
-    raise NotImplementedError(
-        "[record_teleop] open_dataset() 미구현 — LeRobotDataset 0.4.4 통합 작업."
+    features = {
+        'observation.state': {
+            'dtype': 'float32',
+            'shape': (6,),
+            'names': list(SO101_JOINT_NAMES),
+        },
+        'observation.language_embedding': {
+            'dtype': 'float32',
+            'shape': (embedding_dim,),
+            'names': None,
+        },
+        CAMERA_KEY: {
+            'dtype': 'video',   # operational decision: video 인코딩 채택
+            'shape': (args.img_h, args.img_w, 3),
+            'names': ['height', 'width', 'channels'],
+        },
+        'action': {
+            'dtype': 'float32',
+            'shape': (6,),
+            'names': list(SO101_JOINT_NAMES),
+        },
+    }
+    return LeRobotDataset.create(
+        repo_id=args.dataset_repo_id,
+        fps=args.fps,
+        features=features,
+        robot_type='so101_follower',
+        use_videos=True,
     )
 
 
-def connect_so101(robot_port: str, robot_id: str, teleop_port: str, teleop_id: str):
+def connect_so101(
+    robot_port: str, robot_id: str, teleop_port: str, teleop_id: str,
+) -> Tuple[SO101Follower, SO101Leader]:
     """
-    SO-101 팔로워(robot) + 리더(teleop) 연결.
+    SO-101 팔로워(robot) + 리더(teleop) 동시 연결.
 
-    TODO: LeRobot SDK 호출. robot_controller_node.py와 동일한 방식 사용.
+    operational decision [1]:
+      본 스크립트가 follower 포트를 단독 점유한다.
+      robot_controller_node 가 동시에 실행 중이면 SDK 의 포트 open 단계에서
+      실패한다 — 그 경우 robot_controller_node 를 먼저 종료할 것.
     """
-    raise NotImplementedError("[record_teleop] connect_so101() 미구현.")
+    follower = SO101Follower(SO101FollowerConfig(port=robot_port, id=robot_id))
+    follower.connect()
+
+    leader = SO101Leader(SO101LeaderConfig(port=teleop_port, id=teleop_id))
+    leader.connect()
+
+    return follower, leader
 
 
 # ──────────────────────────────────────────────
-# 메인 루프
+# 헬퍼 — 종료 신호 / 변환 / home 복귀
+# ──────────────────────────────────────────────
+
+def _user_wants_quit() -> bool:
+    """
+    operational decision [6]:
+      stdin 에 'q' (또는 'Q') + Enter 가 들어왔는지 비차단 검사.
+      Linux/macOS 전용 (Jetson 타깃). Windows 에서는 항상 False.
+    """
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+    except (ValueError, OSError):
+        return False
+    if not ready:
+        return False
+    line = sys.stdin.readline()
+    return bool(line) and line.strip().lower() == 'q'
+
+
+def _action_dict_to_vec(d: dict) -> np.ndarray:
+    """SDK 의 {motor}.pos dict → SO101_JOINT_NAMES 순서의 float32 벡터."""
+    return np.array(
+        [float(d[f'{n}.pos']) for n in SO101_JOINT_NAMES],
+        dtype=np.float32,
+    )
+
+
+def _rgb_msg_to_array(msg: Image) -> np.ndarray:
+    """
+    /camera/rgb (sensor_msgs/Image) → numpy (H,W,3) uint8 RGB.
+
+    operational decision [2] + bridging encoding:
+      RealSense 가 bgr8 로 발행하든 rgb8 로 발행하든 desired_encoding='rgb8' 로
+      통일하여 채널 순서를 강제한다 (Sim/Real 일치).
+    """
+    return _bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
+
+
+def _capture_home_pose(robot: SO101Follower) -> np.ndarray:
+    """
+    operational decision [7]:
+      connect 직후 follower 자세를 home pose 로 그대로 저장.
+      스크립트 실행 전 작업자가 팔을 원하는 rest 자세에 두고 켜야 한다.
+    """
+    obs = robot.get_observation()
+    return _action_dict_to_vec(obs)
+
+
+def _return_to_home(
+    robot:      SO101Follower,
+    home_pose:  np.ndarray,
+    fps:        int,
+    duration_s: float = RETURN_HOME_DURATION_S,
+) -> None:
+    """
+    operational decision [7]:
+      현재 follower 자세 → home_pose 로 fps Hz 선형 보간 명령 전송.
+      duration_s 초에 걸쳐 동작. 카메라 spin 은 멈춰도 무관 (녹화 종료 후이므로).
+    """
+    cur = _action_dict_to_vec(robot.get_observation())
+    n_steps = max(1, int(round(fps * duration_s)))
+    dt = 1.0 / fps
+    for i in range(1, n_steps + 1):
+        alpha  = i / n_steps
+        target = (1.0 - alpha) * cur + alpha * home_pose
+        robot.send_action({
+            f'{n}.pos': float(v) for n, v in zip(SO101_JOINT_NAMES, target)
+        })
+        time.sleep(dt)
+
+
+# ──────────────────────────────────────────────
+# 메인 — 에피소드 녹화 루프
 # ──────────────────────────────────────────────
 
 def record_episode(
     args:          RecordArgs,
     helper:        RecordHelperNode,
-    robot,
-    teleop,
-    dataset,
+    robot:         SO101Follower,
+    teleop:        SO101Leader,
+    dataset:       LeRobotDataset,
     episode_idx:   int,
     label_record:  dict,
     embedding:     List[float],
+    home_pose:     np.ndarray,
 ) -> None:
     """
-    1개 에피소드 기록.
+    1개 에피소드 녹화 → 저장 → follower home pose 복귀.
 
-    TODO: 30Hz 루프로 다음을 동시 수행
-      - teleop.get_action()      → 리더 관절 값 (action)
-      - robot.send_action(...)   → 팔로워 미러링
-      - robot.get_observation()  → 팔로워 관절 값 (observation.state)
-      - helper.latest_rgb()      → 카메라 RGB (observation.images.top)
-      - embedding 그대로         → observation.language_embedding (에피소드 내 상수)
-      - dataset.add_frame(...)
+    각 틱(=1/fps 초) 마다:
+      1) 종료 신호 확인 ('q'+Enter) — operational decision [6]
+      2) 카메라 콜백 처리 (latest-only)
+      3) 리더 action 읽어 팔로워에 미러링
+      4) 팔로워 관절 상태 + 최신 RGB 프레임 수집
+      5) frame dict 구성 + dataset.add_frame
+         frame['task'] 가 필수 (add_frame 이 pop 하여 episode_buffer.task 에 적재).
+      6) deadline 기반 sleep — drift 가 한 주기 이상이면 재동기화 (decision [8])
+
+    종료 후:
+      - dataset.save_episode()  (parallel_encoding=True 가 기본)
+      - follower 를 home_pose 로 복귀 (decision [7])
     """
-    raise NotImplementedError(
-        "[record_teleop] record_episode() 미구현. "
-        "30Hz 동기화 루프 / 에피소드 종료 정책 확정 후 구현하세요."
+    embed_vec = np.asarray(embedding, dtype=np.float32)
+    if embed_vec.shape != (EXPECTED_EMBED_DIM,):
+        raise ValueError(
+            f'embedding shape {embed_vec.shape} != ({EXPECTED_EMBED_DIM},)'
+        )
+    task_str = label_record['canonical']
+    dt = 1.0 / args.fps
+
+    # 카메라 첫 프레임 대기 — camera_node 가 살아 있는지 확인
+    print(f'\n[ep {episode_idx}] /camera/rgb 첫 프레임 대기...')
+    wait_deadline = time.perf_counter() + 5.0
+    while helper.latest_rgb() is None:
+        rclpy.spin_once(helper, timeout_sec=0.05)
+        if time.perf_counter() > wait_deadline:
+            raise RuntimeError(
+                '[record_teleop] /camera/rgb 미수신 (5s timeout). '
+                'camera_node 와 realsense2_camera 가 실행 중인지 확인.'
+            )
+
+    print(f'[ep {episode_idx}] task = {task_str!r}')
+    print(f'[ep {episode_idx}] Enter 로 녹화 시작.')
+    input()
+
+    print(f'[ep {episode_idx}] 녹화 중 — "q"+Enter 또는 Ctrl+C 로 종료')
+    n_frames    = 0
+    t_start     = time.perf_counter()
+    next_dl     = t_start
+    quit_flag   = False
+    try:
+        while True:
+            # 1) 종료 신호
+            if _user_wants_quit():
+                quit_flag = True
+                break
+
+            # 2) 카메라 콜백 drain (latest-only 캐시 갱신)
+            rclpy.spin_once(helper, timeout_sec=0.0)
+
+            # 3) 리더 → 팔로워 미러링
+            leader_action = teleop.get_action()
+            robot.send_action(leader_action)
+
+            # 4) 팔로워 상태 + 최신 RGB
+            follower_obs = robot.get_observation()
+            rgb_msg      = helper.latest_rgb()
+            if rgb_msg is None:
+                # 카메라 일시 단절 — 이번 틱 스킵하고 다음 deadline 으로
+                next_dl += dt
+                _sleep_until(next_dl)
+                continue
+
+            # 5) frame 구성 + LeRobot 데이터셋 적재
+            #    add_frame 은 frame['task'] 를 pop 하여 episode_buffer.task 에 누적.
+            frame = {
+                'observation.state':              _action_dict_to_vec(follower_obs),
+                'observation.language_embedding': embed_vec,
+                CAMERA_KEY:                       _rgb_msg_to_array(rgb_msg),
+                'action':                         _action_dict_to_vec(leader_action),
+                'task':                           task_str,
+            }
+            dataset.add_frame(frame)
+            n_frames += 1
+
+            # 6) fps 유지 — deadline 기반 (decision [8] drift 재동기화)
+            next_dl += dt
+            slack = next_dl - time.perf_counter()
+            if slack > 0:
+                time.sleep(slack)
+            elif slack < -dt:
+                # 한 주기 이상 밀린 경우 — 누적 drift 누락하고 현재 시점으로 재설정
+                next_dl = time.perf_counter()
+    except KeyboardInterrupt:
+        quit_flag = True
+        print(f'\n[ep {episode_idx}] KeyboardInterrupt — 종료')
+
+    elapsed = time.perf_counter() - t_start
+    realized_fps = n_frames / elapsed if elapsed > 0 else 0.0
+    print(
+        f'[ep {episode_idx}] 녹화 종료 — frames={n_frames} '
+        f'elapsed={elapsed:.2f}s realized_fps={realized_fps:.2f} '
+        f'(quit={"q" if quit_flag else "?"})'
     )
+
+    # 에피소드 저장 (parallel_encoding=True 가 기본 — 백그라운드 비디오 인코딩)
+    dataset.save_episode()
+    print(f'[ep {episode_idx}] save_episode 호출 완료 — 인코딩 백그라운드 진행')
+
+    # follower home pose 복귀 (decision [7])
+    print(f'[ep {episode_idx}] follower → home pose 복귀 중 '
+          f'({RETURN_HOME_DURATION_S:.1f}s)...')
+    _return_to_home(robot, home_pose, args.fps)
+    print(f'[ep {episode_idx}] 복귀 완료. 장면을 reset 한 뒤 다음 라벨 입력으로 진행.')
+
+
+def _sleep_until(deadline_perf: float) -> None:
+    """time.perf_counter() 기준 deadline 까지 sleep. 음수면 즉시 반환."""
+    remaining = deadline_perf - time.perf_counter()
+    if remaining > 0:
+        time.sleep(remaining)
 
 
 def main() -> None:
@@ -396,12 +699,12 @@ def main() -> None:
 
     # 1) Vocabulary 로드 (Option C 슬롯 검증용)
     vocab = load_vocab(args.label_vocab, args.domain)
-    labels_jsonl = _resolve_labels_jsonl(args)
     print(f'[record_teleop] vocab loaded ({args.label_vocab}, domain={args.domain})')
-    print(f'[record_teleop] label log: {labels_jsonl}')
 
     rclpy.init()
     helper = RecordHelperNode()
+    robot:  Optional[SO101Follower] = None
+    teleop: Optional[SO101Leader]   = None
 
     try:
         # 2) 첫 에피소드 라벨 → 임베딩 차원 검증 (384 강제)
@@ -420,13 +723,23 @@ def main() -> None:
             return
         helper.get_logger().info(f'embedding_dim = {embedding_dim} (확정)')
 
-        # 3) 데이터셋 / 로봇 연결
+        # 3) 데이터셋 생성 — labels.jsonl 은 dataset.root 옆에 두는 것을 기본으로
         dataset = open_dataset(args, embedding_dim)
+        labels_jsonl = _resolve_labels_jsonl(args, dataset)
+        print(f'[record_teleop] dataset.root = {dataset.root}')
+        print(f'[record_teleop] label log    = {labels_jsonl}')
+
+        # 4) SO-101 연결 (operational decision [1] — single-owner)
         robot, teleop = connect_so101(
             args.robot_port, args.robot_id, args.teleop_port, args.teleop_id,
         )
 
-        # 4) 에피소드 루프
+        # 5) Home pose 캡처 (operational decision [7])
+        #    → 스크립트 실행 전 작업자가 follower 를 rest 자세에 두고 켜야 함.
+        home_pose = _capture_home_pose(robot)
+        print(f'[record_teleop] home pose 캡처: {home_pose.tolist()}')
+
+        # 6) 에피소드 루프
         for ep in range(args.num_episodes):
             if ep == 0:
                 rec, embed = first_rec, first_embed
@@ -440,9 +753,23 @@ def main() -> None:
                     continue
 
             append_label_record(labels_jsonl, rec)
-            record_episode(args, helper, robot, teleop, dataset, ep, rec, embed)
+            record_episode(
+                args, helper, robot, teleop, dataset,
+                ep, rec, embed, home_pose,
+            )
 
     finally:
+        # SO-101 안전 해제 — 포트 점유 해제 보장 (decision [1])
+        if teleop is not None:
+            try:
+                teleop.disconnect()
+            except Exception as e:
+                print(f'[record_teleop] teleop disconnect 오류: {e}')
+        if robot is not None:
+            try:
+                robot.disconnect()
+            except Exception as e:
+                print(f'[record_teleop] robot disconnect 오류: {e}')
         helper.destroy_node()
         rclpy.shutdown()
 

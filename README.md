@@ -581,12 +581,19 @@ depth_change_threshold: 0.02  # m, 이 이상의 변화가 있으면 grasp 성�
 
 ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 LoRA는 사용하지 않는다.
 
+> **포트 점유 정책**: `record_teleop.py` 가 SO-101 follower USB 포트를
+> **단독 점유**한다. 동시에 `robot_controller_node` 가 실행 중이면 LeRobot SDK
+> 의 포트 open 단계에서 실패하므로, Part D 수집 동안에는 `robot_controller_node`
+> 를 반드시 종료할 것. (스크립트 상단 "운영 / 측정 결정 사항" 블록 [1] 참고)
+
 ### 실행 전 준비
 
 1. SO-101 리더/팔로워 USB 포트 확인
 2. LeRobot 캘리브레이션 완료 (`lerobot-calibrate`)
 3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
 4. 임베딩 모델 결정 및 배치 (Part C/E와 동일 모델 사용 필수)
+5. `robot_controller_node` 가 떠 있다면 중지 (위 포트 점유 정책)
+6. follower 팔을 원하는 rest(home) 자세에 둔 채로 record_teleop 실행 — 그 자세가 에피소드 간 자동 복귀 지점으로 캡처된다 (결정 [7])
 
 teleoperation 동작 검증
 ```bash
@@ -889,7 +896,6 @@ datasets = [
 | `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체 | Part C, llama-server 구동, embedding_node |
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
-| `record_teleop.py` | `open_dataset()`, `connect_so101()`, `record_episode()` (라벨 슬롯 입력은 구현 완료) | LeRobot 0.4.4 features API |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `sim/generate_act_dataset.py` | IK 전문가 + DR + multi-target 장면 기반 시연 생성 본체 | SO-101 USD 변환, IK 솔버 결정 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
@@ -908,6 +914,7 @@ datasets = [
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
 > - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
+> - `scripts/record_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
 > - `deploy/config/domain_map.yaml` 템플릿
 > - `deploy/config/label_vocab.yaml` (Part D / Cat-B / Sim 공유 vocabulary)
 > - `camera_node.py`
