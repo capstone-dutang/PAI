@@ -65,7 +65,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 import yaml
-from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image
@@ -82,6 +81,8 @@ from robot_arm_pkg.utils.home_pose import (
     load_home_pose,
     save_home_pose,
 )
+# 공유 유틸 — /camera/rgb msg → numpy (cv_bridge 미사용, NumPy 2.x 호환)
+from robot_arm_pkg.utils.ros_image import image_msg_to_rgb_array
 
 from robot_arm_msgs.srv import EmbedText
 
@@ -143,18 +144,18 @@ SO101_JOINT_NAMES: List[str] = [
     'gripper',
 ]
 
-# 이미지 기본값 (operational decision [4])
+# 이미지 기본값 (operational decision [3])
 DEFAULT_IMG_H = 480
 DEFAULT_IMG_W = 640
 
-# Home pose 복귀 시간 (operational decision [7])
+# Home pose 복귀 시간 (operational decision [5])
 RETURN_HOME_DURATION_S = 2.0
 
 # LeRobot 데이터셋 카메라 채널 키 (act_node._predict_chunk obs 키와 일치 필수)
 CAMERA_KEY = 'observation.images.top'
 
-# cv_bridge 싱글톤 — /camera/rgb msg → numpy (rgb8) 변환에 사용
-_bridge = CvBridge()
+# /camera/rgb msg → numpy (rgb8) 변환은 robot_arm_pkg.utils.ros_image 에서 처리.
+# cv_bridge 의존을 제거하여 NumPy 1.x / 2.x 양쪽 환경에서 동작하게 한다.
 
 
 # ──────────────────────────────────────────────
@@ -192,18 +193,18 @@ def parse_args() -> RecordArgs:
                    help='라벨 vocabulary YAML 경로')
     p.add_argument('--num-episodes',    type=int, default=50, help='수집 에피소드 수')
     p.add_argument('--fps',             type=int, default=30,
-                   help='기록 주기 (Hz). operational decision [8] — Jetson 실측 후 변경.')
+                   help='기록 주기 (Hz). operational decision [6] — Jetson 실측 후 변경.')
     p.add_argument('--labels-jsonl',    default='',
                    help='canonical 라벨 + 슬롯 메타데이터 기록 JSONL 경로. '
                         '비어 있으면 dataset.root 옆에 labels.jsonl 로 자동 생성. '
                         '이 파일은 postprocess_real_labels.py 입력으로 사용된다.')
     p.add_argument('--img-h',           type=int, default=DEFAULT_IMG_H,
-                   help='이미지 높이 H (operational decision [4]). '
+                   help='이미지 높이 H (operational decision [3]). '
                         'Sim Part B feature shape 과 일치해야 Co-training 가능.')
     p.add_argument('--img-w',           type=int, default=DEFAULT_IMG_W,
-                   help='이미지 너비 W (operational decision [4]).')
+                   help='이미지 너비 W (operational decision [3]).')
     p.add_argument('--home-pose-file',  default=DEFAULT_HOME_POSE_PATH,
-                   help='home pose YAML 경로 (operational decision [7]). '
+                   help='home pose YAML 경로 (operational decision [5]). '
                         '존재하면 그 자세로 에피소드 간 자동 복귀. '
                         '없으면 connect 직후 follower 자세를 캡처해 같은 경로에 저장. '
                         f'기본 {DEFAULT_HOME_POSE_PATH} — robot_controller_node /go_home 과 공유.')
@@ -446,7 +447,17 @@ class RecordHelperNode(Node):
 
 def open_dataset(args: RecordArgs, embedding_dim: int) -> LeRobotDataset:
     """
-    LeRobotDataset 0.4.4 인스턴스를 features 스키마와 함께 생성.
+    LeRobotDataset 0.4.4 인스턴스를 features 스키마와 함께 생성하거나
+    기존 데이터셋을 그대로 열어 *resume* 한다.
+
+    동작:
+      - ~/.cache/huggingface/lerobot/<repo_id> 가 존재하면 LeRobotDataset() 로
+        기존 데이터셋을 열어 신규 에피소드를 append (resume).
+        language_embedding shape 만 검증하고 그 외 채널은 add_frame 의
+        validate_frame 에 위임한다.
+      - 존재하지 않으면 LeRobotDataset.create() 로 새로 생성.
+        LeRobotDataset.create() 는 내부에서 exist_ok=False 로 mkdir 하므로
+        기존 폴더가 남아 있으면 FileExistsError 가 난다 → 위 분기로 사전 차단.
 
     features 스키마 (lerobot.datasets.utils 의 표준 컨벤션 따름):
       observation.state              : float32 (6,)              — 팔로워 관절 위치
@@ -482,6 +493,33 @@ def open_dataset(args: RecordArgs, embedding_dim: int) -> LeRobotDataset:
             'names': list(SO101_JOINT_NAMES),
         },
     }
+
+    # LeRobotDataset 기본 저장 위치 — root 인자 미지정 시 사용.
+    default_root = Path.home() / '.cache' / 'huggingface' / 'lerobot' / args.dataset_repo_id
+    if default_root.exists():
+        print(
+            f'[record_teleop] 기존 데이터셋 발견 → resume: {default_root}\n'
+            '                새로 시작하려면 위 경로를 삭제 후 재실행.'
+        )
+        dataset = LeRobotDataset(repo_id=args.dataset_repo_id)
+
+        # language_embedding shape 일치 사전 검증 — 임베딩 모델 변경 시 즉시 차단.
+        existing = dataset.features.get('observation.language_embedding')
+        if existing is None:
+            raise RuntimeError(
+                f'기존 데이터셋에 observation.language_embedding 채널이 없음 '
+                f'({default_root}). 호환되는 데이터셋이 아님 — 다른 '
+                '--dataset-repo-id 사용 또는 위 경로 삭제 후 재실행.'
+            )
+        ex_shape = tuple(existing['shape'])
+        if ex_shape != (embedding_dim,):
+            raise RuntimeError(
+                f'기존 데이터셋 language_embedding shape={ex_shape} != '
+                f'({embedding_dim},). 임베딩 모델이 다른 데이터셋이므로 '
+                '동일 repo 에 append 불가 — 다른 repo_id 사용 또는 데이터셋 삭제 필요.'
+            )
+        return dataset
+
     return LeRobotDataset.create(
         repo_id=args.dataset_repo_id,
         fps=args.fps,
@@ -517,7 +555,7 @@ def connect_so101(
 
 def _user_wants_quit() -> bool:
     """
-    operational decision [6]:
+    operational decision [4]:
       stdin 에 'q' (또는 'Q') + Enter 가 들어왔는지 비차단 검사.
       Linux/macOS 전용 (Jetson 타깃). Windows 에서는 항상 False.
     """
@@ -544,15 +582,16 @@ def _rgb_msg_to_array(msg: Image) -> np.ndarray:
     /camera/rgb (sensor_msgs/Image) → numpy (H,W,3) uint8 RGB.
 
     operational decision [2] + bridging encoding:
-      RealSense 가 bgr8 로 발행하든 rgb8 로 발행하든 desired_encoding='rgb8' 로
-      통일하여 채널 순서를 강제한다 (Sim/Real 일치).
+      RealSense 가 bgr8 로 발행하든 rgb8 로 발행하든 numpy 레벨에서 rgb8 로
+      통일한다 (Sim/Real 일치). cv_bridge 의존을 제거하기 위해
+      robot_arm_pkg.utils.ros_image.image_msg_to_rgb_array 로 직접 변환.
     """
-    return _bridge.imgmsg_to_cv2(msg, desired_encoding='rgb8')
+    return image_msg_to_rgb_array(msg)
 
 
 def _capture_home_pose(robot: SO101Follower) -> np.ndarray:
     """
-    operational decision [7]:
+    operational decision [5]:
       connect 직후 follower 자세를 home pose 로 그대로 저장.
       스크립트 실행 전 작업자가 팔을 원하는 rest 자세에 두고 켜야 한다.
     """
@@ -567,7 +606,7 @@ def _return_to_home(
     duration_s: float = RETURN_HOME_DURATION_S,
 ) -> None:
     """
-    operational decision [7]:
+    operational decision [5]:
       현재 follower 자세 → home_pose 로 fps Hz 선형 보간 명령 전송.
       duration_s 초에 걸쳐 동작. 카메라 spin 은 멈춰도 무관 (녹화 종료 후이므로).
     """
@@ -602,17 +641,17 @@ def record_episode(
     1개 에피소드 녹화 → 저장 → follower home pose 복귀.
 
     각 틱(=1/fps 초) 마다:
-      1) 종료 신호 확인 ('q'+Enter) — operational decision [6]
+      1) 종료 신호 확인 ('q'+Enter) — operational decision [4]
       2) 카메라 콜백 처리 (latest-only)
       3) 리더 action 읽어 팔로워에 미러링
       4) 팔로워 관절 상태 + 최신 RGB 프레임 수집
       5) frame dict 구성 + dataset.add_frame
          frame['task'] 가 필수 (add_frame 이 pop 하여 episode_buffer.task 에 적재).
-      6) deadline 기반 sleep — drift 가 한 주기 이상이면 재동기화 (decision [8])
+      6) deadline 기반 sleep — drift 가 한 주기 이상이면 재동기화 (decision [6])
 
     종료 후:
       - dataset.save_episode()  (parallel_encoding=True 가 기본)
-      - follower 를 home_pose 로 복귀 (decision [7])
+      - follower 를 home_pose 로 복귀 (decision [5])
     """
     embed_vec = np.asarray(embedding, dtype=np.float32)
     if embed_vec.shape != (EXPECTED_EMBED_DIM,):
@@ -677,7 +716,7 @@ def record_episode(
             dataset.add_frame(frame)
             n_frames += 1
 
-            # 6) fps 유지 — deadline 기반 (decision [8] drift 재동기화)
+            # 6) fps 유지 — deadline 기반 (decision [6] drift 재동기화)
             next_dl += dt
             slack = next_dl - time.perf_counter()
             if slack > 0:
@@ -701,7 +740,7 @@ def record_episode(
     dataset.save_episode()
     print(f'[ep {episode_idx}] save_episode 호출 완료 — 인코딩 백그라운드 진행')
 
-    # follower home pose 복귀 (decision [7])
+    # follower home pose 복귀 (decision [5])
     print(f'[ep {episode_idx}] follower → home pose 복귀 중 '
           f'({RETURN_HOME_DURATION_S:.1f}s)...')
     _return_to_home(robot, home_pose, args.fps)
@@ -755,7 +794,7 @@ def main() -> None:
             args.robot_port, args.robot_id, args.teleop_port, args.teleop_id,
         )
 
-        # 5) Home pose 결정 (operational decision [7] — 파일 영구화)
+        # 5) Home pose 결정 (operational decision [5] — 파일 영구화)
         #    파일이 있으면 그 자세를 그대로 사용.
         #    없으면 connect 직후 follower 자세를 캡처해 같은 경로에 저장 →
         #    이후 record_teleop / robot_controller_node /go_home 이 공유.

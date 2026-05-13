@@ -14,7 +14,9 @@
   <depend>std_srvs</depend>                     <!-- robot_controller_node: /go_home Trigger -->
   <depend>geometry_msgs</depend>
   <depend>message_filters</depend>              <!-- camera_node: ApproximateTimeSynchronizer -->
-  <depend>cv_bridge</depend>                    <!-- record_teleop: /camera/rgb → numpy -->
+  <!-- cv_bridge 의존 제거 — ROS Humble apt 빌드가 NumPy 1.x ABI 와만
+       호환되어 NumPy 2.x 환경에서 깨진다. /camera/rgb 변환은
+       robot_arm_pkg/utils/ros_image.py 의 np.frombuffer 헬퍼로 대체. -->
 
   <!-- 본 패키지의 커스텀 메시지/서비스 -->
   <depend>robot_arm_msgs</depend>
