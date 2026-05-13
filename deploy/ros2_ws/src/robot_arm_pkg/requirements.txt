@@ -44,3 +44,9 @@ lerobot==0.4.4
 # (PreTrainedModel / is_datasets_available / is_torch_npu_available 중 하나).
 # transformers 5.x stable 등장 전까지 <5.0 으로 핀.
 sentence-transformers>=2.7.0,<5.0
+
+# transformers 4.57.x는 top-level에서 PreTrainedModel export를 제거해서
+# (hasattr(transformers, 'PreTrainedModel') == False) sentence-transformers의
+# "from transformers import PreTrainedModel"이 깨진다. PreTrainedModel이
+# top-level에 살아 있던 4.4x 라인으로 핀한다.
+transformers>=4.41.0,<4.50.0
