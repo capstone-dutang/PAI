@@ -99,12 +99,21 @@ class EmbeddingNode(Node):
         model_name이 로컬 디렉터리이면 그대로 로드, 아니면 HF Hub에서 다운로드.
         Jetson 배포 시에는 사전 다운로드를 권장 (오프라인 환경 대비).
         """
+        import traceback
+
         try:
             from sentence_transformers import SentenceTransformer
-        except ImportError:
+        except ImportError as e:
             self.get_logger().error(
-                '[embedding_node] sentence-transformers 미설치. '
+                f'[embedding_node] sentence-transformers import 실패 (ImportError): {e}. '
                 'requirements.txt 확인 후 pip install -r requirements.txt 실행.'
+            )
+            return
+        except Exception as e:
+            # NumPy/scipy ABI 충돌 등 ImportError 외 import 실패도 진단 가능하게 노출.
+            self.get_logger().error(
+                f'[embedding_node] sentence-transformers import 중 예외 '
+                f'({type(e).__name__}): {e}\n{traceback.format_exc()}'
             )
             return
 
@@ -114,7 +123,8 @@ class EmbeddingNode(Node):
             self._dim = int(self._model.get_sentence_embedding_dimension())
         except Exception as e:
             self.get_logger().error(
-                f'[embedding_node] 모델 로드 실패 ({self.model_name}): {e}'
+                f'[embedding_node] 모델 로드 실패 ({self.model_name}, '
+                f'{type(e).__name__}): {e}\n{traceback.format_exc()}'
             )
             self._model = None
             self._dim = None
