@@ -56,6 +56,7 @@ import argparse
 import json
 import os
 import select
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -496,6 +497,20 @@ def open_dataset(args: RecordArgs, embedding_dim: int) -> LeRobotDataset:
 
     # LeRobotDataset 기본 저장 위치 — root 인자 미지정 시 사용.
     default_root = Path.home() / '.cache' / 'huggingface' / 'lerobot' / args.dataset_repo_id
+
+    # 이전 run 이 LeRobotDataset.create() 만 하고 save_episode() 전에 종료된 경우
+    # 디렉터리는 존재하지만 meta/tasks.parquet 같은 핵심 메타파일이 없다. 그 상태에서
+    # LeRobotDataset() 으로 열려고 하면 load_metadata 가 FileNotFoundError 를 내고,
+    # LeRobot 의 Hub fallback 이 동작해 404/401 로 죽는다. 이 케이스를 미리 정리.
+    tasks_parquet = default_root / 'meta' / 'tasks.parquet'
+    if default_root.exists() and not tasks_parquet.exists():
+        print(
+            f'[record_teleop] 기존 폴더 {default_root} 가 미완성 데이터셋 '
+            '(meta/tasks.parquet 없음 — 이전 run 이 첫 save_episode 전에 종료된 흔적). '
+            '자동 삭제 후 새로 생성합니다.'
+        )
+        shutil.rmtree(default_root)
+
     if default_root.exists():
         print(
             f'[record_teleop] 기존 데이터셋 발견 → resume: {default_root}\n'
