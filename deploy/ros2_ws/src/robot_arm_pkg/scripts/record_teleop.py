@@ -76,7 +76,7 @@ from lerobot.robots.so_follower      import SO101Follower, SO101FollowerConfig
 from lerobot.teleoperators.so_leader import SO101Leader,   SO101LeaderConfig
 
 # 공유 유틸 — home_pose 파일 입출력 (robot_controller_node 와 같은 파일 공유)
-from robot_arm_pkg.home_pose import (
+from robot_arm_pkg.utils.home_pose import (
     DEFAULT_HOME_POSE_PATH,
     home_pose_exists,
     load_home_pose,

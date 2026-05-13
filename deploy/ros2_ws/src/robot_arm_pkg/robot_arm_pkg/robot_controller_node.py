@@ -50,7 +50,7 @@ from std_srvs.srv import Trigger
 from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
 # 공유 유틸 — record_teleop 과 동일한 home_pose.yaml 을 읽는다.
-from robot_arm_pkg.home_pose import DEFAULT_HOME_POSE_PATH, load_home_pose
+from robot_arm_pkg.utils.home_pose import DEFAULT_HOME_POSE_PATH, load_home_pose
 
 
 # SO-101 관절 이름 — LeRobot SDK의 모터 이름과 일치.

@@ -1,5 +1,5 @@
 """
-home_pose.py — SO-101 follower home pose 파일 입출력 유틸.
+robot_arm_pkg.utils.home_pose — SO-101 follower home pose 파일 입출력 유틸.
 
 데이터 수집(Part D) 과 추론/배포(Part F) 모두 같은 home pose 로 task 종료 후
 복귀하기 위해 YAML 파일 한 개를 공유한다.
