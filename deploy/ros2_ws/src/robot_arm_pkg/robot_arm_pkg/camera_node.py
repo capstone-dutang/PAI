@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image
 import message_filters
 
@@ -33,16 +34,28 @@ class CameraNode(Node):
     def __init__(self):
         super().__init__('camera_node')
 
+        # ── QoS ──────────────────────────────────
+        # realsense2_camera 는 카메라 토픽을 BEST_EFFORT 로 발행한다.
+        # RELIABLE 구독자는 BEST_EFFORT 퍼블리셔에 연결하지 못해 콜백이 안 돈다
+        # ─ 그래서 입력 sub 두 개를 모두 BEST_EFFORT 로 맞춘다. 발행도 동일
+        # 정책으로 통일해 act_node / record_teleop helper (BestEffort 구독) 와
+        # 자연스럽게 결합되도록 한다.
+        camera_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=self.QUEUE_SIZE,
+        )
+
         # ── 퍼블리셔 ──────────────────────────────
-        self.rgb_pub   = self.create_publisher(Image, '/camera/rgb',   self.QUEUE_SIZE)
-        self.depth_pub = self.create_publisher(Image, '/camera/depth', self.QUEUE_SIZE)
+        self.rgb_pub   = self.create_publisher(Image, '/camera/rgb',   camera_qos)
+        self.depth_pub = self.create_publisher(Image, '/camera/depth', camera_qos)
 
         # ── 동기화 구독 (RGB + Depth 타임스탬프 동기화) ──
         rgb_sub = message_filters.Subscriber(
-            self, Image, '/camera/color/image_raw'
+            self, Image, '/camera/color/image_raw', qos_profile=camera_qos
         )
         depth_sub = message_filters.Subscriber(
-            self, Image, '/camera/aligned_depth_to_color/image_raw'
+            self, Image, '/camera/aligned_depth_to_color/image_raw', qos_profile=camera_qos
         )
 
         self._sync = message_filters.ApproximateTimeSynchronizer(
@@ -53,7 +66,7 @@ class CameraNode(Node):
         self._sync.registerCallback(self._relay_callback)
 
         self.get_logger().info(
-            'camera_node 시작\n'
+            'camera_node 시작 (QoS=BestEffort)\n'
             '  구독: /camera/color/image_raw\n'
             '        /camera/aligned_depth_to_color/image_raw\n'
             '  발행: /camera/rgb  /camera/depth'
