@@ -642,9 +642,9 @@ ros2 run robot_arm_pkg embedding_node \
 
 # 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
 python ~/ros2_ws/src/robot_arm_pkg/scripts/record_teleop.py \
-  --robot-port      /dev/ttyACM0 \
+  --robot-port      /dev/ttyACM1 \
   --robot-id        follower \
-  --teleop-port     /dev/ttyACM1 \
+  --teleop-port     /dev/ttyACM0 \
   --teleop-id       leader \
   --dataset-repo-id myname/dataset_real \
   --domain          recycling \
