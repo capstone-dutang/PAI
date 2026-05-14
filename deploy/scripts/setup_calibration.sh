@@ -101,7 +101,7 @@ fi
 # =============================================================================
 # 5. 빌드
 # =============================================================================
-echo -e "\n${YELLOW}[5/5] 빌드${NC}"
+echo -e "\n${YELLOW}[5/6] 빌드${NC}"
 
 source /opt/ros/humble/setup.bash
 export ROS_DISTRO="${ROS_DISTRO:-humble}"
@@ -121,6 +121,30 @@ colcon build --packages-select \
 source install/setup.bash
 
 echo -e "${GREEN}빌드 완료${NC}"
+
+# =============================================================================
+# 6. easy_handeye2 entry_point shebang 치환
+# =============================================================================
+# setuptools 60~79 일부 버전 + colcon(python setup.py install) 조합에서
+# entry_point wrapper(rqt_calibrator.py 등)가 placeholder shebang `#!python`
+# 으로 생성되어 launch 시 posix_spawn(ENOENT)로 실행 실패하는 문제가 있다.
+# requirements.txt가 setuptools<80을 강제하는 한 이 조합은 계속 발생하므로
+# 빌드 산출물의 shebang을 자동 치환한다.
+echo -e "\n${YELLOW}[6/6] easy_handeye2 shebang 치환${NC}"
+
+HANDEYE_LIB="$ROS2_WS/install/easy_handeye2/lib/easy_handeye2"
+if [ -d "$HANDEYE_LIB" ]; then
+    fixed=0
+    while IFS= read -r -d '' f; do
+        if [ "$(head -n 1 "$f" 2>/dev/null)" = "#!python" ]; then
+            sed -i '1s|^#!python$|#!/usr/bin/env python3|' "$f"
+            fixed=$((fixed + 1))
+        fi
+    done < <(find "$HANDEYE_LIB" -type f -executable -print0)
+    echo -e "${GREEN}shebang 치환 완료 (${fixed}개 파일)${NC}"
+else
+    echo -e "${YELLOW}easy_handeye2 install 디렉토리 없음. 스킵.${NC}"
+fi
 
 # =============================================================================
 # 완료
