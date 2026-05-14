@@ -542,10 +542,6 @@ source install/setup.bash
 # 캘리브레이션 launch (마커 크기 5cm 기준)
 export DISPLAY=:1
 ros2 launch robot_arm_pkg calibration.launch.py robot_port:=/dev/follower
-ros2 launch robot_arm_pkg calibration.launch.py \
-  marker_id:=0 \
-  marker_size:=0.05 \
-  robot_port:=/dev/ttyACM1
 
 # 별도 터미널: rqt GUI에서 EasyHandeye2 플러그인 실행
 ros2 run rqt_gui rqt_gui --force-discover
@@ -565,7 +561,8 @@ ros2 run rqt_image_view rqt_image_view /aruco_tracker/debug
 6. 결과 파일 복사:
 
 ```bash
-cp ~/.ros/easy_handeye2/eye_on_base_calibration.yaml \
+mkdir -p ~/calibration
+cp ~/.ros2/easy_handeye2/calibrations/eye_on_base_calibration.calib \
    ~/calibration/camera_robot_transform.yaml
 
 # camera_intrinsics는 RealSense camera_info 토픽에서 추출
