@@ -826,7 +826,8 @@ def main() -> None:
                   f'{args.home_pose_file} 삭제 후 record_teleop 재실행.')
 
         # 6) 에피소드 루프
-        for ep in range(args.num_episodes):
+        start_ep = dataset.num_episodes
+        for ep in range(start_ep, start_ep + args.num_episodes):
             if ep == 0:
                 rec, embed = first_rec, first_embed
             else:
@@ -838,11 +839,23 @@ def main() -> None:
                     )
                     continue
 
-            append_label_record(labels_jsonl, rec)
-            record_episode(
-                args, helper, robot, teleop, dataset,
-                ep, rec, embed, home_pose,
-            )
+            while True:
+                append_label_record(labels_jsonl, rec)
+                record_episode(
+                    args, helper, robot, teleop, dataset,
+                    ep, rec, embed, home_pose,
+                )
+                retry = input(f'[ep {ep}] 이 에피소드를 다시 촬영할까요? (y/n): ').strip().lower()
+                if retry == 'y':
+                    dataset.delete_episode()
+                    print(f'[ep {ep}] 재촬영 — 라벨 다시 입력합니다.')
+                    rec   = prompt_episode_label(vocab, ep)
+                    embed = helper.call_embed_text(rec['canonical'])
+                    if embed is None or len(embed) != EXPECTED_EMBED_DIM:
+                        print(f'[ep {ep}] 임베딩 실패. 스킵.')
+                        break
+                else:
+                    break
 
     finally:
         # SO-101 안전 해제 — 포트 점유 해제 보장 (decision [1])
