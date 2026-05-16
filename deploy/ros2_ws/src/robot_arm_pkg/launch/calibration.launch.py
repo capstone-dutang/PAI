@@ -93,8 +93,9 @@ def generate_launch_description():
             'image_is_rectified':       True,
             'transform_poses':          True,
             'output_frame':             'camera_color_optical_frame',
-            # OpenCV ArUco 코너 정밀화 방법: NONE / SUBPIX / CONTOUR / APRILTAG
-            'corner_refinement_method': 'SUBPIX',
+            # OpenCV ArUco 코너 정밀화 방법 (정수, 범위 0~2)
+            #   0 = NONE, 1 = SUBPIX, 2 = CONTOUR
+            'aruco.cornerRefinementMethod': 1,
         }],
         output='screen',
     )
