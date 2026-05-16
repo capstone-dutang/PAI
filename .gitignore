@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 .claude/
+# Third-party ROS2 packages (cloned during setup, not part of this repo)
+deploy/ros2_ws/src/aruco_ros/
+deploy/ros2_ws/src/easy_handeye2/
