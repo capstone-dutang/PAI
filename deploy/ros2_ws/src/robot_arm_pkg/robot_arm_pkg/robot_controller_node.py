@@ -37,6 +37,7 @@ SO-101 관절 순서 (6축):
 
 from __future__ import annotations
 
+import math
 import time
 from typing import List, Optional
 
@@ -64,6 +65,11 @@ SO101_JOINT_NAMES: List[str] = [
     'wrist_roll',
     'gripper',
 ]
+
+# /joint_states 발행 시 URDF(라디안) 매칭을 위한 그리퍼 한계 — so101.urdf 의
+# revolute joint "gripper" <limit lower upper> 와 동일하게 유지할 것.
+_GRIPPER_URDF_LOWER = -0.174533
+_GRIPPER_URDF_UPPER = 1.74533
 
 
 class RobotControllerNode(Node):
@@ -188,9 +194,22 @@ class RobotControllerNode(Node):
 
         SDK 반환 dict에서 {motor}.pos 키만 추려 6개 값을 모은다.
         (카메라 등록 시 obs에 이미지 키가 함께 들어올 수 있어 명시적으로 골라야 한다.)
+
+        단위 변환: LeRobot SO-101 SDK 는 회전 5축을 도(degree), 그리퍼를
+        0~100 정규화 값으로 반환한다. URDF/TF 는 라디안 기반이라
+        robot_state_publisher 가 한계로 클램프되어 TF 가 멈추는 것을 막기 위해
+        여기서 변환한다. (act_node·home_pose.yaml·데이터셋은 SDK 단위 그대로
+        유지하므로 _send_command/_go_home 은 변환하지 않는다.)
         """
         obs = self._robot.get_observation()
-        positions = [float(obs[f'{name}.pos']) for name in SO101_JOINT_NAMES]
+        raw = [float(obs[f'{name}.pos']) for name in SO101_JOINT_NAMES]
+
+        positions = [math.radians(v) for v in raw[:5]]
+        gripper_frac = max(0.0, min(100.0, raw[5])) / 100.0
+        positions.append(
+            _GRIPPER_URDF_LOWER
+            + gripper_frac * (_GRIPPER_URDF_UPPER - _GRIPPER_URDF_LOWER)
+        )
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
