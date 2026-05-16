@@ -87,12 +87,14 @@ def generate_launch_description():
         executable='aruco_tracker_autostart',
         name='aruco_tracker',
         parameters=[{
-            'cam_base_topic':     '/camera/realsense2_camera/color/image_raw',
-            'marker_size':        marker_size,
-            'marker_dict':        marker_dict,
-            'image_is_rectified': True,
-            'transform_poses':    True,
-            'output_frame':       'camera_color_optical_frame',
+            'cam_base_topic':           '/camera/realsense2_camera/color/image_raw',
+            'marker_size':              marker_size,
+            'marker_dict':              marker_dict,
+            'image_is_rectified':       True,
+            'transform_poses':          True,
+            'output_frame':             'camera_color_optical_frame',
+            # OpenCV ArUco 코너 정밀화 방법: NONE / SUBPIX / CONTOUR / APRILTAG
+            'corner_refinement_method': 'SUBPIX',
         }],
         output='screen',
     )
