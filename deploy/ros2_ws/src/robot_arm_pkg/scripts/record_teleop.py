@@ -751,6 +751,13 @@ def record_episode(
         f'(quit={"q" if quit_flag else "?"})'
     )
 
+    # 저장 여부 확인
+    save = input(f'[ep {episode_idx}] 이 에피소드를 저장할까요? (y/n): ').strip().lower()
+    if save != 'y':
+        dataset.clear_episode_buffer()
+        print(f'[ep {episode_idx}] 에피소드 버퍼 폐기.')
+        return False
+
     # 에피소드 저장 (parallel_encoding=True 가 기본 — 백그라운드 비디오 인코딩)
     dataset.save_episode()
     print(f'[ep {episode_idx}] save_episode 호출 완료 — 인코딩 백그라운드 진행')
