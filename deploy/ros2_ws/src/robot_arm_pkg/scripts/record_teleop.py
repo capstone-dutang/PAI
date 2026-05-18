@@ -58,6 +58,7 @@ import os
 import select
 import shutil
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 import yaml
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image
@@ -393,6 +395,13 @@ class RecordHelperNode(Node):
     record_teleop가 ROS2와 상호작용하기 위한 헬퍼 노드.
       - /camera/rgb 구독 (BestEffort + KeepLast(1)) — latest-only 캐시
       - /embed_text 서비스 클라이언트
+
+    main() 에서 별도 daemon 스레드의 SingleThreadedExecutor 에 add_node 되어
+    메인 루프의 시리얼 IO / 디스크 IO 와 무관하게 콜백이 즉시 처리된다.
+    이전 구조 (메인 루프에서 rclpy.spin_once(timeout_sec=0.0) 호출) 에서는
+    시리얼/PNG 저장이 메인 스레드를 점유하는 동안 /camera/rgb 콜백이 밀려
+    같은 이미지가 dataset 에 중복 적재되어 저장된 video 가 'freeze + 정상'
+    패턴으로 보이는 문제가 발생했다.
     """
 
     def __init__(self):
@@ -418,6 +427,10 @@ class RecordHelperNode(Node):
     def call_embed_text(self, text: str, timeout_sec: float = 5.0) -> Optional[List[float]]:
         """
         /embed_text 서비스 호출. 응답의 dim==0 이면 모델 미로드/실패로 간주하고 None 반환.
+
+        본 노드는 main() 의 백그라운드 executor 에서 spin 되고 있으므로
+        여기서 spin_until_future_complete 를 호출하면 이중 spin 으로 충돌한다.
+        대신 future.done() 폴링으로 결과를 기다린다.
         """
         if not self.embed_client.wait_for_service(timeout_sec=timeout_sec):
             self.get_logger().error('/embed_text 서비스 연결 실패')
@@ -426,8 +439,10 @@ class RecordHelperNode(Node):
         req = EmbedText.Request()
         req.text = text
         future = self.embed_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_sec)
-        resp = future.result()
+        deadline = time.perf_counter() + timeout_sec
+        while not future.done() and time.perf_counter() < deadline:
+            time.sleep(0.01)
+        resp = future.result() if future.done() else None
         if resp is None or resp.dim == 0:
             self.get_logger().error(
                 f'/embed_text 응답 실패 또는 dim=0 (text={text!r})'
@@ -677,15 +692,17 @@ def record_episode(
     dt = 1.0 / args.fps
 
     # 카메라 첫 프레임 대기 — camera_node 가 살아 있는지 확인
+    # 본 노드의 콜백은 main() 의 백그라운드 executor 가 처리하므로
+    # 여기서 별도 spin 없이 캐시만 polling 한다.
     print(f'\n[ep {episode_idx}] /camera/rgb 첫 프레임 대기...')
     wait_deadline = time.perf_counter() + 5.0
     while helper.latest_rgb() is None:
-        rclpy.spin_once(helper, timeout_sec=0.05)
         if time.perf_counter() > wait_deadline:
             raise RuntimeError(
                 '[record_teleop] /camera/rgb 미수신 (5s timeout). '
                 'camera_node 와 realsense2_camera 가 실행 중인지 확인.'
             )
+        time.sleep(0.05)
 
     print(f'[ep {episode_idx}] task = {task_str!r}')
     print(f'[ep {episode_idx}] Enter 로 녹화 시작.')
@@ -703,8 +720,10 @@ def record_episode(
                 quit_flag = True
                 break
 
-            # 2) 카메라 콜백 drain (latest-only 캐시 갱신)
-            rclpy.spin_once(helper, timeout_sec=0.0)
+            # 2) 카메라 콜백은 main() 의 백그라운드 executor 가 비동기 갱신.
+            #    여기서 spin_once 호출하지 않음 — 메인 스레드는 시리얼/디스크 IO
+            #    동안 ROS 콜백을 못 돌리므로 같은 RGB 가 재사용되는 freeze 가
+            #    발생했었음. 백그라운드 spin 으로 캐시는 항상 최신 프레임.
 
             # 3) 리더 → 팔로워 미러링
             leader_action = teleop.get_action()
@@ -785,6 +804,15 @@ def main() -> None:
 
     rclpy.init()
     helper = RecordHelperNode()
+
+    # 카메라 콜백을 메인 루프와 분리된 daemon 스레드의 SingleThreadedExecutor 에서
+    # 처리한다. 메인 스레드가 SO-101 시리얼 IO + add_frame 의 PNG 저장에 점유되어
+    # /camera/rgb 콜백이 밀려 동일 프레임이 dataset 에 중복 적재되던 문제를 차단.
+    executor = SingleThreadedExecutor()
+    executor.add_node(helper)
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+
     robot:  Optional[SO101Follower] = None
     teleop: Optional[SO101Leader]   = None
 
@@ -876,6 +904,9 @@ def main() -> None:
                 robot.disconnect()
             except Exception as e:
                 print(f'[record_teleop] robot disconnect 오류: {e}')
+        # 백그라운드 executor 종료 → spin 스레드 회수 → 노드/rclpy 정리 순서
+        executor.shutdown()
+        spin_thread.join(timeout=2.0)
         helper.destroy_node()
         rclpy.shutdown()
 
