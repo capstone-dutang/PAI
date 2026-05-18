@@ -666,9 +666,17 @@ def record_episode(
     label_record:  dict,
     embedding:     List[float],
     home_pose:     np.ndarray,
-) -> None:
+) -> bool:
     """
     1개 에피소드 녹화 → 저장 → follower home pose 복귀.
+
+    Returns:
+        True  — 사용자가 저장 선택, save_episode() 호출 완료 (디스크에 에피소드 존재).
+        False — 사용자가 저장 거부, clear_episode_buffer() 로 버퍼만 폐기 (디스크 무변경).
+
+        호출자(main)는 이 값으로 retry 시 delete_episode() 호출 여부를 결정한다.
+        save=False 인데 delete_episode() 를 부르면 직전 정상 저장 에피소드를 잘못
+        삭제하거나 LeRobotDataset 상태가 깨질 수 있어 반드시 분기 필요.
 
     각 틱(=1/fps 초) 마다:
       1) 종료 신호 확인 ('q'+Enter) — operational decision [4]
@@ -786,6 +794,7 @@ def record_episode(
           f'({RETURN_HOME_DURATION_S:.1f}s)...')
     _return_to_home(robot, home_pose, args.fps)
     print(f'[ep {episode_idx}] 복귀 완료. 장면을 reset 한 뒤 다음 라벨 입력으로 진행.')
+    return True
 
 
 def _sleep_until(deadline_perf: float) -> None:
@@ -876,13 +885,18 @@ def main() -> None:
 
             while True:
                 append_label_record(labels_jsonl, rec)
-                record_episode(
+                saved = record_episode(
                     args, helper, robot, teleop, dataset,
                     ep, rec, embed, home_pose,
                 )
                 retry = input(f'[ep {ep}] 이 에피소드를 다시 촬영할까요? (y/n): ').strip().lower()
                 if retry == 'y':
-                    dataset.delete_episode()
+                    # saved=True: 디스크 에피소드 삭제 후 재촬영.
+                    # saved=False: 이미 clear_episode_buffer() 됐으므로 추가 정리 불필요
+                    #   — 이때 delete_episode() 를 부르면 직전 정상 에피소드를
+                    #   잘못 지우거나 데이터셋 상태가 깨진다.
+                    if saved:
+                        dataset.delete_episode()
                     print(f'[ep {ep}] 재촬영 — 라벨 다시 입력합니다.')
                     rec   = prompt_episode_label(vocab, ep)
                     embed = helper.call_embed_text(rec['canonical'])
