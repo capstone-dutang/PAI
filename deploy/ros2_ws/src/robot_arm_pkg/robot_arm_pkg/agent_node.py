@@ -306,7 +306,7 @@ class AgentNode(Node):
              - 시스템 프롬프트에 look_scene/execute_subtask/verify_result 시그니처
                선언 → 모델이 JSON으로 함수 호출 응답
              - 본 메서드는 응답 파싱 후 매칭되는 _call_*() 디스패치
-               (Cat-B 학습 데이터의 형식과 일치해야 함 — README C-1)
+               (Cat-B 학습 데이터의 형식과 일치해야 함 — README Q&A 데이터 생성)
 
           3) 종료 처리
              - SUCCESS: self._user_command = None, _active_domain 유지(다음 명령 시 재평가)

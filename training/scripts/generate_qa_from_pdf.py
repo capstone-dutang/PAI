@@ -1,7 +1,7 @@
 """
 generate_qa_from_pdf.py
 
-Part C-1 / Cat-A — 도메인 PDF 문서에서 자연어 Q&A 쌍을 자동 생성한다.
+Cat-A — 도메인 PDF 문서에서 자연어 Q&A 쌍을 자동 생성한다.
 Gemma 도메인 LoRA 학습 데이터의 첫 번째 카테고리(도메인 지식)를 만든다.
 
 흐름:

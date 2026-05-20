@@ -3,7 +3,7 @@
 # setup_calibration.sh
 #
 # 캘리브레이션 전용 환경 설치 스크립트
-# 대상 작업: 카메라-로봇 Hand-Eye 캘리브레이션 (Part A)
+# 대상 작업: 카메라-로봇 Hand-Eye 캘리브레이션
 #
 # 전제 조건:
 #   - setup_jetson_base.sh 실행 완료

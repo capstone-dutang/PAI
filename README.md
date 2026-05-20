@@ -7,46 +7,46 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 ## 전체 파이프라인
 
 ```
-Part A  하드웨어 세팅 (카메라 캘리브레이션)
+하드웨어 세팅 (카메라 캘리브레이션)
   │
-  ├─▶ Part B  Isaac Sim ACT 시연 데이터 생성 (외부 PC)
-  │           스크립트 IK 전문가 + Domain Randomization
-  │           pre_grasp → grasp → lift → place 4단계 waypoints
-  │           multi-target 장면 구성 (같은 시각에 여러 후보 객체 배치)
-  │           언어 라벨: Gemma 4 E2B 자체 라벨링 + 외부 LLM paraphrase 혼합
-  │           → Sim LeRobotDataset (~1000 에피소드)
+  ├─▶ Isaac Sim ACT 시연 데이터 생성 (외부 PC)
+  │     스크립트 IK 전문가 + Domain Randomization
+  │     pre_grasp → grasp → lift → place 4단계 waypoints
+  │     multi-target 장면 구성 (같은 시각에 여러 후보 객체 배치)
+  │     언어 라벨: Gemma 4 E2B 자체 라벨링 + 외부 LLM paraphrase 혼합
+  │     → Sim LeRobotDataset (~1000 에피소드)
   │
-  ├─▶ Part C  Gemma 도메인 LoRA 학습 (외부 PC)
-  │     ├─ C-1  도메인별 PDF/문서 → LLM Q&A 자동 생성 → 필터링
-  │              3종 데이터 혼합: 도메인 지식 / 함수 호출 / 검증 시나리오
-  │     ├─ C-2  Unsloth QLoRA 파인튜닝 (예: RTX 5070급)
-  │     └─ C-3  GGUF 변환 → adapter_<domain>.gguf (각 수십 MB)
-  │              adapter_library.gguf, adapter_recycling.gguf, ...
+  ├─▶ Gemma 도메인 LoRA 학습 (외부 PC)
+  │     ├─ 도메인별 PDF/문서 → LLM Q&A 자동 생성 → 필터링
+  │        3종 데이터 혼합: 도메인 지식 / 함수 호출 / 검증 시나리오
+  │     ├─ Unsloth QLoRA 파인튜닝 (예: RTX 5070급)
+  │     └─ GGUF 변환 → adapter_<domain>.gguf (각 수십 MB)
+  │        adapter_library.gguf, adapter_recycling.gguf, ...
   │
   ▼
-Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
-        teleop 기반 record_teleop.py (agent_node 미사용)
-        → Real LeRobotDataset (50~100 에피소드)
-        (observation.state + observation.language_embedding + observation.images.top + action)
+실제 시연 데이터 수집 (Jetson, 축소 운영)
+  teleop 기반 record_teleop.py (agent_node 미사용)
+  → Real LeRobotDataset (50~100 에피소드)
+  (observation.state + observation.language_embedding + observation.images.top + action)
   │
-  └─▶ Part E  ACT Co-training (외부 PC, LeRobot 0.4.4 멀티 데이터셋)
-                Sim + Real 혼합 학습 → act.pth
-                    │
-                    ▼
-              Part F  통합 배포 (Sim 환경 + Jetson 실물 동일 노드 구성)
-                      llama-server (Gemma 4 E2B base + LoRA hot-swap, systemd 상시)
-                      + agent_node (오케스트레이션 함수 호출 루프)
-                      + embedding_node (텍스트 → 벡터 임베딩 서비스)
-                      + act_node
-                    │
-                    ▼
-              Part G  검증
-                      Sim rollout / Jetson 실물 모두 동일 노드 구성으로 평가
-                      (학습에 쓰지 않은 DR 파라미터로 held-out)
+  └─▶ ACT Co-training (외부 PC, LeRobot 0.4.4 멀티 데이터셋)
+        Sim + Real 혼합 학습 → act.pth
+            │
+            ▼
+        통합 배포 (Sim 환경 + Jetson 실물 동일 노드 구성)
+            llama-server (Gemma 4 E2B base + LoRA hot-swap, systemd 상시)
+            + agent_node (오케스트레이션 함수 호출 루프)
+            + embedding_node (텍스트 → 벡터 임베딩 서비스)
+            + act_node
+            │
+            ▼
+        검증
+            Sim rollout / Jetson 실물 모두 동일 노드 구성으로 평가
+            (학습에 쓰지 않은 DR 파라미터로 held-out)
 ```
 
-> Part B와 Part C는 독립적으로 병렬 진행 가능. Part D는 ACT 학습 데이터 수집이
-> 목적이므로 `agent_node` 없이 teleop 기반으로 진행한다.
+> Sim 데이터 생성과 Gemma 도메인 LoRA 학습은 독립적으로 병렬 진행 가능. 실제 시연 데이터
+> 수집은 ACT 학습 데이터 확보가 목적이므로 `agent_node` 없이 teleop 기반으로 진행한다.
 >
 > Sim과 Jetson 실물은 **동일 노드 구성**(camera_node, agent_node,
 > llama_server_manager, embedding_node, act_node, robot_controller_node)으로
@@ -84,7 +84,7 @@ Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
 | 예시 | `"the blue can on the right side of the table"`, `"the transparent bottle next to the paper"` |
 | 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
 
-이 형식은 **Sim 라벨(Part B) / Real 라벨(Part D) / 배포 시 Gemma 출력(Part F)** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_teleop.py`는 vocabulary 외 입력을 거부한다.
+이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_teleop.py`는 vocabulary 외 입력을 거부한다.
 
 ### 임베딩 모델 — 확정
 
@@ -95,9 +95,9 @@ Part D  실제 시연 데이터 수집 (Jetson, 축소 운영)
 | 크기 | ~120MB |
 | 언어 | 다국어 (50+ 언어, 영어 코어가 가장 안정) |
 | 정규화 | L2 정규화 (코사인 유사도 기반 학습 친화) |
-| 강제 범위 | Part B Sim 라벨링 / Part D Real 수집 / Part E 학습 / Part F 배포 전 구간 |
+| 강제 범위 | Sim 라벨링 / Real 수집 / ACT 학습 / 배포 전 구간 |
 
-paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Part B](#학습-파이프라인--sim-데이터-생성-part-b))과 Real의 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
+paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
 
 ### 자율성 범위
 
@@ -157,7 +157,7 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 | OS | Ubuntu |
 | GPU VRAM | 16GB 이상 |
 | CUDA | 12.6 |
-| 주요 작업 | Gemma 도메인 LoRA 학습 (Part C, Unsloth QLoRA), ACT 모방학습 (Part E), Isaac Sim 시뮬레이션 |
+| 주요 작업 | Gemma 도메인 LoRA 학습 (Unsloth QLoRA), ACT 모방학습, Isaac Sim 시뮬레이션 |
 
 ---
 
@@ -180,15 +180,15 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 
 | 스크립트 | 대상 작업 |
 |----------|-----------|
-| `deploy/scripts/setup_jetson_base.sh` | 모방 데이터 수집 (Part D), 실제 로봇 구동 (Part F) |
-| `deploy/scripts/setup_calibration.sh` | 카메라 캘리브레이션 (Part A) — base 설치 후 실행 |
+| `deploy/scripts/setup_jetson_base.sh` | 모방 데이터 수집, 실제 로봇 구동 |
+| `deploy/scripts/setup_calibration.sh` | 카메라 캘리브레이션 — base 설치 후 실행 |
 
 ```bash
-# 1. 기본 환경 설치 (Part D, F 공통)
+# 1. 기본 환경 설치 (데이터 수집 / 배포 공통)
 chmod +x deploy/scripts/setup_jetson_base.sh
 ./deploy/scripts/setup_jetson_base.sh
 
-# 2. 캘리브레이션 환경 추가 설치 (Part A, 필요 시)
+# 2. 캘리브레이션 환경 추가 설치 (필요 시)
 chmod +x deploy/scripts/setup_calibration.sh
 ./deploy/scripts/setup_calibration.sh
 ```
@@ -232,11 +232,11 @@ top-level 폴더로 분리하여 관리합니다.
 PAI/
 ├── deploy/                                     # [배포 목적] Jetson에서 실행
 │   ├── scripts/
-│   │   ├── setup_jetson_base.sh                # 기본 환경 설치 (Part D, F)
-│   │   └── setup_calibration.sh                # 캘리브레이션 환경 설치 (Part A)
+│   │   ├── setup_jetson_base.sh                # 기본 환경 설치 (데이터 수집 / 배포)
+│   │   └── setup_calibration.sh                # 캘리브레이션 환경 설치
 │   ├── config/                                 # Jetson 런타임 설정
 │   │   ├── domain_map.yaml                     # 사용자 명령 → 도메인 매핑
-│   │   ├── label_vocab.yaml                    # Part D / Cat-B / Sim 공유 vocabulary
+│   │   ├── label_vocab.yaml                    # 데이터 수집 / Cat-B / Sim 공유 vocabulary
 │   │   └── grasp_roi.yaml                      # verify_result용 엔드이펙터 ROI
 │   ├── calibration/                            # 실기 캘리브레이션 결과
 │   └── ros2_ws/
@@ -260,7 +260,7 @@ PAI/
 │               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
 │               │   └── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
 │               ├── scripts/
-│               │   ├── record_teleop.py             # 데이터 수집 스크립트 (Part D, 신규)
+│               │   ├── record_teleop.py             # 데이터 수집 스크립트 (신규)
 │               │   └── postprocess_real_labels.py   # Real 라벨 paraphrase + 임베딩 후처리 (신규)
 │               ├── launch/
 │               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
@@ -273,21 +273,21 @@ PAI/
 │               └── requirements.txt
 │
 ├── sim/                                        # [데이터 생성 목적] Isaac Sim 전용
-│   ├── generate_act_dataset.py                 # Part B: ACT 시연 데이터 생성
-│   ├── generate_language_labels.py             # Part B: Sim 에피소드 언어 라벨링 (신규)
+│   ├── generate_act_dataset.py                 # Sim ACT 시연 데이터 생성
+│   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링 (신규)
 │   └── config/
 │       ├── dr_config.yaml                      # Domain Randomization 설정
 │       └── multi_target_scenes.yaml            # multi-target 장면 구성 (신규)
 │
 ├── training/                                   # [학습 목적] 외부 PC 전용
 │   └── scripts/
-│       ├── generate_qa_from_pdf.py             # Part C-1: 도메인 PDF → Q&A (도메인 지식)
-│       ├── generate_function_call_qa.py        # Part C-1: 함수 호출 시나리오 합성 (신규)
-│       ├── generate_verify_qa.py               # Part C-1: 검증 시나리오 합성 (신규)
-│       ├── merge_qa_dataset.py                 # Part C-1: 3종 Q&A 혼합 (신규)
-│       ├── train_gemma_qlora.py                # Part C-2: Unsloth QLoRA 학습
-│       ├── convert_lora_to_gguf.sh             # Part C-3: GGUF 변환
-│       └── train_act_cotraining.sh             # Part E: ACT Co-training
+│       ├── generate_qa_from_pdf.py             # 도메인 PDF → Q&A (도메인 지식)
+│       ├── generate_function_call_qa.py        # 함수 호출 시나리오 합성 (신규)
+│       ├── generate_verify_qa.py               # 검증 시나리오 합성 (신규)
+│       ├── merge_qa_dataset.py                 # 3종 Q&A 혼합 (신규)
+│       ├── train_gemma_qlora.py                # Unsloth QLoRA 학습
+│       ├── convert_lora_to_gguf.sh             # GGUF 변환
+│       └── train_act_cotraining.sh             # ACT Co-training
 │
 ├── shared/                                     # 3목적 공통 자산 (현재 비어 있음)
 ├── docs/
@@ -349,8 +349,8 @@ PAI/
 |--------|------|-----------|---------|------|
 | `/go_home` | `std_srvs/Trigger` | `robot_controller_node` | `agent_node` (task 종료 시) | 현재 follower 자세에서 `~/calibration/home_pose.yaml` 자세로 ~2초간 선형 보간 복귀. 진행 중 `/joint_command` 와 `/joint_states` 발행이 잠시 멈춤. |
 
-> **home_pose.yaml 의 단일 출처**: 같은 파일을 데이터 수집(Part D, `record_teleop.py`)
-> 과 배포(Part F, `robot_controller_node` `/go_home`)가 공유한다. 새 자세로 바꾸려면
+> **home_pose.yaml 의 단일 출처**: 같은 파일을 데이터 수집(`record_teleop.py`)
+> 과 배포(`robot_controller_node` `/go_home`)가 공유한다. 새 자세로 바꾸려면
 > follower 를 새 자세에 두고 파일을 삭제한 뒤 `record_teleop.py` 를 한 번 실행하면
 > 자동으로 재생성된다.
 
@@ -455,7 +455,7 @@ colcon build --packages-select robot_arm_msgs robot_arm_pkg
 source install/setup.bash
 ```
 
-### 배포 실행 (Part F)
+### 배포 실행
 
 ```bash
 # llama-server (Gemma 4 E2B base, --jinja로 함수 호출 활성화)
@@ -500,7 +500,7 @@ ros2 topic pub /user_command std_msgs/String "data: '쓰레기 좀 정리해줘'
 
 ---
 
-## 카메라-로봇 캘리브레이션 (Part A)
+## 카메라-로봇 캘리브레이션
 
 Hand-Eye 캘리브레이션 (Eye-to-Hand 방식): 카메라 고정, SO-101 엔드이펙터에 ArUco 마커 부착.
 
@@ -591,13 +591,13 @@ depth_change_threshold: 0.02  # m, 이 이상의 변화가 있으면 grasp 성�
 
 ---
 
-## 데이터 수집 (Part D)
+## 데이터 수집
 
 ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 LoRA는 사용하지 않는다.
 
 > **포트 점유 정책**: `record_teleop.py` 가 SO-101 follower USB 포트를
 > **단독 점유**한다. 동시에 `robot_controller_node` 가 실행 중이면 LeRobot SDK
-> 의 포트 open 단계에서 실패하므로, Part D 수집 동안에는 `robot_controller_node`
+> 의 포트 open 단계에서 실패하므로, 데이터 수집 동안에는 `robot_controller_node`
 > 를 반드시 종료할 것. (스크립트 상단 "운영 / 측정 결정 사항" 블록 [1] 참고)
 
 ### 실행 전 준비
@@ -605,9 +605,9 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 1. SO-101 리더/팔로워 USB 포트 확인
 2. LeRobot 캘리브레이션 완료 (`lerobot-calibrate`)
 3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
-4. 임베딩 모델 결정 및 배치 (Part C/E와 동일 모델 사용 필수)
+4. 임베딩 모델 결정 및 배치 (Gemma 도메인 LoRA 학습 / ACT Co-training과 동일 모델 사용 필수)
 5. `robot_controller_node` 가 떠 있다면 중지 (위 포트 점유 정책)
-6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포(Part F) `/go_home` 서비스에서 같은 파일을 공유한다. 자세를 바꾸려면 파일 삭제 후 재실행.
+6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포 시 `/go_home` 서비스에서 같은 파일을 공유한다. 자세를 바꾸려면 파일 삭제 후 재실행.
 
 teleoperation 동작 검증
 ```bash
@@ -669,7 +669,7 @@ python ~/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py \
 > - 영어 고정 → Sim 라벨 / 배포 시 Gemma 출력과 분포 일치
 > - 같은 작업의 라벨이 너무 다르지 않도록 자동 보장
 > - 수집 후 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py)로
->   paraphrase 3개 + 임베딩을 일괄 부여 → Part E 학습 시 random augmentation
+>   paraphrase 3개 + 임베딩을 일괄 부여 → ACT 학습 시 random augmentation
 >
 > **Multi-target shortcut 방지 가이드라인** (50–100 에피소드 분포):
 > - 같은 객체에 대해 다른 spatial 선택 ≥ 30%
@@ -694,14 +694,14 @@ python ~/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py \
 > `verify_result` 단계에서만 사용되고 ACT 학습 obs에 포함되지 않는다.
 
 > Sim 데이터셋(`dataset_sim`)도 동일 feature 스펙 + 동일 임베딩 모델
-> (paraphrase-multilingual-MiniLM-L12-v2, D=384)을 따라야 Part E Co-training이
+> (paraphrase-multilingual-MiniLM-L12-v2, D=384)을 따라야 ACT Co-training이
 > 가능하다. 임베딩 차원 D가 384가 아니면 학습이 실패한다.
 
 ---
 
-## 학습 파이프라인 — Gemma 도메인 LoRA (Part C)
+## 학습 파이프라인 — Gemma 도메인 LoRA
 
-### C-1: Q&A 데이터 생성 (3종 혼합)
+### Q&A 데이터 생성 (3종 혼합)
 
 도메인별로 **3개 카테고리의 Q&A**를 생성하고 혼합하여 LoRA 학습에 사용한다.
 LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `agent_node`가 요구하는
@@ -758,7 +758,7 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 }
 ```
 
-### C-2: Unsloth QLoRA 파인튜닝
+### Unsloth QLoRA 파인튜닝
 
 ```bash
 python training/scripts/train_gemma_qlora.py \
@@ -769,7 +769,7 @@ python training/scripts/train_gemma_qlora.py \
   --epochs 3
 ```
 
-### C-3: GGUF 변환
+### GGUF 변환
 
 ```bash
 bash training/scripts/convert_lora_to_gguf.sh \
@@ -779,7 +779,7 @@ bash training/scripts/convert_lora_to_gguf.sh \
 
 ---
 
-## 학습 파이프라인 — Sim 데이터 생성 (Part B)
+## 학습 파이프라인 — Sim 데이터 생성
 
 ### Multi-target 장면 구성
 
@@ -850,7 +850,7 @@ depth는 ACT 학습에 사용되지 않으므로 depth 노이즈 DR은 제거됨
 
 ---
 
-## 학습 파이프라인 — ACT Co-training (Part E)
+## 학습 파이프라인 — ACT Co-training
 
 LeRobot 0.4.4의 멀티 데이터셋 가중치 기능을 사용하여 Sim + Real 혼합 학습.
 
@@ -877,7 +877,7 @@ datasets = [
 - `action` (chunk_size=100 시퀀스)
 
 > Sim/Real의 `language_embedding` 차원과 임베딩 모델이 다르면 학습 불가.
-> Part D 수집 시점부터 동일 모델 사용 보장.
+> 데이터 수집 시점부터 동일 모델 사용 보장.
 
 ---
 
@@ -907,9 +907,9 @@ datasets = [
 
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
-| `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Part C, llama-server 구동, embedding_node |
+| `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Gemma 도메인 LoRA 학습, llama-server 구동, embedding_node |
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
-| `act_node.py` | `_load_policy()`, `_predict_chunk()` | Part E 완료 |
+| `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `sim/generate_act_dataset.py` | IK 전문가 + DR + multi-target 장면 기반 시연 생성 본체 | SO-101 USD 변환, IK 솔버 결정 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
@@ -923,14 +923,14 @@ datasets = [
 | `training/scripts/convert_lora_to_gguf.sh` | llama.cpp 변환 호출 활성화 | llama.cpp 빌드, 변환 스크립트 경로 확인 |
 | `training/scripts/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
 | `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 | 캘리브레이션 완료, 엔드이펙터 측정 |
-| `deploy/calibration/` | `camera_intrinsics.yaml`, `camera_robot_transform.yaml` 배치 | Part A 캘리브레이션 수행 |
+| `deploy/calibration/` | `camera_intrinsics.yaml`, `camera_robot_transform.yaml` 배치 | 캘리브레이션 수행 |
 
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
 > - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
 > - `scripts/record_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
 > - `deploy/config/domain_map.yaml` 템플릿
-> - `deploy/config/label_vocab.yaml` (Part D / Cat-B / Sim 공유 vocabulary)
+> - `deploy/config/label_vocab.yaml` (데이터 수집 / Cat-B / Sim 공유 vocabulary)
 > - `camera_node.py`
 > - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
 
@@ -949,12 +949,12 @@ datasets = [
 
 | # | 항목 | 영향 범위 |
 |---|------|---------|
-| 1 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | Part C-1 `merge_qa_dataset.py` |
+| 1 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | `merge_qa_dataset.py` |
 | 2 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
 
 > **확정 완료** (이전 미확정 항목):
 > - 임베딩 모델: `paraphrase-multilingual-MiniLM-L12-v2` (D=384)
-> - Part D 언어 라벨링 방식: Option C (템플릿+변수 슬롯)
+> - 데이터 수집 언어 라벨링 방식: Option C (템플릿+변수 슬롯)
 > - `target_description` 형식: 영어 반구조화 `"the {attribute} {object} {spatial}"`,
 >   5–15 단어, [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) vocabulary 강제
 

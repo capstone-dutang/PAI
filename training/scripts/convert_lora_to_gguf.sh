@@ -2,7 +2,7 @@
 # =============================================================================
 # convert_lora_to_gguf.sh
 # -----------------------------------------------------------------------------
-# 목적: Part C-3 — HuggingFace LoRA(safetensors)를 llama.cpp의 GGUF 어댑터로
+# 목적: HuggingFace LoRA(safetensors)를 llama.cpp의 GGUF 어댑터로
 #       변환한다. 결과 GGUF는 Jetson의 llama-server가 /lora-adapter HTTP로
 #       hot-swap 적재한다.
 #
@@ -12,7 +12,7 @@
 #     models/gemma/adapters/adapter_recycling.gguf
 #
 # 인자:
-#   $1 : Part C-2 train_gemma_qlora.py가 저장한 LoRA 디렉터리
+#   $1 : train_gemma_qlora.py가 저장한 LoRA 디렉터리
 #   $2 : 출력 GGUF 파일 경로
 #
 # 선행 조건:

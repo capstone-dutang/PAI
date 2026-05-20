@@ -1,7 +1,7 @@
 """
 generate_function_call_qa.py
 
-Part C-1 / Cat-B — agent_node가 사용하는 3개 함수
+Cat-B — agent_node가 사용하는 3개 함수
 (look_scene / execute_subtask / verify_result)에 대한 함수 호출 시나리오 Q&A를
 외부 LLM으로 합성한다. Gemma 도메인 LoRA가 배포 시 함수 호출 응답을
 정확히 산출하도록 학습시키는 데이터.

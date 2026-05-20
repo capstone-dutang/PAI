@@ -1,6 +1,6 @@
 # multi_target_scenes.yaml (템플릿)
 #
-# Part B의 ACT shortcut learning 방지 — 한 장면에 여러 후보 객체를 배치하고
+# ACT shortcut learning 방지 — 한 장면에 여러 후보 객체를 배치하고
 # 같은 시각 입력에 대해 다른 언어 명령으로 다른 행동을 하는 에피소드를
 # 의도적으로 생성한다.
 #

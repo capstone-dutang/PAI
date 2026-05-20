@@ -1,7 +1,7 @@
 """
 generate_verify_qa.py
 
-Part C-1 / Cat-C — verify_result 함수의 시각 검증 정확도를 끌어올리기 위한
+Cat-C — verify_result 함수의 시각 검증 정확도를 끌어올리기 위한
 이미지 + 명령 → enum 결과 Q&A를 합성한다.
 
 이미지는 Sim 렌더링으로 생성하고, ground truth 라벨은 Sim 내부 상태로부터

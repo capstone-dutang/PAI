@@ -32,8 +32,8 @@ SubtaskCommand.language_embedding / observation.language_embedding 채널을
       증강 전략과 시너지
 
   모델 변경 시:
-    - Part D 수집 데이터셋 재라벨링 필수
-    - Part E ACT 학습 obs 차원 변경 → 재학습 필수
+    - 데이터 수집 데이터셋 재라벨링 필수
+    - ACT 학습 obs 차원 변경 → 재학습 필수
     - SubtaskCommand.language_embedding 길이 변경
     - sim/generate_language_labels.py / scripts/postprocess_real_labels.py도
       동일 모델로 변경

@@ -3,7 +3,7 @@
 # setup_jetson_base.sh
 #
 # Jetson 기본 환경 설치 스크립트
-# 대상 작업: 모방 데이터 수집 (Part D), 실제 로봇 구동 (Part F)
+# 대상 작업: 모방 데이터 수집, 실제 로봇 구동
 #
 # 전제 조건:
 #   - Jetson Orin Nano, JetPack 6.2 (L4T 36.4.x)

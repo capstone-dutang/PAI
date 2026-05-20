@@ -1,7 +1,7 @@
 """
 merge_qa_dataset.py
 
-Part C-1 마지막 단계 — Cat-A/B/C로 만든 3개 JSONL을 비율 옵션에 따라
+Q&A 데이터 생성 마지막 단계 — Cat-A/B/C로 만든 3개 JSONL을 비율 옵션에 따라
 하나의 학습용 JSONL로 병합한다.
 
 비율 옵션 (README L603-609):

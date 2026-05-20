@@ -1,16 +1,16 @@
 # =============================================================================
 # dr_config.yaml
 # -----------------------------------------------------------------------------
-# 목적: Isaac Sim에서 Part B-2(ACT 시연 데이터 생성) 시 적용할
+# 목적: Isaac Sim에서 ACT 시연 데이터 생성 시 적용할
 #       Domain Randomization 파라미터 정의.
 #
 # 사용처: sim/generate_act_dataset.py 가 매 에피소드 시작 시 로드.
-# 관련: README Part B-2, Part E (Co-training), Part G (held-out 평가)
+# 관련: README Sim 데이터 생성, ACT Co-training, 검증 (held-out 평가)
 #
 # 원칙:
 #   - 중심값(mean)은 실기(SO-101 + RealSense + 실제 조명) 환경을 기준으로 설정
 #   - 분산(range)은 중심값 ± 로 표기, 에피소드마다 uniform 샘플링
-#   - Part G held-out 평가용으로 일부 파라미터는 별도 범위로 재지정 예정
+#   - 검증 held-out 평가용으로 일부 파라미터는 별도 범위로 재지정 예정
 # =============================================================================
 
 
@@ -29,7 +29,7 @@
 #   - 배경(벽/바닥) 텍스처: N종 중 랜덤 선택
 #
 # camera:
-#   - FOV ± (실기 RealSense 기준값 미확인 — Part A 캘리브레이션 후 확정)
+#   - FOV ± (실기 RealSense 기준값 미확인 — 캘리브레이션 후 확정)
 #   - 위치 offset (x, y, z) ± 수 mm (설치 오차 모사)
 #   - 회전 offset (roll, pitch, yaw) ± 수 도
 #
@@ -89,5 +89,5 @@
 # [ ] 실기 RealSense 조명 환경 측정 (색온도/강도 중심값)
 # [ ] SO-101 Feetech STS3215 PD 게인/latency 실측
 # [ ] 대상 물체 종류 확정 후 mass/friction 중심값
-# [ ] Part A 캘리브레이션 결과로 카메라 FOV/위치 중심값 확정
-# [ ] Part G held-out 평가용 별도 DR 범위 분리 정의
+# [ ] 캘리브레이션 결과로 카메라 FOV/위치 중심값 확정
+# [ ] 검증 held-out 평가용 별도 DR 범위 분리 정의

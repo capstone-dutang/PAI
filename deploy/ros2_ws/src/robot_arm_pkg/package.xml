@@ -21,7 +21,7 @@
   <!-- 본 패키지의 커스텀 메시지/서비스 -->
   <depend>robot_arm_msgs</depend>
 
-  <!-- Part A: 카메라-로봇 Hand-Eye 캘리브레이션 -->
+  <!-- 카메라-로봇 Hand-Eye 캘리브레이션 -->
   <depend>robot_state_publisher</depend>
   <depend>realsense2_camera</depend>
   <exec_depend>aruco_ros</exec_depend>           <!-- 소스 빌드: github.com/pal-robotics/aruco_ros (humble-devel) -->

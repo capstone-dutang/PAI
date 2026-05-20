@@ -1,10 +1,10 @@
 """
 generate_language_labels.py
 
-Part B 후속 단계 — generate_act_dataset.py가 만든 Sim LeRobotDataset의 각
+Sim 데이터 생성 후속 단계 — generate_act_dataset.py가 만든 Sim LeRobotDataset의 각
 에피소드에 자연어 타겟 묘사를 부여하고, 임베딩 채널을 채운다.
 
-두 가지 라벨 소스를 혼합한다 (README Part B 참조):
+두 가지 라벨 소스를 혼합한다 (README Sim 데이터 생성 참조):
   소스 1: Gemma 4 E2B 자체 라벨링
           - Sim에서 렌더링한 RGB 이미지를 Gemma에 입력
           - 배포 시 사용할 동일 모델로 라벨 생성 → 분포 일치
@@ -105,7 +105,7 @@ class LabelArgs:
 
 
 def parse_args() -> LabelArgs:
-    p = argparse.ArgumentParser(description='Part B — Sim 데이터셋 자연어 라벨링')
+    p = argparse.ArgumentParser(description='Sim 데이터셋 자연어 라벨링')
     p.add_argument('--dataset',                required=True,
                    help='generate_act_dataset.py가 생성한 Sim LeRobotDataset 경로')
     p.add_argument('--gemma-server',           default='http://localhost:8080',
@@ -119,7 +119,7 @@ def parse_args() -> LabelArgs:
     p.add_argument('--paraphrase-per-episode', type=int, default=3,
                    help='에피소드당 외부 LLM paraphrase 개수')
     p.add_argument('--embed-model',            default=DEFAULT_EMBED_MODEL,
-                   help='임베딩 모델 (Part D/F와 동일 모델 강제)')
+                   help='임베딩 모델 (데이터 수집 / 배포와 동일 모델 강제)')
     a = p.parse_args()
     return LabelArgs(
         dataset                = os.path.expanduser(a.dataset),
@@ -208,7 +208,7 @@ def update_dataset_with_labels(args: LabelArgs) -> None:
       - LeRobotDataset 0.4.4의 frame/episode metadata API 확인
       - paraphrase 다수 임베딩을 어떻게 저장할지 (학습 시 random pick 형태)
       - postprocess_real_labels.py와 동일한 저장 스키마를 사용해야 함
-        (Part E Co-training 시 Sim/Real을 같은 방식으로 random pick)
+        (ACT Co-training 시 Sim/Real을 같은 방식으로 random pick)
     """
     raise NotImplementedError(
         '[generate_language_labels] update_dataset_with_labels() 미구현'

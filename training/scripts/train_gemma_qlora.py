@@ -1,7 +1,7 @@
 """
 train_gemma_qlora.py
 
-Part C-2 — Gemma 4 E2B base 모델에 도메인 LoRA를 Unsloth QLoRA로 파인튜닝한다.
+Gemma 4 E2B base 모델에 도메인 LoRA를 Unsloth QLoRA로 파인튜닝한다.
 
 CLI 사용 예 (README L646-654):
   python train_gemma_qlora.py \\
@@ -23,7 +23,7 @@ CLI 사용 예 (README L646-654):
   - HuggingFace gemma-4-e2b 액세스 권한
 
 산출물:
-  ${output_dir}/adapter_model.safetensors 등 — Part C-3에서 GGUF로 변환
+  ${output_dir}/adapter_model.safetensors 등 — convert_lora_to_gguf.sh가 GGUF로 변환
 
 미구현 / 결정 필요 항목:
   - Unsloth 버전과 Gemma 4 E2B 호환성 확인 (운영 시점에 확정)
@@ -39,7 +39,7 @@ import argparse
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description='Part C-2 — Gemma 도메인 LoRA QLoRA 학습')
+    p = argparse.ArgumentParser(description='Gemma 도메인 LoRA QLoRA 학습')
     p.add_argument('--base-model', required=True,  help='HF base model id 또는 로컬 경로')
     p.add_argument('--dataset',    required=True,  help='merge_qa_dataset.py 출력 JSONL')
     p.add_argument('--output-dir', required=True,  help='LoRA 저장 디렉터리')

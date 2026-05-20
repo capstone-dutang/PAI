@@ -1,6 +1,6 @@
 # label_vocab.yaml
 #
-# Part D record_teleop의 자연어 라벨링 Option C (템플릿+변수 슬롯) 어휘 사전.
+# record_teleop의 자연어 라벨링 Option C (템플릿+변수 슬롯) 어휘 사전.
 #
 # 작업자는 (object, attribute, spatial) 3개 슬롯에 대해 도메인별 vocabulary
 # 안에서만 선택할 수 있다. canonical 라벨은 다음 템플릿으로 자동 생성된다:

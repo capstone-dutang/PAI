@@ -14,7 +14,7 @@
 #                       어휘: deploy/config/label_vocab.yaml과 일치
 # language_embedding  : embedding_node가 target_description을 임베딩한 벡터.
 #                       모델: paraphrase-multilingual-MiniLM-L12-v2 (D=384)
-#                       Part D 수집 / Part E 학습 / Part F 배포 전 구간에서
+#                       데이터 수집 / ACT 학습 / 배포 전 구간에서
 #                       동일 모델·동일 D 강제.
 
 string subtask_id

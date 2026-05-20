@@ -2,14 +2,14 @@
 # generate_act_dataset.py
 # -----------------------------------------------------------------------------
 # 목적: Isaac Sim에서 ACT Co-training용 시연 데이터(Sim dataset)를 생성한다.
-#       Part B 단계. 결과물은 Part D의 Real dataset과 함께 Part E에서
-#       LeRobot 0.4.4 멀티 데이터셋 방식으로 공동 학습된다.
+#       Sim 데이터 생성 단계. 결과물은 Real dataset과 함께 LeRobot 0.4.4
+#       멀티 데이터셋 방식으로 공동 학습된다.
 #
 # 전체 파이프라인 내 위치:
-#   Part B (이 스크립트 + generate_language_labels.py)
-#                          →  Sim LeRobotDataset (~1000 에피소드)
-#   Part D                 →  Real LeRobotDataset (50~100 에피소드)
-#   Part E                 →  ACT Co-training (Sim + Real)
+#   Sim 데이터 생성 (이 스크립트 + generate_language_labels.py)
+#                       →  Sim LeRobotDataset (~1000 에피소드)
+#   데이터 수집       →  Real LeRobotDataset (50~100 에피소드)
+#   ACT Co-training   →  Sim + Real 공동 학습
 #
 # 실행 환경: 외부 PC (Ubuntu, GPU VRAM 16GB+, Isaac Sim 설치됨)
 #
@@ -43,7 +43,7 @@
 #     * Action space는 position control (실기 SO-101과 반드시 일치)
 # - RealSense 모사 카메라:
 #     * intrinsics는 deploy/calibration/camera_intrinsics.yaml과 일치
-#       (Part A 캘리브레이션 후 산출되며 Jetson에서는 ~/calibration/ 하위로 배치)
+#       (캘리브레이션 후 산출되며 Jetson에서는 ~/calibration/ 하위로 배치)
 #     * RGB 출력 (depth는 ACT 학습 obs에 포함되지 않음)
 #     * 카메라 위치는 학습/배포 일관성을 위해 일정하게 유지하되, DR로 약간의
 #       offset을 준다 (실기 캘리브레이션 정밀도 요구가 낮아진 만큼 분포는 폭넓게)
@@ -51,14 +51,14 @@
 #     * sim/config/multi_target_scenes.yaml의 장면 템플릿에 따라 2개 이상의
 #       후보 객체를 배치 (예: 캔 + 페트병 + 종이)
 #     * 같은 객체 배치에 대해 다른 타겟 명령으로 여러 에피소드 생성하여
-#       ACT가 RGB shortcut learning으로 정답을 맞히지 못하게 함 (README Part B)
+#       ACT가 RGB shortcut learning으로 정답을 맞히지 못하게 함 (README Sim 데이터 생성)
 #     * multi_target_ratio (예: 0.6)에 따라 일반 단일 객체 장면과 혼합
 
 
 # -----------------------------------------------------------------------------
 # [3] 스크립트 기반 IK 전문가 (Expert Policy)
 # -----------------------------------------------------------------------------
-# - 4단계 waypoint 시퀀스 (README Part B 참조):
+# - 4단계 waypoint 시퀀스 (README Sim 데이터 생성 참조):
 #     1) pre_grasp       : 물체 위 +10cm (approach)
 #     2) grasp           : 물체 위치 + 그리퍼 close
 #     3) lift            : grasp 지점 +10cm
@@ -74,7 +74,7 @@
 # [4] Domain Randomization 적용
 # -----------------------------------------------------------------------------
 # - 매 에피소드 시작 시 sim/config/dr_config.yaml을 로드.
-# - 적용 항목 (README Part B 명시):
+# - 적용 항목 (README Sim 데이터 생성 명시):
 #     * 시각: 조명·텍스처·카메라 FOV
 #     * 물리: 물체 질량·마찰, 모터 PD 게인
 #     * 관측: joint 노이즈, 이미지 노이즈
@@ -86,7 +86,7 @@
 # [5] LeRobotDataset 저장
 # -----------------------------------------------------------------------------
 # - lerobot 0.4.4의 LeRobotDataset.create()로 생성.
-# - features 스펙 (Part D record_teleop.py와 반드시 일치 — Co-training 가능 조건):
+# - features 스펙 (record_teleop.py와 반드시 일치 — Co-training 가능 조건):
 #     * observation.state              : (6,)   float32  - 팔로워 관절 위치
 #     * observation.language_embedding : (D,)   float32  - 자연어 타겟 묘사 임베딩
 #                                                            (본 스크립트에서는 0벡터로 placeholder
@@ -95,7 +95,7 @@
 #     * observation.images.top         : (H,W,3) uint8   - RealSense color 모사
 #     * action                         : (6,)   float32  - 다음 step 목표 관절 위치
 # - 임베딩 차원 D는 generate_language_labels.py가 사용하는 embedding_node 모델에
-#   의해 결정되며, Part D/F와 동일해야 한다. 본 스크립트 단계에서는 D를 결정할 수
+#   의해 결정되며, 데이터 수집 / 배포와 동일해야 한다. 본 스크립트 단계에서는 D를 결정할 수
 #   없으므로 placeholder zero 벡터의 길이만이라도 동일 D로 맞추도록 후속 라벨링
 #   스크립트가 features를 갱신하거나 사전에 D를 인자로 받아 생성한다 (방식 미결정).
 # - 한 에피소드 = 한 번의 pick-and-place 성공 궤적.
@@ -104,7 +104,7 @@
 #
 # 단위 변환 정책 — 반드시 SDK(LeRobot SO-101 캘리브레이션) 단위로 저장:
 # ---------------------------------------------------------------------------
-# Isaac Sim의 articulation joint는 라디안(회전) / m(직선) 단위지만, Part D
+# Isaac Sim의 articulation joint는 라디안(회전) / m(직선) 단위지만,
 # record_teleop.py는 LeRobot SDK가 반환하는 `{motor}.pos` 값을 그대로 저장한다.
 # 이 값은 `lerobot-calibrate`가 생성한 캘리브레이션 yaml의 zero offset / range
 # 로 결정되는 캘리브레이션 공간 값(보통 deg 또는 정규화 값)이다. 두 데이터셋이
@@ -120,7 +120,7 @@
 #   별도 매핑 — Real 측 `_action_dict_to_vec` 결과와 같은 범위인지 확인 필수.
 #
 # 운영상 결합(coupling) — 반드시 지켜야 함:
-#   1) 본 스크립트가 사용하는 캘리브레이션 yaml은 **Part F 배포 로봇의 그
+#   1) 본 스크립트가 사용하는 캘리브레이션 yaml은 **배포 로봇의 그
 #      캘리브레이션 yaml과 동일 파일**이어야 한다. 다르면 Sim 학습 분포와 배포
 #      action 공간이 어긋난다.
 #   2) 실기 팔로워를 **재캘리브레이션하면 SDK 단위가 shift** 되므로 기존 Sim
@@ -129,7 +129,7 @@
 #      두 값이 ±1% 이내로 일치하는지 sanity check 통과한 뒤 본격 생성 시작.
 #
 # 구현 위치 권장: 변환 함수는 `sim/utils/so101_unit.py` 같은 단일 모듈로 두고
-#                  Part D 측 캘리브레이션 yaml 로더와 같은 yaml 스키마를 따른다.
+#                  데이터 수집 측 캘리브레이션 yaml 로더와 같은 yaml 스키마를 따른다.
 # ---------------------------------------------------------------------------
 
 

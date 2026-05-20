@@ -38,7 +38,7 @@ act_node는 추론 시점에 임베딩 변환 지연이 없다.
   observation.state              — 관절 상태 텐서 (6축, SO-101 순서)
   observation.language_embedding — 자연어 타겟 묘사 임베딩 (D차원)
 
-TODO (Part E 완료 후 구현):
+TODO (ACT Co-training 완료 후 구현):
   _load_policy()    — 체크포인트 로드 및 normalizer 설정 확인
   _predict_chunk()  — 입력 텐서 전처리 + policy.select_action() 호출
 """
@@ -84,7 +84,7 @@ class ACTNode(Node):
         publish_hz      = self.get_parameter('publish_hz').value
 
         # ── LeRobot Policy 로드 ───────────────────
-        # TODO: Part E 완료 후 _load_policy() 구현
+        # TODO: ACT Co-training 완료 후 _load_policy() 구현
         self.policy = self._load_policy()
 
         # ── 입력 캐시 ─────────────────────────────
@@ -130,7 +130,7 @@ class ACTNode(Node):
         """
         LeRobot ACT 체크포인트를 로드하여 반환.
 
-        TODO: Part E(ACT 학습) 완료 후 구현
+        TODO: ACT 학습 완료 후 구현
           체크포인트 구조와 normalizer 설정을 확인한 뒤 아래를 구현:
 
           from lerobot.policies.act.modeling_act import ACTPolicy
@@ -143,7 +143,7 @@ class ACTNode(Node):
         """
         self.get_logger().warn(
             '[act_node] _load_policy() 미구현. '
-            'Part E 완료 후 LeRobot ACT 체크포인트 로드를 구현하세요.'
+            'ACT Co-training 완료 후 LeRobot ACT 체크포인트 로드를 구현하세요.'
         )
         return None
 
@@ -228,7 +228,7 @@ class ACTNode(Node):
         """
         현재 입력으로 chunk_size 스텝의 관절 시퀀스 예측.
 
-        TODO: Part E(ACT 학습) 완료 후 구현
+        TODO: ACT 학습 완료 후 구현
           체크포인트의 normalizer 설정 확인 후 아래를 구현:
 
           1. 입력 텐서 구성 — normalizer 설정에 맞게 전처리
@@ -273,7 +273,7 @@ class ACTNode(Node):
         # TODO: 위 독스트링의 구현 내용 채우기
         raise NotImplementedError(
             "[act_node] _predict_chunk() 미구현. "
-            "Part E 완료 후 LeRobot Policy 추론을 구현하세요."
+            "ACT Co-training 완료 후 LeRobot Policy 추론을 구현하세요."
         )
 
 

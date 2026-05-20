@@ -1,7 +1,7 @@
 """
 robot_arm_pkg.utils.home_pose — SO-101 follower home pose 파일 입출력 유틸.
 
-데이터 수집(Part D) 과 추론/배포(Part F) 모두 같은 home pose 로 task 종료 후
+데이터 수집과 추론/배포 모두 같은 home pose 로 task 종료 후
 복귀하기 위해 YAML 파일 한 개를 공유한다.
 
 표준 경로 :  ~/calibration/home_pose.yaml
@@ -19,7 +19,7 @@ robot_arm_pkg.utils.home_pose — SO-101 follower home pose 파일 입출력 유
                                   이후 실행은 같은 파일을 읽어 에피소드 간 자동 복귀.
   - robot_controller_node.py    : 시작 시 파일을 읽어 /go_home Trigger 서비스의
                                   목표값으로 사용.
-  - sim 추론 (Part G, 추후)     : 동일 스키마를 그대로 읽어 sim rollout 종료 시
+  - sim 추론 (검증 단계, 추후)  : 동일 스키마를 그대로 읽어 sim rollout 종료 시
                                   복귀 지점으로 사용.
 
 home pose 변경 절차:

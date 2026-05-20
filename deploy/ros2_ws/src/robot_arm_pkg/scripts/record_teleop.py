@@ -1,7 +1,7 @@
 """
 record_teleop.py
 
-Part D — SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립트.
+SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립트.
 
 `agent_node` / Gemma LoRA는 사용하지 않는다. SO-101 리더(작업자가 직접 조작)의
 관절 값을 SO-101 팔로워에 그대로 미러링하면서, 시점마다 다음을 기록한다:
@@ -23,7 +23,7 @@ Part D — SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립�
   자유 텍스트 입력 금지 — 영어 템플릿 고정으로 Sim/Real 분포 일치 보장.
   수집 후 paraphrase는 별도 scripts/postprocess_real_labels.py로 후처리.
 
-전제조건 (README "데이터 수집 (Part D)" 참조):
+전제조건 (README "데이터 수집" 참조):
   1. realsense2_camera 드라이버 실행 (align_depth.enable:=true)
   2. camera_node 실행 (/camera/rgb 발행)
   3. embedding_node 실행 (/embed_text Service,
@@ -47,7 +47,7 @@ CLI 사용 예:
     --home-pose-file  ~/calibration/home_pose.yaml
 
 운영 / 측정 결정 사항은 본 파일 상단 "운영 / 측정 결정 사항" 블록에 정리되어 있다.
-변경이 필요한 경우 그 블록 + 본 docstring + README "데이터 수집 (Part D)" 를 같이 갱신.
+변경이 필요한 경우 그 블록 + 본 docstring + README "데이터 수집" 을 같이 갱신.
 """
 
 from __future__ import annotations
@@ -91,14 +91,14 @@ from robot_arm_msgs.srv import EmbedText
 
 
 # ──────────────────────────────────────────────
-# 운영 / 측정 결정 사항 (변경 시 본 블록 + README "데이터 수집 (Part D)" 갱신)
+# 운영 / 측정 결정 사항 (변경 시 본 블록 + README "데이터 수집" 갱신)
 # ──────────────────────────────────────────────
 #
 #   [1] USB 포트 점유 — record_teleop 단독 점유
 #         record_teleop 실행 중에는 robot_controller_node 를 끄고 본 스크립트가
 #         단독으로 follower 포트를 점유한다. LeRobot 표준 teleop 흐름과 일치.
 #         동시에 robot_controller_node 가 떠 있으면 SDK 의 포트 open 단계에서
-#         실패한다. README "데이터 수집 (Part D)" 실행 순서에도 명시.
+#         실패한다. README "데이터 수집" 실행 순서에도 명시.
 #
 #   [2] 이미지 소스 — ROS /camera/rgb
 #         camera_node 가 발행하는 /camera/rgb 토픽을 helper 노드가 구독하여
@@ -107,7 +107,7 @@ from robot_arm_msgs.srv import EmbedText
 #
 #   [3] 이미지 해상도 (H, W)
 #         --img-h / --img-w CLI 인자로 결정. 기본 480 x 640 (RealSense 기본).
-#         Sim Part B 의 dataset feature shape 과 반드시 일치해야 Co-training 가능.
+#         Sim 측 dataset feature shape 과 반드시 일치해야 Co-training 가능.
 #
 #   [4] 에피소드 종료 정책 — 'q' + Enter
 #         녹화 루프 중 stdin 에 'q'(또는 'Q') + Enter 가 들어오면 정상 종료.
@@ -122,12 +122,12 @@ from robot_arm_msgs.srv import EmbedText
 #         → 새 home 으로 바꾸려면 follower 를 새 자세에 두고 파일을 삭제한 뒤
 #           record_teleop 을 한 번 실행하면 된다.
 #         → 같은 파일을 robot_controller_node 의 /go_home 서비스가 공유하므로
-#           추론(Part F) 단계에서도 task 종료 후 동일 자세로 복귀한다.
+#           추론(배포) 단계에서도 task 종료 후 동일 자세로 복귀한다.
 #         복귀는 RETURN_HOME_DURATION_S 초 동안 선형 보간 (현재값 → home).
 #
 #   [6] fps — Jetson 실측 후 확정
 #         기본 30Hz (--fps). Jetson 측정 결과 30Hz 미달 시 15Hz 등으로 낮춰
-#         재기록 필요. Sim Part B 의 fps 와 학습 시 일치 또는 resample 처리 필요.
+#         재기록 필요. Sim 측 fps 와 학습 시 일치 또는 resample 처리 필요.
 #         본 루프는 deadline 기반 스케줄을 사용하므로 한 주기 이상 밀리면 자동
 #         재동기화한다 (drift 방지).
 #
@@ -183,7 +183,7 @@ class RecordArgs:
 
 
 def parse_args() -> RecordArgs:
-    p = argparse.ArgumentParser(description='Part D — SO-101 teleop 시연 데이터 수집')
+    p = argparse.ArgumentParser(description='SO-101 teleop 시연 데이터 수집')
     p.add_argument('--robot-port',      required=True, help='SO-101 팔로워 USB 포트')
     p.add_argument('--robot-id',        default='follower', help='팔로워 캘리브레이션 ID')
     p.add_argument('--teleop-port',     required=True, help='SO-101 리더 USB 포트')
@@ -203,7 +203,7 @@ def parse_args() -> RecordArgs:
                         '이 파일은 postprocess_real_labels.py 입력으로 사용된다.')
     p.add_argument('--img-h',           type=int, default=DEFAULT_IMG_H,
                    help='이미지 높이 H (operational decision [3]). '
-                        'Sim Part B feature shape 과 일치해야 Co-training 가능.')
+                        'Sim 측 feature shape 과 일치해야 Co-training 가능.')
     p.add_argument('--img-w',           type=int, default=DEFAULT_IMG_W,
                    help='이미지 너비 W (operational decision [3]).')
     p.add_argument('--home-pose-file',  default=DEFAULT_HOME_POSE_PATH,

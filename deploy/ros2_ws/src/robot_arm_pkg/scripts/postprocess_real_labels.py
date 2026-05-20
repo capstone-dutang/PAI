@@ -1,7 +1,7 @@
 """
 postprocess_real_labels.py
 
-Part D 후처리 — record_teleop.py가 수집한 LeRobotDataset 에피소드들에
+데이터 수집 후처리 — record_teleop.py가 수집한 LeRobotDataset 에피소드들에
 외부 LLM으로 paraphrase를 추가하고, paraphrase 풀의 임베딩을 함께 계산하여
 LeRobotDataset frame/episode metadata에 기록한다.
 
@@ -9,9 +9,9 @@ record_teleop.py는 실시간 수집 속도 유지를 위해 canonical 라벨 1�
 임베딩만 저장한다. 본 스크립트는 수집 종료 후 일괄 실행되어:
   1) labels_<repo>.jsonl 의 canonical 라벨을 외부 LLM에 입력
   2) paraphrase N개 생성
-  3) paraphrase 전부에 대해 임베딩 계산 (Part B sim과 동일 모델)
+  3) paraphrase 전부에 대해 임베딩 계산 (Sim과 동일 모델)
   4) LeRobotDataset에 augmentation 풀로 반영
-     → Part E 학습 시 무작위 추출하여 robustness 강화
+     → ACT 학습 시 무작위 추출하여 robustness 강화
 
 CLI 사용 예:
   python postprocess_real_labels.py \\
@@ -64,7 +64,7 @@ class PostArgs:
 
 def parse_args() -> PostArgs:
     p = argparse.ArgumentParser(
-        description='Part D — Real teleop 라벨 paraphrase + 임베딩 후처리'
+        description='Real teleop 라벨 paraphrase + 임베딩 후처리'
     )
     p.add_argument('--dataset',      required=True,
                    help='record_teleop이 생성한 LeRobotDataset 경로')
@@ -75,7 +75,7 @@ def parse_args() -> PostArgs:
     p.add_argument('--paraphrase-per-episode', type=int, default=3,
                    help='에피소드당 paraphrase 개수')
     p.add_argument('--embed-model', default=DEFAULT_EMBED_MODEL,
-                   help='임베딩 모델 (Part B sim과 일치 필수)')
+                   help='임베딩 모델 (Sim과 일치 필수)')
     p.add_argument('--output-dir',  default='',
                    help='paraphrase + 임베딩 결과를 별도 저장할 디렉터리 (선택)')
     a = p.parse_args()
@@ -170,7 +170,7 @@ def apply_to_dataset(
     augmentation: {episode_idx: {'labels': [str, ...], 'embeddings': [[float]...]}}
 
     TODO: LeRobotDataset 0.4.4의 episode metadata API 호출.
-          학습 시 Part E 스크립트에서 random pick으로 사용 가능한 형식으로 저장.
+          학습 시 ACT Co-training 스크립트에서 random pick으로 사용 가능한 형식으로 저장.
     """
     raise NotImplementedError(
         '[postprocess_real_labels] apply_to_dataset() 미구현 '
