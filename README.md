@@ -272,12 +272,15 @@ PAI/
 │               ├── setup.cfg
 │               └── requirements.txt
 │
-├── sim/                                        # [데이터 생성 목적] Isaac Sim 전용
+├── sim/                                        # [데이터 생성 / Sim teleop] Isaac Sim 전용
 │   ├── generate_act_dataset.py                 # Sim ACT 시연 데이터 생성
 │   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링 (신규)
-│   └── config/
-│       ├── dr_config.yaml                      # Domain Randomization 설정
-│       └── multi_target_scenes.yaml            # multi-target 장면 구성 (신규)
+│   ├── config/
+│   │   ├── dr_config.yaml                      # Domain Randomization 설정
+│   │   └── multi_target_scenes.yaml            # multi-target 장면 구성 (신규)
+│   └── teleop/                                 # Isaac Sim teleop (EC2 SSH 연동)
+│       ├── lerobot_to_rosbridge.py             # 실제 leader → EC2 rosbridge 브리지
+│       └── sim_teleop_setting.md               # EC2 Isaac Sim teleop 셋업 가이드
 │
 ├── training/                                   # [학습 목적] 외부 PC 전용
 │   └── scripts/
