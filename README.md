@@ -9,12 +9,12 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 ```
 하드웨어 세팅 (카메라 캘리브레이션)
   │
-  ├─▶ Isaac Sim ACT 시연 데이터 생성 (외부 PC)
-  │     스크립트 IK 전문가 + Domain Randomization
-  │     pre_grasp → grasp → lift → place 4단계 waypoints
+  ├─▶ Isaac Sim ACT 시연 데이터 수집 (Sim teleop — EC2 또는 로컬)
+  │     실물 SO-101 Leader → Isaac Sim follower(디지털 트윈) teleop
+  │     + Domain Randomization
   │     multi-target 장면 구성 (같은 시각에 여러 후보 객체 배치)
   │     언어 라벨: Gemma 4 E2B 자체 라벨링 + 외부 LLM paraphrase 혼합
-  │     → Sim LeRobotDataset (~1000 에피소드)
+  │     → Sim LeRobotDataset (~500 에피소드)
   │
   ├─▶ Gemma 도메인 LoRA 학습 (외부 PC)
   │     ├─ 도메인별 PDF/문서 → LLM Q&A 자동 생성 → 필터링
@@ -45,8 +45,10 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
             (학습에 쓰지 않은 DR 파라미터로 held-out)
 ```
 
-> Sim 데이터 생성과 Gemma 도메인 LoRA 학습은 독립적으로 병렬 진행 가능. 실제 시연 데이터
-> 수집은 ACT 학습 데이터 확보가 목적이므로 `agent_node` 없이 teleop 기반으로 진행한다.
+> Sim 데이터 수집과 Gemma 도메인 LoRA 학습은 독립적으로 병렬 진행 가능. Sim·Real
+> 시연 데이터 모두 ACT 학습 데이터 확보가 목적이므로 `agent_node` 없이 실물 SO-101
+> Leader teleop 으로 수집한다. Sim 은 Isaac Sim follower(디지털 트윈)를, Real 은
+> 실물 follower 를 leader 로 조종한다.
 >
 > Sim과 Jetson 실물은 **동일 노드 구성**(camera_node, agent_node,
 > llama_server_manager, embedding_node, act_node, robot_controller_node)으로
@@ -56,7 +58,9 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 >
 > ACT는 Sim-to-Real Co-training 방식으로 학습한다. Sim 측 Domain Randomization:
 > 조명·텍스처·카메라 FOV, 질량·마찰·PD 게인, joint/이미지 노이즈.
-> Sim action space는 실기와 동일하게 position control.
+> Sim action space는 실기와 동일하게 position control. Sim 시연을 실물 SO-101
+> Leader teleop 으로 수집하므로 Sim·Real 의 action 생성 경로(같은 Leader, 같은
+> LeRobot SDK)가 일치하여 두 데이터셋의 행동 분포가 동질화된다.
 
 ---
 
@@ -157,7 +161,12 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 | OS | Ubuntu |
 | GPU VRAM | 16GB 이상 |
 | CUDA | 12.6 |
-| 주요 작업 | Gemma 도메인 LoRA 학습 (Unsloth QLoRA), ACT 모방학습, Isaac Sim 시뮬레이션 |
+| 주요 작업 | Gemma 도메인 LoRA 학습 (Unsloth QLoRA), ACT 모방학습, Isaac Sim teleop 데이터 수집 |
+
+> Sim teleop 데이터 수집용 Isaac Sim 은 이 외부 PC(로컬) 또는 EC2 클라우드
+> 워크스테이션(g6e.4xlarge)에서 구동한다. 환경별 셋업은
+> [`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md) /
+> [`sim/teleop/sim_cloud_teleop_setting.md`](sim/teleop/sim_cloud_teleop_setting.md) 참조.
 
 ---
 
@@ -272,15 +281,17 @@ PAI/
 │               ├── setup.cfg
 │               └── requirements.txt
 │
-├── sim/                                        # [데이터 생성 / Sim teleop] Isaac Sim 전용
-│   ├── generate_act_dataset.py                 # Sim ACT 시연 데이터 생성
-│   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링 (신규)
+├── sim/                                        # [데이터 수집] Isaac Sim teleop 전용
+│   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링
 │   ├── config/
 │   │   ├── dr_config.yaml                      # Domain Randomization 설정
-│   │   └── multi_target_scenes.yaml            # multi-target 장면 구성 (신규)
-│   └── teleop/                                 # Isaac Sim teleop (EC2 SSH 연동)
-│       ├── lerobot_to_rosbridge.py             # 실제 leader → EC2 rosbridge 브리지
-│       └── sim_teleop_setting.md               # EC2 Isaac Sim teleop 셋업 가이드
+│   │   └── multi_target_scenes.yaml            # multi-target 장면 구성
+│   └── teleop/                                 # Isaac Sim teleop 데이터 수집
+│       ├── record_sim_teleop.py                # Sim teleop 시연 수집 (씬·DR·녹화 통합, 신규)
+│       ├── lerobot_to_rosbridge.py             # 실물 leader → EC2 rosbridge 브리지 (클라우드)
+│       ├── lerobot_to_ros2.py                  # 실물 leader → ROS2 직접 publish 브리지 (로컬)
+│       ├── sim_cloud_teleop_setting.md         # 클라우드(EC2) Isaac Sim teleop 셋업 가이드
+│       └── sim_local_teleop_setting.md         # 로컬 Isaac Sim teleop 셋업 가이드
 │
 ├── training/                                   # [학습 목적] 외부 PC 전용
 │   └── scripts/
@@ -782,7 +793,14 @@ bash training/scripts/convert_lora_to_gguf.sh \
 
 ---
 
-## 학습 파이프라인 — Sim 데이터 생성
+## 학습 파이프라인 — Sim 데이터 수집 (teleop)
+
+Sim 시연 데이터는 **실물 SO-101 Leader teleop**으로 수집한다. 작업자가 실물
+Leader를 손으로 조종하면 Isaac Sim 안의 follower(디지털 트윈)가 미러링하고, 그
+과정의 관측·행동을 LeRobotDataset으로 녹화한다. 규칙기반 IK 전문가 스크립트
+방식은 폐기되었다 — Real 데이터와 동일한 teleop 수집 경로(같은 Leader, 같은
+LeRobot SDK)를 써서 Sim·Real 두 데이터셋의 행동 분포를 일치시키는 것이 목적이다.
+순수 teleop 전환에 따라 Sim 목표 에피소드 수는 ~500으로 조정되었다.
 
 ### Multi-target 장면 구성
 
@@ -828,15 +846,30 @@ multi_target_ratio: 0.6   # 전체 에피소드 중 multi-target 장면 비율
 **비율**: 에피소드당 Gemma 라벨 1개 + 외부 LLM paraphrase 2~3개. 학습 시
 augmentation으로 무작위 추출.
 
-### 데이터 생성 스크립트
+### 수집 절차
+
+Sim teleop은 Isaac Sim teleop 인프라 위에서 동작한다. 환경별 셋업 가이드:
+
+| 환경 | 셋업 가이드 |
+|------|------------|
+| 클라우드 (EC2 g6e.4xlarge) | [`sim/teleop/sim_cloud_teleop_setting.md`](sim/teleop/sim_cloud_teleop_setting.md) |
+| 로컬 (Isaac Sim 설치 PC) | [`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md) |
+
+teleop 미러링(Leader → Isaac Sim follower)이 검증된 상태에서 `record_sim_teleop.py`
+를 실행한다. 이 스크립트가 매 에피소드 multi-target 씬 구성 + DR 적용 → teleop 시연
+녹화 → LeRobotDataset 저장을 담당한다.
 
 ```bash
-# 1. ACT 시연 데이터 + multi-target 장면 생성
-python sim/generate_act_dataset.py \
-  --dr-config sim/config/dr_config.yaml \
-  --scenes sim/config/multi_target_scenes.yaml \
-  --num-episodes 1000 \
-  --output dataset_sim/
+# 1. Sim teleop 시연 데이터 수집 (~500 에피소드)
+python sim/teleop/record_sim_teleop.py \
+  --teleop-port      COM5 \
+  --teleop-id        leader \
+  --dataset-repo-id  myname/dataset_sim \
+  --domain           recycling \
+  --label-vocab      deploy/config/label_vocab.yaml \
+  --scenes           sim/config/multi_target_scenes.yaml \
+  --dr-config        sim/config/dr_config.yaml \
+  --num-episodes     500
 
 # 2. 각 에피소드에 Gemma + 외부 LLM 라벨 부여
 python sim/generate_language_labels.py \
@@ -845,6 +878,12 @@ python sim/generate_language_labels.py \
   --external-llm gpt-4 \
   --paraphrase-per-episode 3
 ```
+
+> **단위 정합성**: `action`(Leader 관절값)은 Real 수집과 동일하게 LeRobot SDK
+> `.pos` 단위로 기록되므로 변환이 불필요하다. 반면 `observation.state`(Isaac Sim
+> follower 관절)는 Isaac Sim API가 rad 로 주므로, `record_sim_teleop.py`가 Real
+> `record_teleop.py`와 동일한 캘리브레이션 yaml 의 affine 변환을 적용해 SDK 단위로
+> 저장해야 한다. 단위가 어긋나면 같은 자세에 다른 라벨이 들어가 co-training이 망가진다.
 
 ### Domain Randomization 항목
 
@@ -914,7 +953,7 @@ datasets = [
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
-| `sim/generate_act_dataset.py` | IK 전문가 + DR + multi-target 장면 기반 시연 생성 본체 | SO-101 USD 변환, IK 솔버 결정 |
+| `sim/teleop/record_sim_teleop.py` | Sim teleop 녹화 루프, Isaac Sim 관측(RGB·joint) 구독, multi-target 씬 구성 + DR 적용, `observation.state` 단위 변환, LeRobotDataset 저장 | SO-101 USD 변환, Isaac Sim teleop 인프라(Action Graph) |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | DR 파라미터 실측값 (조명·텍스처·FOV·질량·마찰·PD 게인) | 실기 측정 |
 | `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 (label_vocab.yaml과 동기화 필요) | 도메인 객체 결정 |
@@ -942,7 +981,8 @@ datasets = [
 
 > **이전 설계 대비 추가 제거 항목**: `agent_node`의 3D 좌표 산출 로직,
 > `observation.target_position` 채널, `SubtaskCommand`의 `target_class` /
-> `target_position` 필드, depth 노이즈 DR 항목.
+> `target_position` 필드, depth 노이즈 DR 항목, `sim/generate_act_dataset.py`
+> (규칙기반 IK 전문가 — `sim/teleop/record_sim_teleop.py` teleop 수집으로 대체).
 
 ---
 
