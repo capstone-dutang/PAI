@@ -990,15 +990,36 @@ datasets = [
 
 다음 항목은 향후 결정 후 README 갱신이 필요하다.
 
+### 공통
+
 | # | 항목 | 영향 범위 |
 |---|------|---------|
 | 1 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | `merge_qa_dataset.py` |
 | 2 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
+
+### Sim teleop 수집 (`record_sim_teleop.py`)
+
+아래 [D1]~[D9]는 [`sim/teleop/record_sim_teleop.py`](sim/teleop/record_sim_teleop.py)
+상단 "확정 필요 항목" 블록과 동일 ID이며, 본문 `NotImplementedError` 메시지가 각
+ID를 참조한다. 결정 시 README + 해당 스크립트를 함께 갱신한다.
+
+| # | 항목 | 영향 범위 |
+|---|------|---------|
+| D1 | local/cloud 통신 방식 및 녹화 스크립트 실행 위치 (rclpy 직접 / rosbridge 경유) | `connect_leader`, `SimRecordHelperNode` |
+| D2 | Isaac Sim 씬·DR 제어 메커니즘 + `multi_target_scenes.yaml` / `dr_config.yaml` 스키마 | `SceneManager` |
+| D3 | `observation.state` 단위 변환 (Isaac Sim rad → LeRobot SDK `.pos`) | `_sim_jointstate_to_sdk_units`, follower 캘리브레이션 yaml |
+| D4 | Isaac Sim Action Graph 확장 — follower `joint_states` + 카메라 RGB 발행 | Isaac Sim teleop 셋업, 녹화 전제조건 |
+| D5 | 타겟 선택 전략 (작업자 수동 선택 / 자동 분포 보장) | `select_episode_target` |
+| D6 | gripper 매핑 상수 (Leader 0~100% ↔ rad, 현재 -10°~100°) | `_gripper_pct_to_rad` |
+| D7 | sim follower home pose 관절값 | `_load_home_pose_rad` |
+| D8 | 에피소드 길이 / fps (Real `record_teleop.py`와 일치) | CLI 기본값, ACT 학습 resample |
+| D9 | `language_embedding` 처리 (placeholder zero 후처리 — 현행 채택 / 녹화 중 즉시 임베딩) | `record_episode` |
 
 > **확정 완료** (이전 미확정 항목):
 > - 임베딩 모델: `paraphrase-multilingual-MiniLM-L12-v2` (D=384)
 > - 데이터 수집 언어 라벨링 방식: Option C (템플릿+변수 슬롯)
 > - `target_description` 형식: 영어 반구조화 `"the {attribute} {object} {spatial}"`,
 >   5–15 단어, [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) vocabulary 강제
+> - Sim 데이터 수집 방식: 순수 teleop (규칙기반 IK 전문가 폐기, 목표 ~500 에피소드)
 
 ---
