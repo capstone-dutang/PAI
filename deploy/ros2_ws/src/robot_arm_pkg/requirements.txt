@@ -19,7 +19,7 @@ numpy>=1.21.0        # 이미지/텐서 데이터 처리
 # AttributeError를 일으킨다. sentence-transformers → sklearn → scipy 의존 체인이
 # 깨지므로 NumPy 2.x 호환되는 1.13+ 를 사용자 영역에 명시 설치한다.
 scipy>=1.13.0
-Pillow               # 카메라 이미지 처리 (record_teleop.py / agent_node verify_result)
+Pillow               # 카메라 이미지 처리 (record_real_teleop.py / agent_node verify_result)
 PyYAML>=6.0          # calibration / config YAML 파싱 (agent_node, llama_server_manager)
 
 # ── llama-server HTTP 통신 ──────────────────────────────────

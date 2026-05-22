@@ -1,6 +1,6 @@
 # label_vocab.yaml
 #
-# record_teleop의 자연어 라벨링 Option C (템플릿+변수 슬롯) 어휘 사전.
+# record_real_teleop의 자연어 라벨링 Option C (템플릿+변수 슬롯) 어휘 사전.
 #
 # 작업자는 (object, attribute, spatial) 3개 슬롯에 대해 도메인별 vocabulary
 # 안에서만 선택할 수 있다. canonical 라벨은 다음 템플릿으로 자동 생성된다:
@@ -9,7 +9,7 @@
 #
 # 예: "the blue can on the right side of the table"
 #
-# 강제 제약 (record_teleop.py가 검증):
+# 강제 제약 (record_real_teleop.py가 검증):
 #   - 세 슬롯 모두 필수
 #   - 자유 텍스트 입력 금지 (vocabulary 외 값 입력 시 에러)
 #   - 영어 고정 (임베딩 모델 paraphrase-multilingual-MiniLM-L12-v2의

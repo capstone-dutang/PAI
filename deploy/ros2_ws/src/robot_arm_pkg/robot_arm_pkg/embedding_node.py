@@ -3,7 +3,7 @@ embedding_node.py
 
 자연어 타겟 묘사를 벡터 임베딩으로 변환하는 ROS2 서비스 노드.
 
-agent_node와 record_teleop.py가 이 노드의 /embed_text 서비스를 호출하여
+agent_node와 record_real_teleop.py가 이 노드의 /embed_text 서비스를 호출하여
 SubtaskCommand.language_embedding / observation.language_embedding 채널을
 미리 채운다. ACT는 추론 시점에 임베딩 변환 지연이 없다.
 

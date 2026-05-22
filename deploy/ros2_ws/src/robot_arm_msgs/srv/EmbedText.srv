@@ -1,6 +1,6 @@
 # EmbedText
 #
-# agent_node / record_teleop.py → embedding_node
+# agent_node / record_real_teleop.py → embedding_node
 # 자연어 텍스트를 임베딩 벡터로 변환한다.
 #
 # 응답의 dim은 임베딩 모델 로드 시점에 자동으로 결정되며, 호출 측은 dim을 사전에

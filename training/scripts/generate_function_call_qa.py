@@ -125,7 +125,7 @@ def parse_args() -> QAArgs:
 
 
 # ──────────────────────────────────────────────
-# vocabulary 로드 (record_teleop / sim과 공유)
+# vocabulary 로드 (record_real_teleop / sim과 공유)
 # ──────────────────────────────────────────────
 
 def load_vocab(path: str, domain: str) -> dict:

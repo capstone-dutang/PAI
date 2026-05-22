@@ -1,11 +1,11 @@
 """
 postprocess_real_labels.py
 
-데이터 수집 후처리 — record_teleop.py가 수집한 LeRobotDataset 에피소드들에
+데이터 수집 후처리 — record_real_teleop.py가 수집한 LeRobotDataset 에피소드들에
 외부 LLM으로 paraphrase를 추가하고, paraphrase 풀의 임베딩을 함께 계산하여
 LeRobotDataset frame/episode metadata에 기록한다.
 
-record_teleop.py는 실시간 수집 속도 유지를 위해 canonical 라벨 1개와 그
+record_real_teleop.py는 실시간 수집 속도 유지를 위해 canonical 라벨 1개와 그
 임베딩만 저장한다. 본 스크립트는 수집 종료 후 일괄 실행되어:
   1) labels_<repo>.jsonl 의 canonical 라벨을 외부 LLM에 입력
   2) paraphrase N개 생성
@@ -67,9 +67,9 @@ def parse_args() -> PostArgs:
         description='Real teleop 라벨 paraphrase + 임베딩 후처리'
     )
     p.add_argument('--dataset',      required=True,
-                   help='record_teleop이 생성한 LeRobotDataset 경로')
+                   help='record_real_teleop이 생성한 LeRobotDataset 경로')
     p.add_argument('--labels-jsonl', required=True,
-                   help='record_teleop이 기록한 라벨 메타 JSONL')
+                   help='record_real_teleop이 기록한 라벨 메타 JSONL')
     p.add_argument('--external-llm', default='gpt-4',
                    help='paraphrase 생성 외부 LLM 식별자')
     p.add_argument('--paraphrase-per-episode', type=int, default=3,

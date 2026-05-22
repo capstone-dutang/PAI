@@ -25,7 +25,7 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
   │
   ▼
 실제 시연 데이터 수집 (Jetson, 축소 운영)
-  teleop 기반 record_teleop.py (agent_node 미사용)
+  teleop 기반 record_real_teleop.py (agent_node 미사용)
   → Real LeRobotDataset (50~100 에피소드)
   (observation.state + observation.language_embedding + observation.images.top + action)
   │
@@ -88,7 +88,7 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 | 예시 | `"the blue can on the right side of the table"`, `"the transparent bottle next to the paper"` |
 | 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
 
-이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_teleop.py`는 vocabulary 외 입력을 거부한다.
+이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_real_teleop.py`는 vocabulary 외 입력을 거부한다.
 
 ### 임베딩 모델 — 확정
 
@@ -147,7 +147,7 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 │   ├── camera_intrinsics.yaml
 │   ├── camera_robot_transform.yaml
 │   ├── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
-│   └── home_pose.yaml             # SO-101 follower rest 자세. record_teleop 첫 실행 시 자동 생성.
+│   └── home_pose.yaml             # SO-101 follower rest 자세. record_real_teleop 첫 실행 시 자동 생성.
 │                                  # robot_controller_node /go_home 서비스가 같은 파일을 읽는다.
 │
 └── llama.cpp/
@@ -269,7 +269,7 @@ PAI/
 │               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
 │               │   └── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
 │               ├── scripts/
-│               │   ├── record_teleop.py             # 데이터 수집 스크립트 (신규)
+│               │   ├── record_real_teleop.py        # 데이터 수집 스크립트 (신규)
 │               │   └── postprocess_real_labels.py   # Real 라벨 paraphrase + 임베딩 후처리 (신규)
 │               ├── launch/
 │               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
@@ -363,9 +363,9 @@ PAI/
 |--------|------|-----------|---------|------|
 | `/go_home` | `std_srvs/Trigger` | `robot_controller_node` | `agent_node` (task 종료 시) | 현재 follower 자세에서 `~/calibration/home_pose.yaml` 자세로 ~2초간 선형 보간 복귀. 진행 중 `/joint_command` 와 `/joint_states` 발행이 잠시 멈춤. |
 
-> **home_pose.yaml 의 단일 출처**: 같은 파일을 데이터 수집(`record_teleop.py`)
+> **home_pose.yaml 의 단일 출처**: 같은 파일을 데이터 수집(`record_real_teleop.py`)
 > 과 배포(`robot_controller_node` `/go_home`)가 공유한다. 새 자세로 바꾸려면
-> follower 를 새 자세에 두고 파일을 삭제한 뒤 `record_teleop.py` 를 한 번 실행하면
+> follower 를 새 자세에 두고 파일을 삭제한 뒤 `record_real_teleop.py` 를 한 번 실행하면
 > 자동으로 재생성된다.
 
 ### 토픽 구조
@@ -609,7 +609,7 @@ depth_change_threshold: 0.02  # m, 이 이상의 변화가 있으면 grasp 성�
 
 ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 LoRA는 사용하지 않는다.
 
-> **포트 점유 정책**: `record_teleop.py` 가 SO-101 follower USB 포트를
+> **포트 점유 정책**: `record_real_teleop.py` 가 SO-101 follower USB 포트를
 > **단독 점유**한다. 동시에 `robot_controller_node` 가 실행 중이면 LeRobot SDK
 > 의 포트 open 단계에서 실패하므로, 데이터 수집 동안에는 `robot_controller_node`
 > 를 반드시 종료할 것. (스크립트 상단 "운영 / 측정 결정 사항" 블록 [1] 참고)
@@ -621,7 +621,7 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
 4. 임베딩 모델 결정 및 배치 (Gemma 도메인 LoRA 학습 / ACT Co-training과 동일 모델 사용 필수)
 5. `robot_controller_node` 가 떠 있다면 중지 (위 포트 점유 정책)
-6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포 시 `/go_home` 서비스에서 같은 파일을 공유한다. 자세를 바꾸려면 파일 삭제 후 재실행.
+6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_real_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포 시 `/go_home` 서비스에서 같은 파일을 공유한다. 자세를 바꾸려면 파일 삭제 후 재실행.
 
 teleoperation 동작 검증
 ```bash
@@ -652,7 +652,7 @@ ros2 run robot_arm_pkg embedding_node \
   --ros-args -p model_path:=~/models/embedding/
 
 # 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
-python ~/ros2_ws/src/robot_arm_pkg/scripts/record_teleop.py \
+python ~/ros2_ws/src/robot_arm_pkg/scripts/record_real_teleop.py \
   --robot-port      /dev/ttyACM1 \
   --robot-id        follower \
   --teleop-port     /dev/ttyACM0 \
@@ -882,11 +882,11 @@ python sim/generate_language_labels.py \
 > **단위 정합성**: `action`(Leader 관절값)은 Real 수집과 동일하게 LeRobot SDK
 > `.pos` 단위로 기록되므로 변환이 불필요하다. 반면 `observation.state`(Isaac Sim
 > follower 관절)는 Isaac Sim API가 rad 로 주므로, `record_sim_teleop.py`가 Real
-> `record_teleop.py`와 동일한 캘리브레이션 yaml 의 affine 변환을 적용해 SDK 단위로
+> `record_real_teleop.py`와 동일한 캘리브레이션 yaml 의 affine 변환을 적용해 SDK 단위로
 > 저장해야 한다. 단위가 어긋나면 같은 자세에 다른 라벨이 들어가 co-training이 망가진다.
 
 > **에피소드 시작 자세**: 매 에피소드 시작 시 follower 를
-> [`deploy/calibration/home_pose.yaml`](deploy/calibration/home_pose.yaml)(record_teleop.py
+> [`deploy/calibration/home_pose.yaml`](deploy/calibration/home_pose.yaml)(record_real_teleop.py
 > 가 캡처한 실물 follower rest 자세)로 강제한다. `record_sim_teleop.py`가 `/joint_reset`
 > 으로 발행하면 Isaac Sim 측이 SetJointPositions(kinematic teleport)로 그 자세에
 > 고정하므로 Sim/Real 의 에피소드 시작 자세가 일치한다. USD 가동범위를 넘는 관절값은
@@ -977,14 +977,14 @@ datasets = [
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
 > - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
-> - `scripts/record_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
+> - `scripts/record_real_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
 > - `deploy/config/domain_map.yaml` 템플릿
 > - `deploy/config/label_vocab.yaml` (데이터 수집 / Cat-B / Sim 공유 vocabulary)
 > - `camera_node.py`
 > - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
-> `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_teleop.py`로 대체됨.
+> `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.
 
 > **이전 설계 대비 추가 제거 항목**: `agent_node`의 3D 좌표 산출 로직,
 > `observation.target_position` 채널, `SubtaskCommand`의 `target_class` /
@@ -1018,8 +1018,8 @@ ID를 참조한다. 결정 시 README + 해당 스크립트를 함께 갱신한�
 | D4 | Isaac Sim Action Graph 확장 — `joint_states`·카메라 RGB 발행 + `/joint_reset` → 원자적 SetJointPositions 핸들러(위치 + 속도 0 + drive target) | Isaac Sim teleop 셋업, 녹화 전제조건 |
 | D5 | 타겟 선택 전략 (작업자 수동 선택 / 자동 분포 보장) | `select_episode_target` |
 | D6 | gripper 매핑 상수 (Leader 0~100% ↔ rad, 현재 -10°~100°) | `_gripper_pct_to_rad` |
-| D7 | sim follower 초기 자세 — **확정**: `deploy/calibration/home_pose.yaml`(record_teleop.py 캡처) 재사용, SetJointPositions 강제 + USD limit clamp | `load_initial_pose` |
-| D8 | 에피소드 길이 / fps (Real `record_teleop.py`와 일치) | CLI 기본값, ACT 학습 resample |
+| D7 | sim follower 초기 자세 — **확정**: `deploy/calibration/home_pose.yaml`(record_real_teleop.py 캡처) 재사용, SetJointPositions 강제 + USD limit clamp | `load_initial_pose` |
+| D8 | 에피소드 길이 / fps (Real `record_real_teleop.py`와 일치) | CLI 기본값, ACT 학습 resample |
 | D9 | `language_embedding` 처리 (placeholder zero 후처리 — 현행 채택 / 녹화 중 즉시 임베딩) | `record_episode` |
 
 > **확정 완료** (이전 미확정 항목):

@@ -141,7 +141,7 @@ def gemma_label_episode(rgb_frames, gemma_server: str) -> str:
     에피소드를 대표하는 RGB 프레임을 Gemma에 입력하여 자연어 타겟 묘사 1건 산출.
 
     시스템 프롬프트는 GEMMA_LABEL_SYSTEM_PROMPT로 고정 — 출력 분포가
-    record_teleop의 canonical 라벨과 일치하도록 보장.
+    record_real_teleop의 canonical 라벨과 일치하도록 보장.
 
     TODO: 구현 시 결정
       - 어떤 프레임을 Gemma에 줄지 (첫 프레임 / pre_grasp 시점 / 중간 K장 평균)

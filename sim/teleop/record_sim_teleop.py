@@ -6,9 +6,9 @@ Isaac Sim teleop 기반 ACT 학습용 *Sim* 시연 데이터 수집 스크립트
 실물 SO-101 Leader 를 작업자가 직접 조작하면 Isaac Sim 안의 follower(디지털
 트윈)가 이를 미러링하고, 그 과정의 관측·행동을 LeRobotDataset 으로 녹화한다.
 규칙기반 IK 전문가 방식(구 sim/generate_act_dataset.py)을 대체하며, Real 측
-deploy/.../scripts/record_teleop.py 와 대칭 구조를 갖는다.
+deploy/.../scripts/record_real_teleop.py 와 대칭 구조를 갖는다.
 
-기록 채널 (Real record_teleop.py 와 동일 스펙 — Co-training 가능 조건):
+기록 채널 (Real record_real_teleop.py 와 동일 스펙 — Co-training 가능 조건):
 
   observation.state              (6,)   float32  — Isaac Sim follower 관절 위치
                                                     (sim rad → SDK .pos 단위 변환, [D3])
@@ -37,7 +37,7 @@ deploy/.../scripts/record_teleop.py 와 대칭 구조를 갖는다.
   3. 실물 SO-101 Leader USB 포트 확인 + lerobot-calibrate 완료
   4. SO-101 follower 캘리브레이션 yaml (observation.state 단위 변환용, [D3])
   5. label_vocab.yaml / multi_target_scenes.yaml / dr_config.yaml 배치
-  6. deploy/calibration/home_pose.yaml — record_teleop.py 가 캡처한 실물 follower
+  6. deploy/calibration/home_pose.yaml — record_real_teleop.py 가 캡처한 실물 follower
      rest 자세. 에피소드 시작 강제 자세로 재사용한다 ([D7]).
 
 CLI 사용 예:
@@ -56,7 +56,7 @@ CLI 사용 예:
 실행 환경:
   Isaac Sim teleop 환경(ros_humble mamba env — rclpy + lerobot)에서 실행한다.
   deploy 측 robot_arm_pkg / robot_arm_msgs 는 이 환경에 없으므로 import 하지
-  않는다 (record_teleop.py 와 코드 공유 불가 — 필요한 로직은 본 파일에 자립).
+  않는다 (record_real_teleop.py 와 코드 공유 불가 — 필요한 로직은 본 파일에 자립).
 
 상태: 스켈레톤 — 인터페이스/CLI/파라미터만 작성 완료. 핵심 로직은
       NotImplementedError 로 표시하고, 미확정 항목은 아래 "확정 필요 항목"
@@ -91,7 +91,7 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 
 # ──────────────────────────────────────────────
-# 운영 / 측정 결정 사항 (Real record_teleop.py 와 대응)
+# 운영 / 측정 결정 사항 (Real record_real_teleop.py 와 대응)
 # ──────────────────────────────────────────────
 #
 #   [S1] 관측 소스 — Isaac Sim ROS2 토픽
@@ -115,7 +115,7 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 #         시작한다. 씬 재구성/DR 은 SceneManager 가 담당. ([D2], [D7])
 #
 #   [S5] fps
-#         기본 30Hz (--fps). Real record_teleop.py 의 fps 와 일치시켜야
+#         기본 30Hz (--fps). Real record_real_teleop.py 의 fps 와 일치시켜야
 #         학습 시 resample 이 불필요하다. ([D8])
 #
 #   [S6] action / observation 단위
@@ -174,18 +174,18 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 #         -10°~100° 범위를 쓰지만 실측 확정 필요.
 #
 #   [D7] sim follower 초기 자세 — 확정
-#         에피소드 시작 시 deploy/calibration/home_pose.yaml(record_teleop.py 가
+#         에피소드 시작 시 deploy/calibration/home_pose.yaml(record_real_teleop.py 가
 #         캡처한 실물 follower rest 자세)을 읽어 /joint_reset → SetJointPositions
 #         로 강제한다. Sim/Real 의 에피소드 시작 자세가 일치하며 별도 측정이
 #         불필요하다. SDK .pos → rad 변환은 load_initial_pose 참조 ([D3] 연동).
 #
 #   [D8] 에피소드 길이 / fps
-#         프레임 수 목표와 fps 를 Real record_teleop.py 와 일치시킬 것.
+#         프레임 수 목표와 fps 를 Real record_real_teleop.py 와 일치시킬 것.
 #
 #   [D9] language_embedding 처리 방식
 #         현재 채택: placeholder zero 벡터로 녹화 → generate_language_labels.py
 #         가 후처리로 실제 임베딩 적재 (README §수집 절차 step 2).
-#         대안: Real record_teleop.py 처럼 녹화 중 embedding_node /embed_text
+#         대안: Real record_real_teleop.py 처럼 녹화 중 embedding_node /embed_text
 #         로 즉시 임베딩. 채택 시 헬퍼 노드에 서비스 클라이언트 추가 필요.
 #
 # ──────────────────────────────────────────────
@@ -193,7 +193,7 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 EXPECTED_EMBED_DIM = 384  # paraphrase-multilingual-MiniLM-L12-v2 (README 확정)
 
-# SO-101 관절 이름 — record_teleop.py / 브리지와 동일 순서.
+# SO-101 관절 이름 — record_real_teleop.py / 브리지와 동일 순서.
 SO101_JOINT_NAMES: List[str] = [
     'shoulder_pan',
     'shoulder_lift',
@@ -219,7 +219,7 @@ SO101_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
 DEFAULT_IMG_H = 480
 DEFAULT_IMG_W = 640
 
-# LeRobot 데이터셋 카메라 채널 키 (Real record_teleop.py 와 일치 필수)
+# LeRobot 데이터셋 카메라 채널 키 (Real record_real_teleop.py 와 일치 필수)
 CAMERA_KEY = 'observation.images.top'
 
 # 에피소드 시작 강제 자세 적용 후 물리 안정화 대기 초 (operational decision [S4])
@@ -287,7 +287,7 @@ def parse_args() -> SimRecordArgs:
     p.add_argument('--num-episodes',    type=int, default=500,
                    help='수집 에피소드 수 (순수 teleop 전환 후 목표 ~500)')
     p.add_argument('--fps',             type=int, default=30,
-                   help='기록 주기 (Hz). Real record_teleop.py 와 일치 ([D8]).')
+                   help='기록 주기 (Hz). Real record_real_teleop.py 와 일치 ([D8]).')
     p.add_argument('--labels-jsonl',    default='',
                    help='canonical 라벨 + 슬롯 메타데이터 JSONL 경로. 비어 있으면 '
                         'dataset.root 옆에 labels.jsonl 로 자동 생성. '
@@ -304,7 +304,7 @@ def parse_args() -> SimRecordArgs:
     p.add_argument('--seed',            type=int, default=0,
                    help='DR / 타겟 선택 재현성 시드')
     p.add_argument('--home-pose-file',   default='deploy/calibration/home_pose.yaml',
-                   help='에피소드 시작 강제 자세 — record_teleop.py 가 캡처한 실물 '
+                   help='에피소드 시작 강제 자세 — record_real_teleop.py 가 캡처한 실물 '
                         'follower home_pose.yaml 경로 ([D7]).')
     p.add_argument('--joint-command-topic',  default=DEFAULT_JOINT_COMMAND_TOPIC,
                    help='녹화 스크립트 → Isaac Sim follower 구동 토픽 (drive target)')
@@ -352,7 +352,7 @@ def parse_args() -> SimRecordArgs:
 
 @dataclass
 class LabelVocab:
-    """label_vocab.yaml — record_teleop.py 의 LabelVocab 와 동일 스키마."""
+    """label_vocab.yaml — record_real_teleop.py 의 LabelVocab 와 동일 스키마."""
     template:  str
     spatials:  List[str]
     objects:   Dict[str, List[str]]        # object_name -> attributes
@@ -363,7 +363,7 @@ class LabelVocab:
 def load_vocab(path: str, domain: str) -> LabelVocab:
     """label_vocab.yaml 로드 + 지정 도메인 추출 + 스키마 검증.
 
-    record_teleop.py 의 load_vocab 와 동일 규약 — Sim/Real 라벨 분포 일치를
+    record_real_teleop.py 의 load_vocab 와 동일 규약 — Sim/Real 라벨 분포 일치를
     위해 같은 vocabulary 파일을 공유한다.
     """
     with open(path, 'r', encoding='utf-8') as f:
@@ -487,7 +487,7 @@ def select_episode_target(
 
 def _resolve_labels_jsonl(args: SimRecordArgs,
                           dataset: Optional[LeRobotDataset] = None) -> str:
-    """labels.jsonl 저장 경로 결정 (record_teleop.py 와 동일 규약)."""
+    """labels.jsonl 저장 경로 결정 (record_real_teleop.py 와 동일 규약)."""
     if args.labels_jsonl:
         path = args.labels_jsonl
     elif dataset is not None:
@@ -517,7 +517,7 @@ class SimRecordHelperNode(Node):
       - {sim_camera_topic}    subscriber → 카메라 RGB latest-only 캐시
       - {sim_jointstate_topic} subscriber → follower 실제 관절 상태 latest-only 캐시
 
-    Real record_teleop.py 의 RecordHelperNode 와 동일하게, main() 의 백그라운드
+    Real record_real_teleop.py 의 RecordHelperNode 와 동일하게, main() 의 백그라운드
     SingleThreadedExecutor 에서 spin 되어 메인 루프의 시리얼/디스크 IO 와 무관하게
     콜백이 즉시 처리된다 (동일 프레임 중복 적재 방지).
 
@@ -629,7 +629,7 @@ def open_dataset(args: SimRecordArgs) -> LeRobotDataset:
     """
     LeRobotDataset 0.4.4 생성 또는 기존 데이터셋 resume.
 
-    features 스키마는 Real record_teleop.py 의 open_dataset 과 반드시 일치해야
+    features 스키마는 Real record_real_teleop.py 의 open_dataset 과 반드시 일치해야
     Co-training 이 가능하다:
       observation.state              : float32 (6,)
       observation.language_embedding : float32 (embedding_dim,)  — placeholder, [D9]
@@ -720,7 +720,7 @@ def _leader_action_to_vec(action: dict) -> np.ndarray:
     """
     Leader SDK 의 {motor}.pos dict → SO101_JOINT_NAMES 순서 (6,) float32.
 
-    이 값이 dataset 의 `action` 채널에 그대로 저장된다 — Real record_teleop.py
+    이 값이 dataset 의 `action` 채널에 그대로 저장된다 — Real record_real_teleop.py
     의 action 과 동일 경로/단위 (LeRobot SDK .pos). 변환 불요 ([S6]).
     """
     return np.array(
@@ -815,7 +815,7 @@ def load_initial_pose(path: str) -> List[float]:
     에피소드 시작 강제 자세를 home_pose.yaml 에서 로드 → SO101_JOINT_NAMES
     순서 rad 리스트.
 
-    실물 데이터 수집(record_teleop.py)이 캡처해 둔 follower rest 자세를 그대로
+    실물 데이터 수집(record_real_teleop.py)이 캡처해 둔 follower rest 자세를 그대로
     재사용한다 — Sim/Real 의 에피소드 시작 자세를 일치시키고 별도 측정을
     생략한다 ([D7]). 파일 스키마는 robot_arm_pkg.utils.home_pose 와 동일:
 
@@ -842,7 +842,7 @@ def load_initial_pose(path: str) -> List[float]:
     if not os.path.exists(path):
         raise FileNotFoundError(
             f'home_pose.yaml 을 찾을 수 없음: {path}\n'
-            'record_teleop.py 가 생성한 ~/calibration/home_pose.yaml 을 '
+            'record_real_teleop.py 가 생성한 ~/calibration/home_pose.yaml 을 '
             'deploy/calibration/ 로 복사하거나 --home-pose-file 로 경로 지정.'
         )
     with open(path, 'r', encoding='utf-8') as f:

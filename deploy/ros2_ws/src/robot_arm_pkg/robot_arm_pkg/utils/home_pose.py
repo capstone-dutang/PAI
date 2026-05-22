@@ -15,7 +15,7 @@ robot_arm_pkg.utils.home_pose — SO-101 follower home pose 파일 입출력 유
       gripper:        <float>
 
 사용처:
-  - record_teleop.py            : 첫 실행 시 follower 의 현재 자세를 캡처해 저장.
+  - record_real_teleop.py            : 첫 실행 시 follower 의 현재 자세를 캡처해 저장.
                                   이후 실행은 같은 파일을 읽어 에피소드 간 자동 복귀.
   - robot_controller_node.py    : 시작 시 파일을 읽어 /go_home Trigger 서비스의
                                   목표값으로 사용.
@@ -25,7 +25,7 @@ robot_arm_pkg.utils.home_pose — SO-101 follower home pose 파일 입출력 유
 home pose 변경 절차:
   1) follower 를 원하는 새 rest 자세에 둔다.
   2) ~/calibration/home_pose.yaml 을 삭제한다.
-  3) record_teleop 을 한 번 실행 — 새 자세가 자동 캡처되어 저장된다.
+  3) record_real_teleop 을 한 번 실행 — 새 자세가 자동 캡처되어 저장된다.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import numpy as np
 import yaml
 
 
-# SO-101 관절 순서 — robot_controller_node.py / record_teleop.py 의 정의와 동일해야 한다.
+# SO-101 관절 순서 — robot_controller_node.py / record_real_teleop.py 의 정의와 동일해야 한다.
 # 본 모듈을 단일 소스로 통일하는 리팩터는 추후 작업.
 SO101_JOINT_NAMES: List[str] = [
     'shoulder_pan',
@@ -110,5 +110,5 @@ def save_home_pose(path: str, pose: np.ndarray) -> None:
 
 
 def home_pose_exists(path: str) -> bool:
-    """파일 존재 여부 — record_teleop 의 '있으면 load, 없으면 capture+save' 분기에 사용."""
+    """파일 존재 여부 — record_real_teleop 의 '있으면 load, 없으면 capture+save' 분기에 사용."""
     return os.path.exists(os.path.expanduser(path))

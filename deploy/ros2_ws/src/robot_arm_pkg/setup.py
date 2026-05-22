@@ -13,7 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch',  ['launch/calibration.launch.py']),
         ('share/' + package_name + '/scripts', [
-            'scripts/record_teleop.py',
+            'scripts/record_real_teleop.py',
             'scripts/postprocess_real_labels.py',
         ]),
         ('share/' + package_name + '/urdf',        ['urdf/so101.urdf']),

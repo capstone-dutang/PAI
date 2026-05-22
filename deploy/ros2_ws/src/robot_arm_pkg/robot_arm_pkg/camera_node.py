@@ -60,7 +60,7 @@ class CameraNode(Node):
         # realsense2_camera 는 카메라 토픽을 BEST_EFFORT 로 발행한다.
         # RELIABLE 구독자는 BEST_EFFORT 퍼블리셔에 연결하지 못해 콜백이 안 돈다
         # ─ 그래서 입력 sub 두 개를 모두 BEST_EFFORT 로 맞춘다. 발행도 동일
-        # 정책으로 통일해 act_node / record_teleop helper (BestEffort 구독) 와
+        # 정책으로 통일해 act_node / record_real_teleop helper (BestEffort 구독) 와
         # 자연스럽게 결합되도록 한다.
         camera_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,

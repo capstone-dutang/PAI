@@ -12,7 +12,7 @@
 #   - Sim LeRobotDataset 생성 완료 (~1000 에피소드)
 #                  + sim/generate_language_labels.py로 language_embedding 채움
 #   - Real LeRobotDataset 수집 완료 (50~100 에피소드)
-#                  + record_teleop.py로 language_embedding 포함하여 기록
+#                  + record_real_teleop.py로 language_embedding 포함하여 기록
 #   - 두 데이터셋의 features 스펙이 정확히 일치해야 한다 (Co-training 가능 조건):
 #       observation.state              (6,)    float32
 #       observation.language_embedding (D,)    float32  ← 동일 D 강제

@@ -1,5 +1,5 @@
 """
-record_teleop.py
+record_real_teleop.py
 
 SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립트.
 
@@ -32,7 +32,7 @@ SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립트.
   5. deploy/config/label_vocab.yaml 배치
 
 CLI 사용 예:
-  python record_teleop.py \\
+  python record_real_teleop.py \\
     --robot-port      /dev/ttyACM0 \\
     --robot-id        follower \\
     --teleop-port     /dev/ttyACM1 \\
@@ -94,8 +94,8 @@ from robot_arm_msgs.srv import EmbedText
 # 운영 / 측정 결정 사항 (변경 시 본 블록 + README "데이터 수집" 갱신)
 # ──────────────────────────────────────────────
 #
-#   [1] USB 포트 점유 — record_teleop 단독 점유
-#         record_teleop 실행 중에는 robot_controller_node 를 끄고 본 스크립트가
+#   [1] USB 포트 점유 — record_real_teleop 단독 점유
+#         record_real_teleop 실행 중에는 robot_controller_node 를 끄고 본 스크립트가
 #         단독으로 follower 포트를 점유한다. LeRobot 표준 teleop 흐름과 일치.
 #         동시에 robot_controller_node 가 떠 있으면 SDK 의 포트 open 단계에서
 #         실패한다. README "데이터 수집" 실행 순서에도 명시.
@@ -120,7 +120,7 @@ from robot_arm_msgs.srv import EmbedText
 #         ~/calibration/home_pose.yaml) 에서 로드한다.
 #         파일이 없으면 connect 직후의 follower 자세를 캡처해 *자동 저장* 한다.
 #         → 새 home 으로 바꾸려면 follower 를 새 자세에 두고 파일을 삭제한 뒤
-#           record_teleop 을 한 번 실행하면 된다.
+#           record_real_teleop 을 한 번 실행하면 된다.
 #         → 같은 파일을 robot_controller_node 의 /go_home 서비스가 공유하므로
 #           추론(배포) 단계에서도 task 종료 후 동일 자세로 복귀한다.
 #         복귀는 RETURN_HOME_DURATION_S 초 동안 선형 보간 (현재값 → home).
@@ -392,7 +392,7 @@ def append_label_record(jsonl_path: str, record: dict) -> None:
 
 class RecordHelperNode(Node):
     """
-    record_teleop가 ROS2와 상호작용하기 위한 헬퍼 노드.
+    record_real_teleop가 ROS2와 상호작용하기 위한 헬퍼 노드.
       - /camera/rgb 구독 (BestEffort + KeepLast(1)) — latest-only 캐시
       - /embed_text 서비스 클라이언트
 
@@ -405,7 +405,7 @@ class RecordHelperNode(Node):
     """
 
     def __init__(self):
-        super().__init__('record_teleop_helper')
+        super().__init__('record_real_teleop_helper')
 
         camera_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
@@ -520,7 +520,7 @@ def open_dataset(args: RecordArgs, embedding_dim: int) -> LeRobotDataset:
     tasks_parquet = default_root / 'meta' / 'tasks.parquet'
     if default_root.exists() and not tasks_parquet.exists():
         print(
-            f'[record_teleop] 기존 폴더 {default_root} 가 미완성 데이터셋 '
+            f'[record_real_teleop] 기존 폴더 {default_root} 가 미완성 데이터셋 '
             '(meta/tasks.parquet 없음 — 이전 run 이 첫 save_episode 전에 종료된 흔적). '
             '자동 삭제 후 새로 생성합니다.'
         )
@@ -528,7 +528,7 @@ def open_dataset(args: RecordArgs, embedding_dim: int) -> LeRobotDataset:
 
     if default_root.exists():
         print(
-            f'[record_teleop] 기존 데이터셋 발견 → resume: {default_root}\n'
+            f'[record_real_teleop] 기존 데이터셋 발견 → resume: {default_root}\n'
             '                새로 시작하려면 위 경로를 삭제 후 재실행.'
         )
         dataset = LeRobotDataset(repo_id=args.dataset_repo_id)
@@ -707,7 +707,7 @@ def record_episode(
     while helper.latest_rgb() is None:
         if time.perf_counter() > wait_deadline:
             raise RuntimeError(
-                '[record_teleop] /camera/rgb 미수신 (5s timeout). '
+                '[record_real_teleop] /camera/rgb 미수신 (5s timeout). '
                 'camera_node 와 realsense2_camera 가 실행 중인지 확인.'
             )
         time.sleep(0.05)
@@ -809,7 +809,7 @@ def main() -> None:
 
     # 1) Vocabulary 로드 (Option C 슬롯 검증용)
     vocab = load_vocab(args.label_vocab, args.domain)
-    print(f'[record_teleop] vocab loaded ({args.label_vocab}, domain={args.domain})')
+    print(f'[record_real_teleop] vocab loaded ({args.label_vocab}, domain={args.domain})')
 
     rclpy.init()
     helper = RecordHelperNode()
@@ -845,8 +845,8 @@ def main() -> None:
         # 3) 데이터셋 생성 — labels.jsonl 은 dataset.root 옆에 두는 것을 기본으로
         dataset = open_dataset(args, embedding_dim)
         labels_jsonl = _resolve_labels_jsonl(args, dataset)
-        print(f'[record_teleop] dataset.root = {dataset.root}')
-        print(f'[record_teleop] label log    = {labels_jsonl}')
+        print(f'[record_real_teleop] dataset.root = {dataset.root}')
+        print(f'[record_real_teleop] label log    = {labels_jsonl}')
 
         # 4) SO-101 연결 (operational decision [1] — single-owner)
         robot, teleop = connect_so101(
@@ -856,18 +856,18 @@ def main() -> None:
         # 5) Home pose 결정 (operational decision [5] — 파일 영구화)
         #    파일이 있으면 그 자세를 그대로 사용.
         #    없으면 connect 직후 follower 자세를 캡처해 같은 경로에 저장 →
-        #    이후 record_teleop / robot_controller_node /go_home 이 공유.
+        #    이후 record_real_teleop / robot_controller_node /go_home 이 공유.
         if home_pose_exists(args.home_pose_file):
             home_pose = load_home_pose(args.home_pose_file)
-            print(f'[record_teleop] home pose 로드: {args.home_pose_file} '
+            print(f'[record_real_teleop] home pose 로드: {args.home_pose_file} '
                   f'→ {home_pose.tolist()}')
         else:
             home_pose = _capture_home_pose(robot)
             save_home_pose(args.home_pose_file, home_pose)
-            print(f'[record_teleop] home pose 신규 캡처 후 저장: {args.home_pose_file} '
+            print(f'[record_real_teleop] home pose 신규 캡처 후 저장: {args.home_pose_file} '
                   f'→ {home_pose.tolist()}')
-            print('[record_teleop] 향후 변경 시: follower 를 새 자세에 두고 '
-                  f'{args.home_pose_file} 삭제 후 record_teleop 재실행.')
+            print('[record_real_teleop] 향후 변경 시: follower 를 새 자세에 두고 '
+                  f'{args.home_pose_file} 삭제 후 record_real_teleop 재실행.')
 
         # 6) 에피소드 루프
         start_ep = dataset.num_episodes
@@ -912,12 +912,12 @@ def main() -> None:
             try:
                 teleop.disconnect()
             except Exception as e:
-                print(f'[record_teleop] teleop disconnect 오류: {e}')
+                print(f'[record_real_teleop] teleop disconnect 오류: {e}')
         if robot is not None:
             try:
                 robot.disconnect()
             except Exception as e:
-                print(f'[record_teleop] robot disconnect 오류: {e}')
+                print(f'[record_real_teleop] robot disconnect 오류: {e}')
         # 백그라운드 executor 종료 → spin 스레드 회수 → 노드/rclpy 정리 순서
         executor.shutdown()
         spin_thread.join(timeout=2.0)

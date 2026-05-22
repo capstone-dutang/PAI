@@ -27,7 +27,7 @@ act_node의 joint_command를 받아 SO-101 팔로워 암을 구동하고
   disable_torque     (bool)  — 캘리브레이션용 토크 비활성화
   home_pose_file     (str)   — home pose YAML 경로
                                 (기본 ~/calibration/home_pose.yaml,
-                                 record_teleop.py 와 공유)
+                                 record_real_teleop.py 와 공유)
   go_home_duration_s (float) — /go_home 보간 시간 (기본 2.0초)
 
 SO-101 관절 순서 (6축):
@@ -50,7 +50,7 @@ from std_srvs.srv import Trigger
 # LeRobot 0.4.4 기준 경로
 from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
 
-# 공유 유틸 — record_teleop 과 동일한 home_pose.yaml 을 읽는다.
+# 공유 유틸 — record_real_teleop 과 동일한 home_pose.yaml 을 읽는다.
 from robot_arm_pkg.utils.home_pose import DEFAULT_HOME_POSE_PATH, load_home_pose
 
 
@@ -124,7 +124,7 @@ class RobotControllerNode(Node):
 
         # ── home pose 로드 ────────────────────────
         # 파일이 없으면 /go_home 호출 시 실패 응답을 반환한다 (자동 캡처 없음 —
-        # 안전상 record_teleop.py 가 최초 캡처를 담당).
+        # 안전상 record_real_teleop.py 가 최초 캡처를 담당).
         self._home_pose: Optional[np.ndarray] = None
         self._load_home_pose()
         # _go_home_active 가 True 인 동안 외부 /joint_command 는 무시된다.
@@ -223,7 +223,7 @@ class RobotControllerNode(Node):
         """home_pose.yaml 을 읽어 self._home_pose 에 캐싱.
 
         파일이 없거나 형식이 잘못된 경우 None 으로 두고 warn 로그를 남긴다.
-        record_teleop.py 가 최초 1회 실행 시 파일을 생성하므로, 본 노드 단독
+        record_real_teleop.py 가 최초 1회 실행 시 파일을 생성하므로, 본 노드 단독
         실행 시에는 파일이 없을 수 있다.
         """
         try:
@@ -237,7 +237,7 @@ class RobotControllerNode(Node):
             self.get_logger().warn(
                 f'home_pose 파일 없음 ({self._home_pose_file}). '
                 '/go_home 서비스는 실패 응답을 반환한다. '
-                'record_teleop.py 를 한 번 실행하면 자동 생성된다.'
+                'record_real_teleop.py 를 한 번 실행하면 자동 생성된다.'
             )
         except Exception as e:
             self._home_pose = None
