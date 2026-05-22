@@ -1,93 +1,76 @@
 # =============================================================================
 # dr_config.yaml
 # -----------------------------------------------------------------------------
-# 목적: Isaac Sim에서 ACT 시연 데이터 생성 시 적용할
-#       Domain Randomization 파라미터 정의.
+# Domain Randomization 파라미터 — record_sim_teleop.py 의 SceneManager 가
+# 매 에피소드 setup_episode_scene 직후 apply_domain_randomization() 에서 적용.
 #
-# 사용처: sim/generate_act_dataset.py 가 매 에피소드 시작 시 로드.
-# 관련: README Sim 데이터 생성, ACT Co-training, 검증 (held-out 평가)
+# 적용 모델 (에피소드 누적 drift 방지):
+#   - SceneManager 가 기동 시 베이스 값(조명 intensity/color, 카메라 focalLength)을
+#     1회 캡처한다. 매 에피소드 jitter 는 그 베이스 값에 곱해지므로 에피소드가
+#     쌓여도 분포가 한쪽으로 떠내려가지 않는다.
+#   - mult / color_jitter 계열: [lo, hi] uniform 샘플 → 베이스 * 샘플.
+#   - 모든 섹션은 선택적 — 키가 없거나 enabled:false 면 건너뛴다.
 #
-# 원칙:
-#   - 중심값(mean)은 실기(SO-101 + RealSense + 실제 조명) 환경을 기준으로 설정
-#   - 분산(range)은 중심값 ± 로 표기, 에피소드마다 uniform 샘플링
-#   - 검증 held-out 평가용으로 일부 파라미터는 별도 범위로 재지정 예정
+# 목적: Isaac Sim 렌더/물리와 실기(SO-101 + RealSense) 사이 도메인 갭을 학습
+#       데이터 분포로 흡수해 ACT 의 sim2real 전이를 돕는다.
+# 관련: README "Sim teleop 수집", ACT Co-training.
 # =============================================================================
 
 
+# ── [1] 조명 (Visual) ────────────────────────────────────────────────────────
+# 씬의 모든 UsdLux 광원에 적용. 베이스 intensity/color 를 기동 시 캡처해 곱셈 jitter.
+lighting:
+  enabled: true
+  # 광원 intensity 배율 — 실내 조명 밝기 변동·노출 차이 모사.
+  intensity_mult: [0.7, 1.3]
+  # RGB 채널별 독립 배율 — 색온도/화이트밸런스 변동 모사 (1.0 = 변화 없음).
+  color_jitter: [0.92, 1.08]
+
+
+# ── [2] 카메라 (Visual) ──────────────────────────────────────────────────────
+# camera_prim 의 focalLength 를 jitter — RealSense FOV 캘리브레이션 오차 모사.
+camera:
+  enabled: true
+  focal_length_mult: [0.95, 1.05]
+
+
+# ── [3] 질량 (Physics) ───────────────────────────────────────────────────────
+# 이번 에피소드 배치된 객체의 UsdPhysics.MassAPI mass 를 jitter.
+# 객체는 매 에피소드 래퍼 USD 를 새로 reference 하므로 baked mass 가 베이스 —
+# 별도 캡처 없이 그 값에 곱한다.
+mass:
+  enabled: true
+  mult: [0.8, 1.2]
+
+
+# =============================================================================
+# 미구현(TODO) — 아래 섹션은 스키마 메모만 두고 apply_domain_randomization 이
+# 처리하지 않는다. 활성화하려면 SceneManager 에 해당 헬퍼를 먼저 구현해야 한다.
 # -----------------------------------------------------------------------------
-# [1] Visual Randomization (카메라 입력 도메인 갭 축소)
-# -----------------------------------------------------------------------------
-# lighting:
-#   - 조명 방향 vector ± (반구형 랜덤)
-#   - 조명 강도 (lux 또는 intensity)      : 중심값 ± 범위
-#   - 색온도 (Kelvin)                     : 예) 4000~6500K
-#   - 보조 광원(ambient) on/off 확률
+# texture            — 객체/테이블/배경 재질 무작위화
+#   보류 사유: 텍스처 라이브러리(N종 albedo/roughness 맵)와 UsdShade 머티리얼
+#   바인딩 작업이 선행돼야 함. 별도 에셋 준비 후 구현.
 #
-# textures:
-#   - 물체 재질: albedo color jitter, metallic/roughness 범위
-#   - 테이블 텍스처: N종 텍스처 중 랜덤 선택
-#   - 배경(벽/바닥) 텍스처: N종 중 랜덤 선택
+# friction           — 객체·테이블 표면 마찰 (static/dynamic)
+#   보류 사유: UsdPhysics 머티리얼을 생성·바인딩하고 grasp 안정성에 미치는
+#   영향을 teleop 으로 검증해야 함. 마찰이 너무 낮으면 시연 자체가 실패하므로
+#   범위를 보수적으로 잡아야 한다.
 #
-# camera:
-#   - FOV ± (실기 RealSense 기준값 미확인 — 캘리브레이션 후 확정)
-#   - 위치 offset (x, y, z) ± 수 mm (설치 오차 모사)
-#   - 회전 offset (roll, pitch, yaw) ± 수 도
+# pd_gain            — SO-101 관절 PD 게인 (Kp/Kd)
+#   보류 사유: drive_follower 의 PD 응답을 바꾸면 teleop 추종성이 함께 바뀐다.
+#   실기 Feetech STS3215 게인 실측값을 중심으로 잡고 런타임 articulation API
+#   (get/set gains)로 적용해야 함. 실측 전까지 보류.
 #
-# distractors:
-#   - 랜덤 방해 물체 N개 배치 확률/개수 범위
-
-
-# -----------------------------------------------------------------------------
-# [2] Physics Randomization (동역학 갭 축소)
-# -----------------------------------------------------------------------------
-# object_dynamics:
-#   - mass (kg)                : 중심값 ± (물체 종류 확정 후 설정)
-#   - friction (coef)          : static/dynamic 각각 범위
-#   - inertia scale            : ±
+# observation_noise  — joint_state / rgb 센서 노이즈
+#   보류 사유: 시뮬레이터에 굽지 않고 학습 시점 augmentation 으로 처리하는 편이
+#   재현·튜닝에 유리(데이터 재수집 없이 노이즈 강도 조정 가능). 학습 파이프라인
+#   쪽에서 다룬다.
 #
-# robot_dynamics (SO-101 / Feetech STS3215):
-#   - joint PD gain            : Kp, Kd 각각 ± (중심값은 실기 측정 필요)
-#   - joint friction           : 관절별 ±
-#   - joint damping            : ±
-#   - actuator latency (ms)    : ± (Feetech 버스 통신 지연 모사)
-#   - backlash (rad)           : ± (저가 기어 백래시 모사)
-
-
-# -----------------------------------------------------------------------------
-# [3] Observation Noise (센서 노이즈 모사)
-# -----------------------------------------------------------------------------
-# joint_state_noise:
-#   - Gaussian sigma (rad)     : 각 관절별
+# distractors        — 무관 방해 물체 배치
+#   보류 사유: TargetSelector([D5])·multi_target_scenes.yaml 의 장면
+#   구성과 책임이 겹침. 방해 물체는 scenes 정의에 흡수하는 방향으로 검토.
 #
-# rgb_noise:
-#   - Gaussian pixel noise     : sigma
-#   - Motion blur kernel       : 확률/크기
-#   - JPEG compression artifact: quality 범위
-#
-# (depth_noise 섹션은 제거됨)
-#   본 설계에서 depth는 ACT 학습 obs에 포함되지 않고 verify_result의 grasp
-#   보조 검증에만 사용되므로, depth 도메인 갭은 학습 데이터 분포에 영향이 없다.
-#   배포 시점의 RealSense depth 노이즈 특성은 grasp_roi.yaml threshold와
-#   ROI 크기로 흡수한다.
-
-
-# -----------------------------------------------------------------------------
-# [4] Task Randomization
-# -----------------------------------------------------------------------------
-# object_initial_pose:
-#   - x range (m)              : 작업 공간 범위 (미결정)
-#   - y range (m)              : 미결정
-#   - yaw range (rad)          : 0 ~ 2π
-#
-# place_target:
-#   - 목표 drop 위치 분포 (고정/랜덤 여부 미결정)
-
-
-# -----------------------------------------------------------------------------
-# TODO (값 확정 전 필요 정보)
-# -----------------------------------------------------------------------------
-# [ ] 실기 RealSense 조명 환경 측정 (색온도/강도 중심값)
-# [ ] SO-101 Feetech STS3215 PD 게인/latency 실측
-# [ ] 대상 물체 종류 확정 후 mass/friction 중심값
-# [ ] 캘리브레이션 결과로 카메라 FOV/위치 중심값 확정
-# [ ] 검증 held-out 평가용 별도 DR 범위 분리 정의
+# held_out_eval      — 검증용 별도 DR 범위
+#   보류 사유: 학습 분포와 분리된 held-out 평가 범위는 평가 스크립트에서
+#   이 파일을 오버라이드하는 방식으로 다룬다.
+# =============================================================================

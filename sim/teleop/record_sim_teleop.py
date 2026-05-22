@@ -30,17 +30,30 @@ Isaac Sim teleop 기반 ACT 학습용 Sim 시연 데이터 수집 (Isaac Sim 직
   4. deploy/calibration/home_pose.yaml,
      deploy/config/label_vocab.yaml, sim/config/{multi_target_scenes,dr_config}.yaml
 
-설계 결정 ([D1]~[D9] 모두 확정 — README "Sim teleop 수집" 표 참조):
-  D1 로컬 통합·직접 API    D2 SceneManager 가 USD 스테이지 직접 조작
-  D3 plain deg↔rad         D4 ROS2 Action Graph 불필요
-  D5 자동 분포 타겟 선택    D6 gripper 0~100% ↔ -10°~100°
-  D7 home_pose.yaml 초기자세  D8 fps=30  D9 embedding placeholder
+설계 결정 [D1]~[D9] — 모두 확정 (이전 README "Sim teleop 수집" 표에서 이관):
+  D1 로컬 통합 — Isaac Sim·SO-101 Leader·본 스크립트를 한 Ubuntu 머신에서
+     실행. 본 스크립트는 Isaac Sim Python 내에서 돌고, Leader 는 LeRobot SDK
+     로 직접 read, follower·카메라·관절은 Isaac Sim API 로 직접 접근한다.
+  D2 SceneManager 가 Isaac Sim API 직접 호출로 multi-target 씬 구성 + DR
+     적용 (D1 귀결 — ROS2 서비스/동반 스크립트 불필요).
+  D3 observation.state 변환 — arm 은 plain deg↔rad, gripper 는 %-매핑,
+     affine 불필요. round-trip 검증.
+  D4 ROS2 Action Graph 불필요 — D1=로컬 통합으로 녹화가 Isaac Sim 직접 API
+     를 쓰므로 ROS2 Action Graph 확장이 무효화된다.
+  D5 자동 분포 보장 — TargetSelector 가 multi/single 비율·장면·타겟 카테고리
+     를 누적 분포로 균형 배분해 multi-target shortcut 을 코드로 방지한다.
+  D6 gripper 0~100% ↔ -10°~100° (USD joint limit 으로 확인).
+  D7 sim follower 초기 자세 — deploy/calibration/home_pose.yaml 재사용,
+     set_joint_positions 강제 + USD limit clamp.
+  D8 fps=30 (Real record_real_teleop.py 와 일치), 에피소드 길이는 작업자
+     'q' 종료.
+  D9 language_embedding — 녹화 시 placeholder zero, 수집 후
+     generate_language_labels.py 가 채운다.
 
-상태 — 스켈레톤. 핵심 로직 미구현(NotImplementedError):
-  - SceneManager.apply_domain_randomization : DR (dr_config.yaml 스키마 확정 필요)
-  - select_episode_target : 자동 분포 보장 로직 (D5)
-  ※ SceneManager 의 객체 배치(setup_episode_scene/reset)는 구현 완료.
-  SimInterface 의 Isaac Sim API 호출은 5.1 기준 best-effort — 실기 검증 필요.
+상태 — 핵심 로직 구현 완료. SimInterface(Isaac Sim 래퍼)·SceneManager(객체 배치
+·DR)·TargetSelector(자동 분포 타겟 선택, D5) 모두 구현됨. Isaac Sim 5.1 API
+호출은 best-effort 이므로 실기 검증 필요. DR 의 texture/friction/pd_gain/
+observation_noise 는 미구현(dr_config.yaml 주석 — 의도적 보류).
 """
 from __future__ import annotations
 
@@ -155,7 +168,7 @@ from isaacsim.core.utils.stage import open_stage, get_current_stage  # noqa: E40
 from isaacsim.core.utils.types import ArticulationAction      # noqa: E402
 from isaacsim.sensors.camera import Camera                    # noqa: E402
 
-from pxr import Gf, Sdf, Usd, UsdGeom                         # noqa: E402
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics     # noqa: E402
 
 # LeRobot — Isaac Sim python 환경에 설치돼 있어야 함 (전제조건 1)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset                  # noqa: E402
@@ -376,29 +389,277 @@ def _sim_jointpos_to_sdk(positions_rad) -> np.ndarray:
 # 타겟 선택 / 라벨 메타데이터
 # ──────────────────────────────────────────────
 
-def select_episode_target(scene_cfg: SceneConfig, vocab: LabelVocab,
-                          episode_idx: int, rng: np.random.Generator) -> Dict[str, str]:
-    """
-    이번 에피소드의 장면 + 타겟 객체를 선택하고 canonical 라벨을 만든다.
+# Sim 자동 라벨링에 쓰는 절대 영역 spatial — vocab spatial_qualifiers 의 부분집합.
+# 관계형("next to the X")은 작업자 수동 라벨용이라 자동 도출에서 제외한다.
+REGION_SPATIALS: Dict[str, str] = {
+    'left':   'on the left side of the table',
+    'right':  'on the right side of the table',
+    'center': 'in the center of the table',
+    'front':  'in front of the robot',
+    'back':   'at the back of the table',
+}
 
-    Returns (SceneManager·record_episode 가 소비하는 계약):
+
+def _category_of(wrapper_name: str) -> str:
+    """래퍼 USD 파일명 prefix = 카테고리 (can_master_chef.usd → 'can')."""
+    return Path(wrapper_name).stem.split('_')[0]
+
+
+def _frac(value: float, rng_pair) -> float:
+    """value 를 [lo,hi] 구간 내 정규화 위치 [0,1] 로 — 구간 밖은 clamp."""
+    lo, hi = float(rng_pair[0]), float(rng_pair[1])
+    if hi <= lo:
+        return 0.5
+    return min(1.0, max(0.0, (float(value) - lo) / (hi - lo)))
+
+
+class TargetSelector:
+    """
+    매 에피소드의 장면·배치 객체·grasp 타겟을 자동 선택한다 ([D5]).
+
+    [D5] 자동 분포 보장 — multi-target shortcut learning 을 막기 위해 누적 분포를
+    추적하며 선택을 배분한다:
+      - scene multi/single 비율을 multi_target_scenes.yaml 의 multi_target_ratio
+        로 수렴시킨다 (commit 된 에피소드 기준 결정적 밸런싱).
+      - scene·타겟 카테고리는 최소 사용분을 우선 선택해 다양성을 강제한다.
+      - spatial 다양성은 SceneManager 의 무작위 배치에서 자연히 확보된다
+        (별도 카운트 불요).
+
+    2단계 사용 — 객체 배치 전/후로 나뉜다:
+      1. select(episode_idx, rng)            장면·객체·타겟 결정 (배치 전).
+      2. SceneManager.setup_episode_scene()  실제 (x,y) 배치.
+      3. finalize(target, placements)        실 배치 좌표로 spatial·canonical 확정.
+    저장에 성공하면 commit(target) 으로 누적 분포에 반영한다 (재촬영·폐기분 제외).
+
+    select() 가 채우는 target 계약 (SceneManager·record_episode 가 소비):
         {
+          'episode': int, 'domain': str,
           'scene':         <multi_target_scenes.yaml scene name>,
-          'objects':       [<래퍼 USD 파일명>, ...],   # 이 에피소드에 배치할 객체
-          'target_object': <objects 중 grasp 대상 래퍼 파일명>,
-          'object': <범주>, 'attribute': ..., 'spatial': ...,
-          'canonical': <자연어 라벨>, 'domain': ..., 'episode': <int>,
+          'objects':       [<래퍼 USD 파일명>, ...],   # setup_episode_scene 입력
+          'target_object': <objects 중 grasp 대상 래퍼>,
+          'target_slot':   <objects 내 인덱스>,
+          'object':        <vocab object 명사 = 카테고리>,
+          'attribute':     None,                       # [Q1] Gemma 후처리가 채움
+          'multi_target':  bool,
+          'spatial':   None,    # finalize 가 채움
+          'canonical': None,    # finalize 가 채움
         }
-    'objects' 가 SceneManager.setup_episode_scene 의 입력이다.
-
-    [D5] 자동 분포 보장 — multi-target shortcut 방지 가이드라인(같은 객체 다른
-    spatial ≥30%, 한 장면 후보 2+ 다른 라벨 ≥40% 등)을 만족하도록 누적 분포를
-    추적하며 장면/타겟을 배분한다.
+    finalize() 후 spatial/canonical 이 확정된다. canonical 은 [Q1] 결정대로
+    "the {object} {spatial}" — {attribute}(색)는 Sim 객체가 고정 YCB 메시이므로
+    generate_language_labels.py(Gemma)가 렌더 이미지를 보고 채운다.
     """
-    raise NotImplementedError(
-        '[D5] 자동 분포 보장 타겟 선택 미구현 — 누적 분포 추적 + '
-        'multi_target_scenes.yaml(스키마 미확정) 기반 장면/타겟 배분 필요.'
-    )
+
+    def __init__(self, scene_cfg: SceneConfig, vocab: LabelVocab):
+        self.scene_cfg = scene_cfg
+        self.vocab = vocab
+        self._scenes: List[dict] = list(scene_cfg.scenes)
+        self._ratio = float(scene_cfg.multi_target_ratio)
+
+        # 객체 라이브러리 스캔 — 카테고리(파일명 prefix)별 래퍼 USD 목록
+        lib = Path(scene_cfg.object_library)
+        if not lib.is_dir():
+            raise FileNotFoundError(
+                f'object_library 디렉터리 없음: {lib} — '
+                'sim/scene_setup/setup_recycling_objects.py 를 먼저 실행할 것.'
+            )
+        self._by_category: Dict[str, List[str]] = {}
+        for f in sorted(lib.glob('*.usd')):
+            self._by_category.setdefault(_category_of(f.name), []).append(f.name)
+
+        # scene 을 multi-target(객체 2+) / single-target 으로 분류
+        self._multi_scenes: List[dict] = []
+        self._single_scenes: List[dict] = []
+        for sc in self._scenes:
+            (self._multi_scenes if self._scene_total(sc) >= 2
+             else self._single_scenes).append(sc)
+
+        self._validate(vocab)
+
+        # 누적 분포 — commit 된(저장·유지된) 에피소드만 카운트
+        self._n_multi = 0
+        self._n_single = 0
+        self._scene_counts: Dict[str, int] = {sc['name']: 0 for sc in self._scenes}
+        self._target_cat_counts: Dict[str, int] = {c: 0 for c in self._by_category}
+
+    # ── 검증 ─────────────────────────────────────────
+
+    @staticmethod
+    def _scene_total(scene: dict) -> int:
+        return sum(int(o.get('count', 1)) for o in (scene.get('objects') or []))
+
+    def _validate(self, vocab: LabelVocab) -> None:
+        """scene 카테고리 ↔ 래퍼 라이브러리 ↔ label_vocab 동기화 검증 ([D5])."""
+        if not self._scenes:
+            raise ValueError('multi_target_scenes.yaml 에 scene 정의가 없음.')
+        scene_cats = set()
+        for sc in self._scenes:
+            objs = sc.get('objects') or []
+            if not objs:
+                raise ValueError(f"scene '{sc.get('name')}' 에 objects 가 없음.")
+            for o in objs:
+                scene_cats.add(o['category'])
+        for c in sorted(scene_cats):
+            if c not in self._by_category:
+                raise RuntimeError(
+                    f"scene 카테고리 '{c}' 의 래퍼가 object_library 에 없음 — "
+                    'setup_recycling_objects.py 의 MAPPING 과 파일명 prefix 확인.'
+                )
+            if c not in vocab.objects:
+                raise RuntimeError(
+                    f"scene 카테고리 '{c}' 가 label_vocab 도메인 '{vocab.domain}' "
+                    'objects 에 없음 — multi_target_scenes.yaml 과 '
+                    'label_vocab.yaml 의 객체 어휘를 동기화할 것.'
+                )
+        for s in REGION_SPATIALS.values():
+            if s not in vocab.spatials:
+                raise RuntimeError(
+                    f"label_vocab spatial_qualifiers 에 '{s}' 없음 — "
+                    'Sim 자동 라벨링에 필요한 영역 spatial 이 누락됨.'
+                )
+
+    # ── 공개 API ─────────────────────────────────────
+
+    def select(self, episode_idx: int, rng: np.random.Generator) -> Dict:
+        """이번 에피소드의 장면·배치 객체·grasp 타겟 결정 (배치 전 1단계)."""
+        scene = self._pick_scene(rng)
+        objects, slot_cats = self._expand_objects(scene, rng)
+        target_slot = self._pick_target_slot(slot_cats, rng)
+        return {
+            'episode':       int(episode_idx),
+            'domain':        self.vocab.domain,
+            'scene':         scene['name'],
+            'objects':       objects,
+            'target_object': objects[target_slot],
+            'target_slot':   target_slot,
+            'object':        slot_cats[target_slot],
+            'attribute':     None,                       # [Q1] Gemma 후처리
+            'multi_target':  len(objects) >= 2,
+            'spatial':       None,                       # finalize 가 채움
+            'canonical':     None,                       # finalize 가 채움
+        }
+
+    def finalize(self, target: Dict, placements: List[Dict]) -> None:
+        """실 배치 좌표(placements)로 spatial·canonical 을 확정 (배치 후 3단계)."""
+        slot = target['target_slot']
+        if slot >= len(placements):
+            raise RuntimeError(
+                f'placements({len(placements)}) 가 target_slot({slot}) 보다 적음.')
+        tp = placements[slot]
+        tx, ty = float(tp['x']), float(tp['y'])
+
+        # 같은 카테고리 형제 = 혼동 가능 객체 → spatial 이 반드시 변별해야 한다
+        target_cat = target['object']
+        siblings = [
+            (float(p['x']), float(p['y']))
+            for i, p in enumerate(placements)
+            if i != slot and _category_of(target['objects'][i]) == target_cat
+        ]
+        region = self._disambiguating_region((tx, ty), siblings) \
+            if siblings else None
+        if region is None:                               # 형제 없음 → 영역 기반
+            spawn = self.scene_cfg.placement['spawn_region']
+            region = self._region_of(_frac(tx, spawn['x_range']),
+                                     _frac(ty, spawn['y_range']))
+        spatial = REGION_SPATIALS[region]
+        target['spatial'] = spatial
+        target['canonical'] = f"the {target['object']} {spatial}"
+
+    def commit(self, target: Dict) -> None:
+        """저장 성공한 에피소드를 누적 분포에 반영 (재촬영·폐기분은 호출 안 함)."""
+        if target.get('multi_target'):
+            self._n_multi += 1
+        else:
+            self._n_single += 1
+        self._scene_counts[target['scene']] = \
+            self._scene_counts.get(target['scene'], 0) + 1
+        cat = target['object']
+        self._target_cat_counts[cat] = self._target_cat_counts.get(cat, 0) + 1
+
+    # ── 내부 — 선택 ──────────────────────────────────
+
+    def _pick_scene(self, rng: np.random.Generator) -> dict:
+        """multi_target_ratio 로 수렴하게 scene-type 결정 후 최소 사용 scene 선택."""
+        total = self._n_multi + self._n_single
+        if not self._multi_scenes:
+            want_multi = False
+        elif not self._single_scenes:
+            want_multi = True
+        elif total == 0:
+            want_multi = bool(rng.random() < self._ratio)
+        else:
+            want_multi = (self._n_multi / total) < self._ratio
+        group = self._multi_scenes if want_multi else self._single_scenes
+        # 최소 commit 사용 scene 우선 (random tiebreak)
+        min_used = min(self._scene_counts[sc['name']] for sc in group)
+        cands = [sc for sc in group
+                 if self._scene_counts[sc['name']] == min_used]
+        return cands[int(rng.integers(len(cands)))]
+
+    def _expand_objects(self, scene: dict,
+                        rng: np.random.Generator) -> Tuple[List[str], List[str]]:
+        """scene 의 (category,count) 명세를 구체 래퍼 USD 목록으로 전개."""
+        objects: List[str] = []
+        slot_cats: List[str] = []
+        for spec in scene['objects']:
+            cat = spec['category']
+            count = int(spec.get('count', 1))
+            pool = self._by_category[cat]
+            replace = count > len(pool)   # 래퍼가 모자라면 중복 허용 (가능하면 distinct)
+            idx = rng.choice(len(pool), size=count, replace=replace)
+            for i in np.atleast_1d(idx):
+                objects.append(pool[int(i)])
+                slot_cats.append(cat)
+        return objects, slot_cats
+
+    def _pick_target_slot(self, slot_cats: List[str],
+                          rng: np.random.Generator) -> int:
+        """타겟 카테고리 누적 사용분이 가장 적은 슬롯을 우선 선택."""
+        present = sorted(set(slot_cats))
+        min_used = min(self._target_cat_counts.get(c, 0) for c in present)
+        cand_cats = [c for c in present
+                     if self._target_cat_counts.get(c, 0) == min_used]
+        chosen_cat = cand_cats[int(rng.integers(len(cand_cats)))]
+        slots = [i for i, c in enumerate(slot_cats) if c == chosen_cat]
+        return slots[int(rng.integers(len(slots)))]
+
+    # ── 내부 — spatial 도출 ──────────────────────────
+
+    @staticmethod
+    def _disambiguating_region(target_xy: Tuple[float, float],
+                               siblings: List[Tuple[float, float]]
+                               ) -> Optional[str]:
+        """
+        같은 카테고리 형제와 target 을 변별하는 영역 spatial 키를 도출.
+
+        형제와 더 크게 벌어진 축을 채택하고, 그 축에서 target 이 모든 형제보다
+        한쪽 극단일 때만 해당 region 을 반환한다 (아니면 None → 영역 fallback).
+        축 규약: x+ = 로봇에서 멀어짐(back), y+ = 로봇 기준 왼쪽(left).
+        ⚠️ base_scene.usd 실측 후 규약이 어긋나면 아래 부호를 뒤집을 것.
+        """
+        tx, ty = target_xy
+        max_dx = max(abs(tx - sx) for sx, _ in siblings)
+        max_dy = max(abs(ty - sy) for _, sy in siblings)
+        if max_dy >= max_dx:
+            if all(ty > sy for _, sy in siblings):
+                return 'left'
+            if all(ty < sy for _, sy in siblings):
+                return 'right'
+        else:
+            if all(tx < sx for sx, _ in siblings):
+                return 'front'
+            if all(tx > sx for sx, _ in siblings):
+                return 'back'
+        return None
+
+    @staticmethod
+    def _region_of(fx: float, fy: float) -> str:
+        """spawn_region 내 정규화 위치(fx,fy ∈ [0,1])를 영역 spatial 키로 매핑."""
+        near, far = 0.34, 0.66
+        if near <= fx <= far and near <= fy <= far:
+            return 'center'
+        if abs(fy - 0.5) >= abs(fx - 0.5):
+            return 'left' if fy >= 0.5 else 'right'
+        return 'back' if fx >= 0.5 else 'front'
 
 
 def _resolve_labels_jsonl(args: SimRecordArgs,
@@ -527,8 +788,8 @@ class SceneManager:
     객체는 `/World/Objects` 아래에 래퍼 USD 를 reference 하여 생성하고,
     reset() 으로 다음 에피소드 전에 제거한다.
 
-    DR(apply_domain_randomization)은 dr_config.yaml 스키마가 별도로 확정돼야
-    구현 가능 — 현재 미구현.
+    DR(apply_domain_randomization)은 dr_config.yaml 기준으로 조명·카메라·질량을
+    무작위화한다. texture/friction/pd_gain/노이즈는 미구현 (dr_config.yaml 주석).
     """
 
     OBJECTS_ROOT = '/World/Objects'
@@ -552,12 +813,28 @@ class SceneManager:
         # 배치 객체 컨테이너 Xform
         UsdGeom.Xform.Define(self.sim.stage, self.OBJECTS_ROOT)
 
+        # DR — 기동 시 베이스 값 1회 캡처 (에피소드 누적 drift 방지)
+        self._dr = dr_cfg.raw or {}
+        self._light_bases = self._capture_light_bases()
+        self._camera_focal_base = self._capture_camera_focal()
+        if (self._dr.get('lighting') or {}).get('enabled') and not self._light_bases:
+            print('[record_sim_teleop] 경고 — 씬에서 UsdLux 광원을 찾지 못함, '
+                  '조명 DR 무효.')
+        if (self._dr.get('camera') or {}).get('enabled') \
+           and self._camera_focal_base is None:
+            print(f'[record_sim_teleop] 경고 — {self.sim.args.camera_prim} 의 '
+                  'focalLength 를 읽지 못함, 카메라 DR 무효.')
+
     # ── 공개 API ─────────────────────────────────────
 
-    def setup_episode_scene(self, episode_idx: int, target: Dict) -> None:
+    def setup_episode_scene(self, episode_idx: int,
+                            target: Dict) -> List[Dict]:
         """
         target['objects'](배치할 래퍼 USD 파일명 리스트)를 spawn_region 안에
-        배치한다. target 계약은 select_episode_target 의 docstring 참조.
+        배치한다. target 계약은 TargetSelector.select 의 docstring 참조.
+
+        Returns: 슬롯 순서의 배치 기록 [{'slot','wrapper','prim_path','x','y'}, ...]
+                 — TargetSelector.finalize 가 spatial 도출에 사용한다.
 
         NOTE: 동적으로 추가한 rigid body 는 이후 world.step() 에서 PhysX 에
               등록된다 — record_episode 의 초기 안정화 스텝이 처리한다.
@@ -566,18 +843,36 @@ class SceneManager:
         if not wrappers:
             raise ValueError("target['objects'] (배치할 래퍼 목록)이 비어 있음.")
         placed_xy: List[Tuple[float, float]] = []
+        placements: List[Dict] = []
         for slot, wrapper_name in enumerate(wrappers):
             xy = self._sample_xy(placed_xy)
             placed_xy.append(xy)
-            self._placed.append(
-                self._place_object(wrapper_name, xy, episode_idx, slot))
+            prim_path = self._place_object(wrapper_name, xy, episode_idx, slot)
+            self._placed.append(prim_path)
+            placements.append({
+                'slot': slot, 'wrapper': wrapper_name, 'prim_path': prim_path,
+                'x': xy[0], 'y': xy[1],
+            })
+        return placements
 
     def apply_domain_randomization(self, episode_idx: int) -> None:
-        """dr_config.yaml 기준 조명·텍스처·FOV·질량·마찰·PD 게인·노이즈 무작위화."""
-        raise NotImplementedError(
-            '[D2-DR] DR 적용 미구현 — dr_config.yaml 스키마 확정 필요 '
-            '(placement 스키마와 별개 결정).'
-        )
+        """
+        dr_config.yaml 기준 도메인 무작위화 — setup_episode_scene 직후 호출.
+
+        각 섹션(lighting/camera/mass)은 선택적이며 키 부재 또는 enabled:false 면
+        건너뛴다. jitter 는 기동 시 캡처한 베이스 값(조명·카메라) 또는 래퍼 USD
+        의 baked 값(질량)에 곱해지므로 에피소드가 쌓여도 분포가 떠내려가지 않는다.
+        texture/friction/pd_gain/observation_noise 는 미구현 — dr_config.yaml 주석.
+        """
+        light_cfg = self._dr.get('lighting')
+        if isinstance(light_cfg, dict) and light_cfg.get('enabled', True):
+            self._randomize_lighting(light_cfg)
+        cam_cfg = self._dr.get('camera')
+        if isinstance(cam_cfg, dict) and cam_cfg.get('enabled', True):
+            self._randomize_camera(cam_cfg)
+        mass_cfg = self._dr.get('mass')
+        if isinstance(mass_cfg, dict) and mass_cfg.get('enabled', True):
+            self._randomize_mass(mass_cfg)
 
     def reset(self) -> None:
         """배치한 객체 prim 을 모두 제거 (다음 에피소드 준비)."""
@@ -645,6 +940,79 @@ class SceneManager:
             final_z = 2.0 * self._table_top_z - rng_box.GetMin()[2]
         xop.Set(Gf.Matrix4d().SetTransform(rot, Gf.Vec3d(x, y, final_z)))
         return prim_path
+
+    # ── DR 베이스 캡처 (기동 시 1회) ─────────────────
+
+    def _capture_light_bases(
+            self) -> Dict[str, Tuple[float, Tuple[float, float, float]]]:
+        """씬의 모든 UsdLux 광원 베이스 intensity/color 를 캡처."""
+        bases: Dict[str, Tuple[float, Tuple[float, float, float]]] = {}
+        for prim in self.sim.stage.Traverse():
+            if not prim.HasAPI(UsdLux.LightAPI):
+                continue
+            light = UsdLux.LightAPI(prim)
+            intensity = light.GetIntensityAttr().Get()
+            color = light.GetColorAttr().Get()
+            bases[str(prim.GetPath())] = (
+                float(intensity) if intensity is not None else 1.0,
+                tuple(color) if color is not None else (1.0, 1.0, 1.0),
+            )
+        return bases
+
+    def _capture_camera_focal(self) -> Optional[float]:
+        """camera_prim 의 베이스 focalLength 를 캡처 (카메라/속성 없으면 None)."""
+        prim = self.sim.stage.GetPrimAtPath(self.sim.args.camera_prim)
+        if not prim.IsValid() or not prim.IsA(UsdGeom.Camera):
+            return None
+        fl = UsdGeom.Camera(prim).GetFocalLengthAttr().Get()
+        return float(fl) if fl is not None else None
+
+    # ── DR 적용 (에피소드별) ─────────────────────────
+
+    def _randomize_lighting(self, cfg: dict) -> None:
+        """모든 광원의 intensity/color 를 베이스 값 * uniform 배율로 설정."""
+        i_lo, i_hi = cfg.get('intensity_mult', [1.0, 1.0])
+        c_lo, c_hi = cfg.get('color_jitter', [1.0, 1.0])
+        for path, (base_i, base_c) in self._light_bases.items():
+            prim = self.sim.stage.GetPrimAtPath(path)
+            if not prim.IsValid():
+                continue
+            light = UsdLux.LightAPI(prim)
+            light.GetIntensityAttr().Set(
+                base_i * float(self.rng.uniform(i_lo, i_hi)))
+            light.GetColorAttr().Set(Gf.Vec3f(
+                base_c[0] * float(self.rng.uniform(c_lo, c_hi)),
+                base_c[1] * float(self.rng.uniform(c_lo, c_hi)),
+                base_c[2] * float(self.rng.uniform(c_lo, c_hi)),
+            ))
+
+    def _randomize_camera(self, cfg: dict) -> None:
+        """camera_prim 의 focalLength 를 베이스 값 * uniform 배율로 설정."""
+        if self._camera_focal_base is None:
+            return
+        lo, hi = cfg.get('focal_length_mult', [1.0, 1.0])
+        prim = self.sim.stage.GetPrimAtPath(self.sim.args.camera_prim)
+        if not prim.IsValid():
+            return
+        UsdGeom.Camera(prim).GetFocalLengthAttr().Set(
+            self._camera_focal_base * float(self.rng.uniform(lo, hi)))
+
+    def _randomize_mass(self, cfg: dict) -> None:
+        """이번 에피소드 배치 객체의 MassAPI mass 를 baked 값 * uniform 배율로 설정.
+
+        객체는 매 에피소드 래퍼 USD 를 새로 reference 하므로 mass 어트리뷰트는
+        항상 baked 값에서 시작한다 — 별도 베이스 캡처가 필요 없다.
+        """
+        lo, hi = cfg.get('mult', [1.0, 1.0])
+        for prim_path in self._placed:
+            prim = self.sim.stage.GetPrimAtPath(prim_path)
+            if not prim.IsValid():
+                continue
+            mass_attr = UsdPhysics.MassAPI(prim).GetMassAttr()
+            base = mass_attr.Get() if mass_attr else None
+            if base is None or base <= 0.0:
+                continue
+            mass_attr.Set(float(base) * float(self.rng.uniform(lo, hi)))
 
 
 # ──────────────────────────────────────────────
@@ -742,7 +1110,7 @@ def record_episode(args:           SimRecordArgs,
                    leader:         SO101Leader,
                    dataset:        LeRobotDataset,
                    episode_idx:    int,
-                   target:         Dict[str, str],
+                   target:         Dict,
                    initial_pose:   List[float]) -> bool:
     """
     1개 에피소드 녹화 → 저장.
@@ -826,9 +1194,10 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
     print(f'[record_sim_teleop] config 로드 완료 (domain={args.domain})')
 
-    # 2) Isaac Sim 인터페이스 + 씬/DR 매니저
+    # 2) Isaac Sim 인터페이스 + 씬/DR 매니저 + 타겟 셀렉터
     sim = SimInterface(args)
     scene_manager = SceneManager(scene_cfg, dr_cfg, sim, rng)
+    selector = TargetSelector(scene_cfg, vocab)                  # [D5]
 
     leader: Optional[SO101Leader] = None
     try:
@@ -841,24 +1210,25 @@ def main() -> None:
         # 4) 에피소드 루프
         start_ep = dataset.num_episodes
         for ep in range(start_ep, start_ep + args.num_episodes):
-            target = select_episode_target(scene_cfg, vocab, ep, rng)   # [D5]
-            scene_manager.setup_episode_scene(ep, target)               # [D2]
-            scene_manager.apply_domain_randomization(ep)                # [D2]
-
             while True:
-                append_label_record(labels_jsonl, target)
+                # 선택([D5]) → 배치([D2]) → 배치 기반 라벨 확정 → DR([D2])
+                target = selector.select(ep, rng)
+                placements = scene_manager.setup_episode_scene(ep, target)
+                selector.finalize(target, placements)
+                scene_manager.apply_domain_randomization(ep)
+
                 saved = record_episode(args, sim, leader, dataset,
                                        ep, target, initial_pose)
                 retry = input(f'[ep {ep}] 다시 촬영할까요? (y/n): ').strip().lower()
+                scene_manager.reset()                            # 배치 객체 정리
                 if retry == 'y':
                     if saved:
                         dataset.delete_episode()
-                    target = select_episode_target(scene_cfg, vocab, ep, rng)
-                    scene_manager.setup_episode_scene(ep, target)
-                    scene_manager.apply_domain_randomization(ep)
-                else:
-                    break
-            scene_manager.reset()
+                    continue                                     # 같은 ep 재시도
+                if saved:
+                    selector.commit(target)                      # 누적 분포 반영
+                    append_label_record(labels_jsonl, target)
+                break
     finally:
         if leader is not None:
             try:

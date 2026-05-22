@@ -31,7 +31,7 @@ spatial_qualifiers:
   - "in the center of the table"
   - "in front of the robot"
   - "at the back of the table"
-  - "next to the bottle"
+  - "next to the plastic"
   - "next to the can"
   - "next to the paper"
   - "next to the book"
@@ -42,7 +42,7 @@ domains:
     objects:
       can:
         attributes: [red, blue, green, silver]
-      bottle:
+      plastic:
         attributes: [transparent, green, blue]
       paper:
         attributes: [white, crumpled, folded]

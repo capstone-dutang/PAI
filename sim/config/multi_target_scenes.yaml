@@ -2,7 +2,7 @@
 #
 # Sim teleop 데이터 수집(record_sim_teleop.py)의 multi-target 장면 구성.
 #   - placement : SceneManager 가 매 에피소드 객체를 배치하는 영역·규칙
-#   - scenes    : select_episode_target([D5])이 고르는 객체 카테고리 조합
+#   - scenes    : TargetSelector([D5])가 고르는 객체 카테고리 조합
 #
 # ACT shortcut learning 방지 — 한 장면에 후보 객체를 여럿 두고, 같은 시각
 # 입력에 다른 언어 명령으로 다른 행동을 하는 에피소드를 의도적으로 만든다.
@@ -36,19 +36,39 @@ placement:
   max_sample_attempts: 100
 
 # ── 장면 정의 ── 각 장면 = 한 에피소드에 배치할 객체 카테고리 조합.
-# count 만큼 해당 카테고리 래퍼에서 select_episode_target 이 구체 객체를 고른다.
+# count 만큼 해당 카테고리 래퍼에서 TargetSelector 가 구체 객체를 고른다.
+#
+# 씬 셋은 세 카테고리(can/plastic/paper)에 대칭으로 구성한다. TargetSelector 는
+# 한 장면에 실제로 놓인 카테고리 중에서만 grasp 타겟을 고를 수 있으므로, 씬
+# 셋이 비대칭이면(예: 같은-범주·단일 장면이 can 만 존재) 타겟이 그 카테고리로
+# 쏠린다. multi(후보 2+) · single 두 계층 모두 카테고리 대칭이어야 타겟 분포가
+# 고르게 된다.
 scenes:
-  - name: recycling_3cat          # 캔 + 플라스틱 + 종이 (multi-target)
+  # ── multi-target (후보 2+) ──
+  - name: recycling_3cat            # 캔 + 플라스틱 + 종이
     objects:
       - {category: can,     count: 1}
       - {category: plastic, count: 1}
       - {category: paper,   count: 1}
-  - name: recycling_2can          # 같은 범주 변별 (multi-target)
+  - name: recycling_2can            # 같은 범주 변별 — 캔
     objects:
       - {category: can, count: 2}
-  - name: recycling_single        # 단일 객체 (single-target)
+  - name: recycling_2plastic        # 같은 범주 변별 — 플라스틱
+    objects:
+      - {category: plastic, count: 2}
+  - name: recycling_2paper          # 같은 범주 변별 — 종이
+    objects:
+      - {category: paper, count: 2}
+  # ── single-target (후보 1) ──
+  - name: recycling_single_can      # 단일 객체 — 캔
     objects:
       - {category: can, count: 1}
+  - name: recycling_single_plastic  # 단일 객체 — 플라스틱
+    objects:
+      - {category: plastic, count: 1}
+  - name: recycling_single_paper    # 단일 객체 — 종이
+    objects:
+      - {category: paper, count: 1}
 
 # 전체 에피소드 중 multi-target(후보 2+) 장면 비율.
 multi_target_ratio: 0.6

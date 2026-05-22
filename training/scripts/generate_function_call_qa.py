@@ -73,7 +73,7 @@ FUNCTION_CALL_SYSTEM_PROMPT = (
     '      반환 형식 (엄격): "the {attribute} {object} {spatial}"\n'
     '      - 영어 고정, 5~15 단어\n'
     '      - attribute: 색/재질/크기 중 변별 가능한 것 1개\n'
-    '      - object:    can / bottle / paper / book 등 단일 명사\n'
+    '      - object:    can / plastic / paper / book 등 단일 명사\n'
     '      - spatial:   위치/관계 표현 (예: "on the right side of the table")\n'
     '      예: "the blue can on the right side of the table"\n'
     '\n'

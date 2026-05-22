@@ -85,7 +85,7 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 | 길이 | 5~15 단어 |
 | 필수 구성요소 | `attribute` (색/재질 등 변별 가능 1개), `object` (단일 명사), `spatial` (위치/관계 표현) |
 | 어휘 사전 | [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) — Sim/Real/배포 분포 일치 강제 |
-| 예시 | `"the blue can on the right side of the table"`, `"the transparent bottle next to the paper"` |
+| 예시 | `"the blue can on the right side of the table"`, `"the transparent plastic next to the paper"` |
 | 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
 
 이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_real_teleop.py`는 vocabulary 외 입력을 거부한다.
@@ -294,7 +294,8 @@ PAI/
 │   ├── scene_setup/                            # Isaac Sim Script Editor 씬 저작 스크립트
 │   │   ├── setup_sim_camera.py                 # RGB 카메라 셋업 (캘리브레이션→USD)
 │   │   ├── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
-│   │   └── setup_recycling_objects.py          # YCB 분리수거 객체 래퍼 USD 생성
+│   │   ├── setup_recycling_objects.py          # YCB 분리수거 객체 래퍼 USD 생성
+│   │   └── measure_placement.py                # placement 실측 (table_top_z·bin_exclusion)
 │   └── teleop/                                 # Isaac Sim teleop 데이터 수집
 │       ├── record_sim_teleop.py                # Sim teleop 시연 수집 (씬·DR·녹화 통합, 신규)
 │       ├── lerobot_to_rosbridge.py             # 실물 leader → EC2 rosbridge 브리지 (클라우드)
@@ -822,21 +823,35 @@ ACT가 언어 임베딩을 무시하고 시각 정보에만 의존하는 **short
 - 같은 객체 배치에 대해 다른 타겟 명령으로 여러 에피소드 생성 (예: "캔 집어" / "페트병 집어")
 - 카메라 시점도 일부 공유하여 RGB 입력만으로는 정답을 구분할 수 없게 함
 
-`sim/config/multi_target_scenes.yaml`로 장면 템플릿 정의:
+`sim/config/multi_target_scenes.yaml`로 장면·배치 규칙을 정의한다:
 
 ```yaml
-# sim/config/multi_target_scenes.yaml (예시)
-scenes:
-  - name: recycling_table_3objects
+# sim/config/multi_target_scenes.yaml (발췌)
+object_library: sim/assets/objects/recycling   # 래퍼 USD 디렉터리
+placement:                                     # SceneManager 배치 영역·규칙
+  spawn_region: {x_range: [0.15, 0.45], y_range: [-0.25, 0.25]}
+  table_top_z: 0.74
+  min_separation: 0.08
+scenes:                          # can/plastic/paper 대칭 — 총 7개 장면
+  - name: recycling_3cat       # 캔+플라스틱+종이 (multi-target)
     objects:
-      - {class: can,    color: [red, blue, green],  count: 1}
-      - {class: bottle, color: [transparent, green], count: 1}
-      - {class: paper,  color: [white],              count: 1}
-    target_rotation:
-      - "pick up the {color} {class}"
-      - "grab the {class} on the table"
-multi_target_ratio: 0.6   # 전체 에피소드 중 multi-target 장면 비율
+      - {category: can,     count: 1}
+      - {category: plastic, count: 1}
+      - {category: paper,   count: 1}
+  - name: recycling_2can       # 같은 범주 변별 (multi-target)
+    objects: [{category: can, count: 2}]
+  - name: recycling_single_can # 단일 객체 (single-target)
+    objects: [{category: can, count: 1}]
+  # 2plastic / 2paper / single_plastic / single_paper (대칭 장면) 생략
+multi_target_ratio: 0.6        # multi-target 장면 목표 비율
 ```
+
+`TargetSelector`([D5])가 매 에피소드 이 정의에서 장면·배치 객체·grasp 타겟을
+자동 선택한다. multi/single 비율은 `multi_target_ratio`로 수렴시키고, 장면·타겟
+카테고리는 누적 사용분이 가장 적은 것을 우선 골라 다양성을 강제한다. grasp 타겟의
+자연어 라벨은 실제 배치 좌표에서 `spatial`을 도출해 `"the {object} {spatial}"`로
+만들며, `{attribute}`(색)는 Sim 객체가 고정 YCB 메시이므로
+`generate_language_labels.py`(Gemma)가 렌더 이미지를 보고 채운다.
 
 ### 언어 라벨링 (Gemma + 외부 LLM 혼합)
 
@@ -900,7 +915,11 @@ python sim/generate_language_labels.py \
 
 ### Domain Randomization 항목
 
-조명·텍스처·카메라 FOV / 질량·마찰·PD 게인 / joint·이미지 노이즈.
+`SceneManager.apply_domain_randomization`이 [`sim/config/dr_config.yaml`](sim/config/dr_config.yaml)
+기준으로 매 에피소드 `setup_episode_scene` 직후 적용한다. 구현·활성: **조명**
+(intensity/color), **카메라 focalLength**, **객체 질량**. jitter 는 기동 시
+캡처한 베이스 값(또는 래퍼 USD 의 baked mass)에 곱해 에피소드 누적 drift 를 막는다.
+보류(스키마 메모만): 텍스처·마찰·PD 게인·관측 노이즈 — 사유는 `dr_config.yaml` 주석.
 depth는 ACT 학습에 사용되지 않으므로 depth 노이즈 DR은 제거됨.
 
 ---
@@ -966,10 +985,10 @@ datasets = [
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
-| `sim/teleop/record_sim_teleop.py` | `SceneManager`(multi-target 씬 구성·DR — [D2])·`select_episode_target`(자동 분포 — [D5]) 본체. `SimInterface` 의 Isaac Sim 5.1 API 호출은 실기 검증 필요 (CLI·`SimInterface` 구조·녹화 루프·D3 단위 변환·초기 자세 강제는 구현 완료) | Isaac Sim 5.1 python 에 lerobot 설치, `multi_target_scenes.yaml`/`dr_config.yaml` 스키마 확정 |
+| `sim/teleop/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
-| `sim/config/dr_config.yaml` | DR 파라미터 실측값 (조명·텍스처·FOV·질량·마찰·PD 게인) | 실기 측정 |
-| `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 (label_vocab.yaml과 동기화 필요) | 도메인 객체 결정 |
+| `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
+| `sim/config/multi_target_scenes.yaml` | placement 의 spawn_region·table_top_z·bin_exclusion 실측값 (현재 placeholder — Isaac Sim 에서 측정) | base_scene.usd 실측 |
 | `training/scripts/generate_qa_from_pdf.py` | PDF 추출 + LLM Q&A 생성 + 필터링 | 도메인 문서 수집 |
 | `training/scripts/generate_function_call_qa.py` | LLM 합성 본체 (시스템 프롬프트/vocab 로딩은 구현 완료) | 외부 LLM 클라이언트 |
 | `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 (description 형식 강제 명시 완료) | Sim 환경, ground truth 라벨러 |
@@ -1012,23 +1031,15 @@ datasets = [
 
 ### Sim teleop 수집 (`record_sim_teleop.py`) — [D1]~[D9] 확정
 
-설계 결정 [D1]~[D9]를 모두 확정했다. ID는 스크립트 재작성 시 참조용으로 유지한다.
-
-| # | 확정 내용 |
-|---|----------|
-| D1 | **로컬 통합** — Isaac Sim·SO-101 Leader·녹화 스크립트를 한 Ubuntu 머신에. `record_sim_teleop`은 Isaac Sim Python 내에서 실행, Leader는 LeRobot SDK 직접 read, follower·카메라·관절은 Isaac Sim API 직접 접근 |
-| D2 | `SceneManager`가 Isaac Sim API 직접 호출로 multi-target 씬 구성 + DR 적용 (D1 귀결 — ROS2 서비스/동반 스크립트 불필요) |
-| D3 | `observation.state` 변환 — arm은 plain deg↔rad, gripper는 %-매핑, affine 불필요. round-trip 검증 |
-| D4 | **불필요** — D1=로컬 통합으로 녹화가 Isaac Sim 직접 API를 쓰므로 ROS2 Action Graph 확장이 무효화 |
-| D5 | **자동 분포 보장** — `select_episode_target`이 multi-target shortcut 방지 가이드라인을 코드로 강제 |
-| D6 | gripper `0~100% ↔ -10°~100°` (USD joint limit 확인) |
-| D7 | sim follower 초기 자세 — `deploy/calibration/home_pose.yaml` 재사용, SetJointPositions 강제 + USD limit clamp |
-| D8 | `fps=30` (Real `record_real_teleop.py`와 일치), 에피소드 길이는 작업자 `'q'` 종료 |
-| D9 | `language_embedding` — 녹화 시 placeholder zero, 수집 후 `generate_language_labels.py`가 채움 |
+설계 결정 [D1]~[D9]는 모두 확정됐다. **확정 내용 전문은
+[`record_sim_teleop.py`](sim/teleop/record_sim_teleop.py) 파일 헤더 주석으로
+이관**했다 (결정과 코드를 한곳에서 관리). 본 문서 곳곳의 `[D1]`~`[D9]` 참조는
+그 주석의 항목과 대응한다.
 
 > `record_sim_teleop.py`는 위 [D1]~[D9] 확정안대로 Isaac Sim standalone 앱 +
-> 직접 API 설계로 재작성 완료. 남은 미구현은 `SceneManager`([D2])와
-> `select_episode_target`([D5]) 본체다 (미구현 항목 표 참조).
+> 직접 API 설계로 작성 완료. 핵심 로직(`SimInterface`·`SceneManager`·
+> `TargetSelector`)이 모두 구현됐고, 남은 것은 Isaac Sim 5.1 API 실기 검증과
+> `multi_target_scenes.yaml` placement 실측값 기입이다 (미구현 항목 표 참조).
 
 > **확정 완료** (이전 미확정 항목):
 > - 임베딩 모델: `paraphrase-multilingual-MiniLM-L12-v2` (D=384)
