@@ -857,27 +857,24 @@ augmentation으로 무작위 추출.
 
 ### 수집 절차
 
-Sim teleop은 Isaac Sim teleop 인프라 위에서 동작한다. 환경별 셋업 가이드:
+`record_sim_teleop.py`는 Isaac Sim standalone 앱으로 동작하며, **Isaac Sim·
+SO-101 Leader·녹화 스크립트가 한 Ubuntu 머신에 있는 로컬 통합 환경**을 전제한다
+([D1]). 환경 셋업(Isaac Sim 설치·URDF 임포트·씬 구성)은
+[`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md)
+참조. 스크립트는 Leader 를 LeRobot SDK 로 직접 읽고 follower·카메라·관절을 Isaac
+Sim API 로 직접 제어하며 (ROS2 미사용 — [D1]·[D4]), 매 에피소드 multi-target 씬
+구성 + DR 적용 → 녹화 → LeRobotDataset 저장을 담당한다.
 
-| 환경 | 셋업 가이드 |
-|------|------------|
-| 클라우드 (EC2 g6e.4xlarge) | [`sim/teleop/sim_cloud_teleop_setting.md`](sim/teleop/sim_cloud_teleop_setting.md) |
-| 로컬 (Isaac Sim 설치 PC) | [`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md) |
-
-teleop 미러링(Leader → Isaac Sim follower)이 검증된 상태에서 `record_sim_teleop.py`
-를 실행한다. 이 스크립트가 매 에피소드 multi-target 씬 구성 + DR 적용 → follower
-초기 자세 강제 → teleop 시연 녹화 → LeRobotDataset 저장을 담당한다.
+전제: Isaac Sim 의 python 환경에 lerobot 0.4.4 설치
+(`~/isaacsim/python.sh -m pip install "lerobot[feetech]==0.4.4"`).
 
 ```bash
-# 1. Sim teleop 시연 데이터 수집 (~500 에피소드)
-python sim/teleop/record_sim_teleop.py \
-  --teleop-port      COM5 \
-  --teleop-id        leader \
+# 1. Sim teleop 시연 데이터 수집 (~500 에피소드) — 반드시 Isaac Sim 의 python 으로 실행
+~/isaacsim/python.sh sim/teleop/record_sim_teleop.py \
+  --scene-usd        sim/scenes/base_scene.usd \
+  --teleop-port      /dev/ttyACM0 \
   --dataset-repo-id  myname/dataset_sim \
   --domain           recycling \
-  --label-vocab      deploy/config/label_vocab.yaml \
-  --scenes           sim/config/multi_target_scenes.yaml \
-  --dr-config        sim/config/dr_config.yaml \
   --num-episodes     500
 
 # 2. 각 에피소드에 Gemma + 외부 LLM 라벨 부여
@@ -889,17 +886,17 @@ python sim/generate_language_labels.py \
 ```
 
 > **단위 정합성**: `action`(Leader 관절값)은 Real 수집과 동일하게 LeRobot SDK
-> `.pos` 단위로 기록되므로 변환이 불필요하다. 반면 `observation.state`(Isaac Sim
-> follower 관절)는 Isaac Sim API가 rad 로 주므로, `record_sim_teleop.py`가 Real
-> `record_real_teleop.py`와 동일한 캘리브레이션 yaml 의 affine 변환을 적용해 SDK 단위로
-> 저장해야 한다. 단위가 어긋나면 같은 자세에 다른 라벨이 들어가 co-training이 망가진다.
+> `.pos` 단위로 기록되어 변환이 불필요하다. `observation.state`(Isaac Sim
+> follower 관절)는 Isaac Sim API 가 rad 로 주므로 `record_sim_teleop.py`가 SDK
+> `.pos` 단위로 변환한다 — [D3] 확정상 plain deg↔rad (affine 불필요). 단위가
+> 어긋나면 같은 자세에 다른 라벨이 들어가 co-training 이 망가진다.
 
 > **에피소드 시작 자세**: 매 에피소드 시작 시 follower 를
-> [`deploy/calibration/home_pose.yaml`](deploy/calibration/home_pose.yaml)(record_real_teleop.py
-> 가 캡처한 실물 follower rest 자세)로 강제한다. `record_sim_teleop.py`가 `/joint_reset`
-> 으로 발행하면 Isaac Sim 측이 SetJointPositions(kinematic teleport)로 그 자세에
-> 고정하므로 Sim/Real 의 에피소드 시작 자세가 일치한다. USD 가동범위를 넘는 관절값은
-> USD limit 으로 clamp 된다.
+> [`deploy/calibration/home_pose.yaml`](deploy/calibration/home_pose.yaml)
+> (record_real_teleop.py 가 캡처한 실물 follower rest 자세)로 강제한다.
+> `record_sim_teleop.py`가 Isaac Sim `set_joint_positions` API 로 직접 고정하며
+> (위치 + 속도 0 + drive target 동시 적용) Sim/Real 의 에피소드 시작 자세가
+> 일치한다. USD 가동범위를 넘는 관절값은 USD limit 으로 clamp 된다.
 
 ### Domain Randomization 항목
 
@@ -969,7 +966,7 @@ datasets = [
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
-| `sim/teleop/record_sim_teleop.py` | `SceneManager`(multi-target 씬 구성·DR), `select_episode_target`, `observation.state` 단위 변환, cloud 모드 — [D1]~[D5] 본체 (CLI·녹화 루프·home_pose 초기 자세 강제는 구현 완료) | SO-101 USD 변환, Isaac Sim teleop 인프라([D4]) |
+| `sim/teleop/record_sim_teleop.py` | `SceneManager`(multi-target 씬 구성·DR — [D2])·`select_episode_target`(자동 분포 — [D5]) 본체. `SimInterface` 의 Isaac Sim 5.1 API 호출은 실기 검증 필요 (CLI·`SimInterface` 구조·녹화 루프·D3 단위 변환·초기 자세 강제는 구현 완료) | Isaac Sim 5.1 python 에 lerobot 설치, `multi_target_scenes.yaml`/`dr_config.yaml` 스키마 확정 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | DR 파라미터 실측값 (조명·텍스처·FOV·질량·마찰·PD 게인) | 실기 측정 |
 | `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 (label_vocab.yaml과 동기화 필요) | 도메인 객체 결정 |
@@ -1029,10 +1026,9 @@ datasets = [
 | D8 | `fps=30` (Real `record_real_teleop.py`와 일치), 에피소드 길이는 작업자 `'q'` 종료 |
 | D9 | `language_embedding` — 녹화 시 placeholder zero, 수집 후 `generate_language_labels.py`가 채움 |
 
-> ⚠️ 현재 `record_sim_teleop.py` 스켈레톤은 [D1] 미확정 시점의 **ROS2/rclpy 설계**다.
-> [D1]=로컬 통합 확정에 따라 **Isaac Sim Python 내장 실행 + 직접 API 설계로 재작성**이
-> 필요하다 — 스크립트의 "확정 필요 항목" 블록·`SimRecordHelperNode`·CLI(`--mode` 등)는
-> 재작성 시 함께 정리된다 (미구현 항목).
+> `record_sim_teleop.py`는 위 [D1]~[D9] 확정안대로 Isaac Sim standalone 앱 +
+> 직접 API 설계로 재작성 완료. 남은 미구현은 `SceneManager`([D2])와
+> `select_episode_target`([D5]) 본체다 (미구현 항목 표 참조).
 
 > **확정 완료** (이전 미확정 항목):
 > - 임베딩 모델: `paraphrase-multilingual-MiniLM-L12-v2` (D=384)
