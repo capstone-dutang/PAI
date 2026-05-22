@@ -106,6 +106,20 @@ wrist_flex, wrist_roll, gripper
 - **씬 USD**: `/home/ubuntu/Documents/so101_scene_v2.usd` (또는 비슷)
 - **저장 위치**: 로컬 디스크 (Omniverse Nucleus 미사용)
 
+### 2-7. RGB 카메라 셋업
+
+실기 RealSense 캘리브레이션(`deploy/calibration/camera_intrinsics.yaml` /
+`camera_robot_transform.yaml`)으로 Isaac Sim USD 에 `Camera_RGB` prim 을 생성·
+배치한다. Sim/Real 카메라의 intrinsics·위치를 일치시키는 단계이며,
+`record_sim_teleop.py` 가 구독할 카메라 토픽 발행(README [D4])의 prim 전제다.
+
+1. URDF 임포트(Part 2) 완료 + 캘리브레이션 yaml 2개 준비 확인
+2. Script Editor 에서 [`setup_sim_camera.py`](setup_sim_camera.py) 실행
+   - 파일 상단 "사용자 설정" 블록의 yaml 경로(EC2: `/home/ubuntu/PAI/...`)와
+     `SO101_BASE_PRIM` / `CAMERA_PRIM` 경로를 스테이지에 맞게 확인
+3. Viewport → Cameras → `Camera_RGB` 로 시점 전환해 화각·위치 검증
+4. 셋업 후 씬 USD 재저장 (2-6)
+
 ---
 
 ## Part 3: Action Graph — 텔레오퍼레이션
