@@ -856,8 +856,8 @@ Sim teleop은 Isaac Sim teleop 인프라 위에서 동작한다. 환경별 셋�
 | 로컬 (Isaac Sim 설치 PC) | [`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md) |
 
 teleop 미러링(Leader → Isaac Sim follower)이 검증된 상태에서 `record_sim_teleop.py`
-를 실행한다. 이 스크립트가 매 에피소드 multi-target 씬 구성 + DR 적용 → teleop 시연
-녹화 → LeRobotDataset 저장을 담당한다.
+를 실행한다. 이 스크립트가 매 에피소드 multi-target 씬 구성 + DR 적용 → follower
+초기 자세 강제 → teleop 시연 녹화 → LeRobotDataset 저장을 담당한다.
 
 ```bash
 # 1. Sim teleop 시연 데이터 수집 (~500 에피소드)
@@ -884,6 +884,13 @@ python sim/generate_language_labels.py \
 > follower 관절)는 Isaac Sim API가 rad 로 주므로, `record_sim_teleop.py`가 Real
 > `record_teleop.py`와 동일한 캘리브레이션 yaml 의 affine 변환을 적용해 SDK 단위로
 > 저장해야 한다. 단위가 어긋나면 같은 자세에 다른 라벨이 들어가 co-training이 망가진다.
+
+> **에피소드 시작 자세**: 매 에피소드 시작 시 follower 를
+> [`deploy/calibration/home_pose.yaml`](deploy/calibration/home_pose.yaml)(record_teleop.py
+> 가 캡처한 실물 follower rest 자세)로 강제한다. `record_sim_teleop.py`가 `/joint_reset`
+> 으로 발행하면 Isaac Sim 측이 SetJointPositions(kinematic teleport)로 그 자세에
+> 고정하므로 Sim/Real 의 에피소드 시작 자세가 일치한다. USD 가동범위를 넘는 관절값은
+> USD limit 으로 clamp 된다.
 
 ### Domain Randomization 항목
 
@@ -953,7 +960,7 @@ datasets = [
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
-| `sim/teleop/record_sim_teleop.py` | Sim teleop 녹화 루프, Isaac Sim 관측(RGB·joint) 구독, multi-target 씬 구성 + DR 적용, `observation.state` 단위 변환, LeRobotDataset 저장 | SO-101 USD 변환, Isaac Sim teleop 인프라(Action Graph) |
+| `sim/teleop/record_sim_teleop.py` | `SceneManager`(multi-target 씬 구성·DR), `select_episode_target`, `observation.state` 단위 변환, cloud 모드 — [D1]~[D5] 본체 (CLI·녹화 루프·home_pose 초기 자세 강제는 구현 완료) | SO-101 USD 변환, Isaac Sim teleop 인프라([D4]) |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | DR 파라미터 실측값 (조명·텍스처·FOV·질량·마찰·PD 게인) | 실기 측정 |
 | `sim/config/multi_target_scenes.yaml` | 도메인별 객체 셋 정의 (label_vocab.yaml과 동기화 필요) | 도메인 객체 결정 |
@@ -1008,10 +1015,10 @@ ID를 참조한다. 결정 시 README + 해당 스크립트를 함께 갱신한�
 | D1 | local/cloud 통신 방식 및 녹화 스크립트 실행 위치 (rclpy 직접 / rosbridge 경유) | `connect_leader`, `SimRecordHelperNode` |
 | D2 | Isaac Sim 씬·DR 제어 메커니즘 + `multi_target_scenes.yaml` / `dr_config.yaml` 스키마 | `SceneManager` |
 | D3 | `observation.state` 단위 변환 (Isaac Sim rad → LeRobot SDK `.pos`) | `_sim_jointstate_to_sdk_units`, follower 캘리브레이션 yaml |
-| D4 | Isaac Sim Action Graph 확장 — follower `joint_states` + 카메라 RGB 발행 | Isaac Sim teleop 셋업, 녹화 전제조건 |
+| D4 | Isaac Sim Action Graph 확장 — `joint_states`·카메라 RGB 발행 + `/joint_reset` → 원자적 SetJointPositions 핸들러(위치 + 속도 0 + drive target) | Isaac Sim teleop 셋업, 녹화 전제조건 |
 | D5 | 타겟 선택 전략 (작업자 수동 선택 / 자동 분포 보장) | `select_episode_target` |
 | D6 | gripper 매핑 상수 (Leader 0~100% ↔ rad, 현재 -10°~100°) | `_gripper_pct_to_rad` |
-| D7 | sim follower home pose 관절값 | `_load_home_pose_rad` |
+| D7 | sim follower 초기 자세 — **확정**: `deploy/calibration/home_pose.yaml`(record_teleop.py 캡처) 재사용, SetJointPositions 강제 + USD limit clamp | `load_initial_pose` |
 | D8 | 에피소드 길이 / fps (Real `record_teleop.py`와 일치) | CLI 기본값, ACT 학습 resample |
 | D9 | `language_embedding` 처리 (placeholder zero 후처리 — 현행 채택 / 녹화 중 즉시 임베딩) | `record_episode` |
 

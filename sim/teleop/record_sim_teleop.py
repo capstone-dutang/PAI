@@ -30,12 +30,15 @@ deploy/.../scripts/record_teleop.py 와 대칭 구조를 갖는다.
 전제조건:
   1. Isaac Sim teleop 인프라 구동 — sim/teleop/sim_{local,cloud}_teleop_setting.md
   2. Isaac Sim Action Graph 가 아래를 갖출 것 ([D4] — 현재 셋업 가이드엔 없음):
-       - /joint_command (JointState) 구독 → Articulation Controller
+       - /joint_command (JointState) 구독 → Articulation Controller (drive target)
+       - /joint_reset (JointState) 구독 → SetJointPositions (에피소드 시작 강제)
        - follower joint_states (JointState) 발행
        - 카메라 RGB (Image) 발행
   3. 실물 SO-101 Leader USB 포트 확인 + lerobot-calibrate 완료
   4. SO-101 follower 캘리브레이션 yaml (observation.state 단위 변환용, [D3])
   5. label_vocab.yaml / multi_target_scenes.yaml / dr_config.yaml 배치
+  6. deploy/calibration/home_pose.yaml — record_teleop.py 가 캡처한 실물 follower
+     rest 자세. 에피소드 시작 강제 자세로 재사용한다 ([D7]).
 
 CLI 사용 예:
   python sim/teleop/record_sim_teleop.py \\
@@ -104,9 +107,12 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 #         녹화 루프 중 stdin 에 'q'(또는 'Q') + Enter → 정상 종료.
 #         KeyboardInterrupt 도 같은 경로로 흡수. Linux/macOS 전용.
 #
-#   [S4] 에피소드 간 reset — 씬 재구성 + DR + follower home
-#         녹화 직후 SceneManager 가 multi-target 씬을 재구성하고 DR 을 다시
-#         적용한다. follower 는 home pose 로 복귀시킨다. ([D2], [D7])
+#   [S4] 에피소드 reset — 씬 재구성 + DR + follower 초기 자세 강제
+#         에피소드 시작 시 deploy/calibration/home_pose.yaml(실물 follower rest
+#         자세)을 읽어 /joint_reset 으로 발행하고, Isaac Sim 측이 SetJointPositions
+#         (kinematic teleport)로 follower 를 그 자세에 강제 고정한다 — drive target
+#         보간이 아니라 순간 고정이므로 매 에피소드가 동일한 초기 상태에서
+#         시작한다. 씬 재구성/DR 은 SceneManager 가 담당. ([D2], [D7])
 #
 #   [S5] fps
 #         기본 30Hz (--fps). Real record_teleop.py 의 fps 와 일치시켜야
@@ -145,8 +151,18 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 #
 #   [D4] Isaac Sim Action Graph 확장
 #         현재 teleop 셋업 가이드의 Action Graph 는 /joint_command 구독 +
-#         /clock 발행만 있음. follower joint_states 발행 + 카메라 RGB 발행
-#         그래프를 추가해야 본 스크립트가 관측을 받을 수 있다.
+#         /clock 발행만 있음. 아래를 추가해야 본 스크립트가 동작한다:
+#           - follower joint_states 발행 (observation.state 입력)
+#           - 카메라 RGB 발행 (observation.images.top 입력)
+#           - /joint_reset 구독 → 에피소드 시작 강제 자세 핸들러. 이 핸들러는
+#             한 물리 스텝 안에서 원자적으로 아래 3가지를 모두 적용해야 한다:
+#               (1) set_joint_positions(target)
+#               (2) set_joint_velocities(0)        — 잔여 속도 제거
+#               (3) Articulation drive target = target  — PD 목표 갱신
+#             (1) 만 적용하면 다음 물리 스텝에서 PD 가 직전 drive target
+#             (이전 /joint_command, 첫 reset 시 USD default)으로 팔을 끌어간다.
+#             표준 OmniGraph 노드만으로 3가지를 한 tick 에 묶기 어려우면
+#             Isaac Sim 측 Python 핸들러 또는 커스텀 노드를 쓴다.
 #
 #   [D5] 타겟 선택 전략 (select_episode_target)
 #         작업자 수동 선택(Real Option C 와 동일) vs 자동 분포 보장
@@ -157,8 +173,11 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 #         Leader 0~100% ↔ Isaac Sim gripper rad. 현재 브리지와 같은
 #         -10°~100° 범위를 쓰지만 실측 확정 필요.
 #
-#   [D7] sim follower home pose
-#         에피소드 간 복귀 자세(관절 rad 값). --home-pose-file 또는 상수.
+#   [D7] sim follower 초기 자세 — 확정
+#         에피소드 시작 시 deploy/calibration/home_pose.yaml(record_teleop.py 가
+#         캡처한 실물 follower rest 자세)을 읽어 /joint_reset → SetJointPositions
+#         로 강제한다. Sim/Real 의 에피소드 시작 자세가 일치하며 별도 측정이
+#         불필요하다. SDK .pos → rad 변환은 load_initial_pose 참조 ([D3] 연동).
 #
 #   [D8] 에피소드 길이 / fps
 #         프레임 수 목표와 fps 를 Real record_teleop.py 와 일치시킬 것.
@@ -184,6 +203,18 @@ SO101_JOINT_NAMES: List[str] = [
     'gripper',
 ]
 
+# Isaac Sim SO-101 USD (so101_new_calib) joint limit — degree.
+# Physics Inspector 실측값. 초기 자세 강제 시 arm 관절을 이 범위로 clamp 한다.
+# (실물 SO-101 은 가동범위가 약간 더 넓어 home_pose 가 한계를 넘어 측정될 수 있음)
+SO101_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
+    'shoulder_pan':  (-110.0,   110.0),
+    'shoulder_lift': (-100.0,   100.0),
+    'elbow_flex':    ( -96.83,   96.83),
+    'wrist_flex':    ( -95.0,    95.0),
+    'wrist_roll':    (-157.211, 162.789),
+    'gripper':       ( -10.0,   100.0),
+}
+
 # 이미지 기본값 (operational decision [S2])
 DEFAULT_IMG_H = 480
 DEFAULT_IMG_W = 640
@@ -191,15 +222,16 @@ DEFAULT_IMG_W = 640
 # LeRobot 데이터셋 카메라 채널 키 (Real record_teleop.py 와 일치 필수)
 CAMERA_KEY = 'observation.images.top'
 
-# 에피소드 간 follower home 복귀 시간 (operational decision [S4])
-RETURN_HOME_DURATION_S = 2.0
+# 에피소드 시작 강제 자세 적용 후 물리 안정화 대기 초 (operational decision [S4])
+RESET_SETTLE_S = 0.5
 
 # gripper 매핑 상수 ([D6] — 브리지 lerobot_to_rosbridge.py 와 동일값, 실측 확정 필요)
 GRIPPER_MIN_DEG = -10.0   # Leader 0%
 GRIPPER_MAX_DEG = 100.0   # Leader 100%
 
 # 기본 토픽 이름 ([D4] — Isaac Sim Action Graph 가 발행/구독해야 함)
-DEFAULT_JOINT_COMMAND_TOPIC = '/joint_command'   # 녹화 스크립트 → Isaac Sim
+DEFAULT_JOINT_COMMAND_TOPIC = '/joint_command'   # 녹화 → Isaac Sim (drive target)
+DEFAULT_JOINT_RESET_TOPIC   = '/joint_reset'     # 녹화 → Isaac Sim (SetJointPositions)
 DEFAULT_SIM_CAMERA_TOPIC    = '/camera/rgb'      # Isaac Sim → 녹화 스크립트
 DEFAULT_SIM_JOINTSTATE_TOPIC = '/joint_states'   # Isaac Sim follower 실제 상태
 
@@ -228,6 +260,7 @@ class SimRecordArgs:
     seed:                  int
     home_pose_file:        str
     joint_command_topic:   str
+    joint_reset_topic:     str
     sim_camera_topic:      str
     sim_jointstate_topic:  str
     ec2_ip:                str            # mode == 'cloud' 일 때만 사용 ([D1])
@@ -270,11 +303,13 @@ def parse_args() -> SimRecordArgs:
                    help='local: rclpy 직접 통신 / cloud: EC2 (rosbridge 경유) — [D1]')
     p.add_argument('--seed',            type=int, default=0,
                    help='DR / 타겟 선택 재현성 시드')
-    p.add_argument('--home-pose-file',  default='',
-                   help='sim follower home pose YAML 경로 ([D7]). 비어 있으면 '
-                        '내장 기본 자세 사용.')
+    p.add_argument('--home-pose-file',   default='deploy/calibration/home_pose.yaml',
+                   help='에피소드 시작 강제 자세 — record_teleop.py 가 캡처한 실물 '
+                        'follower home_pose.yaml 경로 ([D7]).')
     p.add_argument('--joint-command-topic',  default=DEFAULT_JOINT_COMMAND_TOPIC,
-                   help='녹화 스크립트 → Isaac Sim follower 구동 토픽')
+                   help='녹화 스크립트 → Isaac Sim follower 구동 토픽 (drive target)')
+    p.add_argument('--joint-reset-topic',    default=DEFAULT_JOINT_RESET_TOPIC,
+                   help='녹화 스크립트 → Isaac Sim SetJointPositions 강제 토픽 ([D4])')
     p.add_argument('--sim-camera-topic',     default=DEFAULT_SIM_CAMERA_TOPIC,
                    help='Isaac Sim 카메라 RGB 토픽 ([D4])')
     p.add_argument('--sim-jointstate-topic', default=DEFAULT_SIM_JOINTSTATE_TOPIC,
@@ -301,8 +336,9 @@ def parse_args() -> SimRecordArgs:
         embedding_dim        = a.embedding_dim,
         mode                 = a.mode,
         seed                 = a.seed,
-        home_pose_file       = os.path.expanduser(a.home_pose_file) if a.home_pose_file else '',
+        home_pose_file       = os.path.expanduser(a.home_pose_file),
         joint_command_topic  = a.joint_command_topic,
+        joint_reset_topic    = a.joint_reset_topic,
         sim_camera_topic     = a.sim_camera_topic,
         sim_jointstate_topic = a.sim_jointstate_topic,
         ec2_ip               = a.ec2_ip,
@@ -476,7 +512,8 @@ class SimRecordHelperNode(Node):
     """
     record_sim_teleop 의 ROS2 통신 헬퍼 노드 (mode='local' 기준).
 
-      - {joint_command_topic} publisher  → Isaac Sim follower 구동
+      - {joint_command_topic} publisher  → Isaac Sim follower 구동 (drive target)
+      - {joint_reset_topic}   publisher  → Isaac Sim SetJointPositions (강제 자세)
       - {sim_camera_topic}    subscriber → 카메라 RGB latest-only 캐시
       - {sim_jointstate_topic} subscriber → follower 실제 관절 상태 latest-only 캐시
 
@@ -502,6 +539,8 @@ class SimRecordHelperNode(Node):
 
         self._cmd_pub = self.create_publisher(
             JointState, args.joint_command_topic, 10)
+        self._reset_pub = self.create_publisher(
+            JointState, args.joint_reset_topic, 10)
         self.create_subscription(
             Image, args.sim_camera_topic, self._rgb_cb, sensor_qos)
         self.create_subscription(
@@ -520,12 +559,26 @@ class SimRecordHelperNode(Node):
         return self._latest_js
 
     def publish_joint_command(self, positions_rad: List[float]) -> None:
-        """SO101_JOINT_NAMES 순서의 rad 위치를 /joint_command 로 발행."""
+        """SO101_JOINT_NAMES 순서의 rad 위치를 /joint_command 로 발행 (drive target)."""
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = list(SO101_JOINT_NAMES)
         msg.position = [float(v) for v in positions_rad]
         self._cmd_pub.publish(msg)
+
+    def publish_joint_reset(self, positions_rad: List[float]) -> None:
+        """SO101_JOINT_NAMES 순서의 rad 위치를 /joint_reset 으로 발행.
+
+        velocity 0 을 함께 실어, Isaac Sim 측 핸들러가 위치 강제와 더불어
+        관절 속도도 0 으로 만들도록 의도를 명시한다 (잔여 속도 drift 방지).
+        Isaac Sim 측 /joint_reset 핸들러의 원자적 처리 요구사항은 [D4] 참조.
+        """
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = list(SO101_JOINT_NAMES)
+        msg.position = [float(v) for v in positions_rad]
+        msg.velocity = [0.0] * len(SO101_JOINT_NAMES)
+        self._reset_pub.publish(msg)
 
 
 # ──────────────────────────────────────────────
@@ -757,45 +810,114 @@ def _sim_rgb_to_array(msg: Image) -> np.ndarray:
     return np.ascontiguousarray(rgb, dtype=np.uint8)
 
 
-def _load_home_pose_rad(args: SimRecordArgs) -> List[float]:
+def load_initial_pose(path: str) -> List[float]:
     """
-    sim follower home pose (관절 rad) 결정 ([D7]).
+    에피소드 시작 강제 자세를 home_pose.yaml 에서 로드 → SO101_JOINT_NAMES
+    순서 rad 리스트.
 
-    --home-pose-file 이 있으면 로드, 없으면 내장 기본값.
+    실물 데이터 수집(record_teleop.py)이 캡처해 둔 follower rest 자세를 그대로
+    재사용한다 — Sim/Real 의 에피소드 시작 자세를 일치시키고 별도 측정을
+    생략한다 ([D7]). 파일 스키마는 robot_arm_pkg.utils.home_pose 와 동일:
+
+        positions:
+          shoulder_pan:  <float>   # LeRobot SDK .pos (arm: deg)
+          shoulder_lift: <float>
+          elbow_flex:    <float>
+          wrist_flex:    <float>
+          wrist_roll:    <float>
+          gripper:       <float>   # LeRobot SDK .pos (gripper: 0~100)
+
+    단위 변환 + clamp:
+      home_pose.yaml 의 arm 값은 LeRobot SDK .pos = degree 이고 Isaac Sim USD
+      joint 와 같은 degree 척도이다 → math.radians() 로 rad 변환. gripper 는
+      0~100% 라 _gripper_pct_to_rad() 로 변환한다 (teleop 브리지 /
+      _leader_action_to_joint_command 와 동일한 SDK→rad 규약).
+
+      실물 SO-101 은 sim USD 보다 가동범위가 약간 넓어, home_pose 캡처 시
+      관절이 USD 한계를 넘어 측정될 수 있다 (예: shoulder_lift -111° vs USD
+      한계 -100°). 이런 값을 그대로 SetJointPositions 하면 한계 밖이 되므로
+      arm 각 관절을 SO101_JOINT_LIMITS_DEG 로 clamp 하고, clamp 가 발생하면
+      경고를 출력한다.
     """
-    if args.home_pose_file and os.path.exists(args.home_pose_file):
-        with open(args.home_pose_file, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f) or {}
-        # NOTE: home_pose yaml 스키마 확정 필요 ([D7]).
-        raise NotImplementedError(
-            f'[D7] home_pose yaml 스키마 미확정 — {args.home_pose_file} 파싱 구현 필요.'
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f'home_pose.yaml 을 찾을 수 없음: {path}\n'
+            'record_teleop.py 가 생성한 ~/calibration/home_pose.yaml 을 '
+            'deploy/calibration/ 로 복사하거나 --home-pose-file 로 경로 지정.'
         )
-    raise NotImplementedError(
-        '[D7] sim follower home pose 기본값 미확정 — 6개 관절 rad 값 결정 필요.'
-    )
+    with open(path, 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f) or {}
+
+    positions = data.get('positions')
+    if not isinstance(positions, dict):
+        raise ValueError(f'home_pose.yaml 에 positions: 딕셔너리가 없음 ({path}).')
+    missing = [n for n in SO101_JOINT_NAMES if n not in positions]
+    if missing:
+        raise ValueError(
+            f'home_pose.yaml positions 에 관절 {missing} 누락 ({path}).'
+        )
+
+    positions_rad: List[float] = []
+    for n in SO101_JOINT_NAMES:
+        sdk_val = float(positions[n])
+        if n == 'gripper':
+            # gripper 0~100% → rad. _gripper_pct_to_rad 가 입력을 0~100 으로
+            # 이미 clamp 하므로 출력은 USD gripper 한계 안에 들어온다.
+            positions_rad.append(_gripper_pct_to_rad(sdk_val))
+            continue
+        lo, hi = SO101_JOINT_LIMITS_DEG[n]
+        clamped = min(hi, max(lo, sdk_val))
+        if clamped != sdk_val:
+            print(f'[record_sim_teleop] 경고 — {n} home_pose {sdk_val:.2f}° 가 '
+                  f'Isaac Sim USD 한계 [{lo}, {hi}]° 밖 → {clamped:.2f}° 로 clamp')
+        positions_rad.append(math.radians(clamped))
+    return positions_rad
 
 
-def _return_follower_home(helper: SimRecordHelperNode,
-                          home_pose_rad: List[float], fps: int,
-                          duration_s: float = RETURN_HOME_DURATION_S) -> None:
+def _force_initial_pose(helper: SimRecordHelperNode,
+                        initial_pose_rad: List[float],
+                        episode_idx: int) -> None:
     """
-    현재 follower 자세 → home_pose 로 fps Hz 선형 보간 /joint_command 발행 ([S4]).
+    에피소드 시작 시 follower 를 initial_pose 로 강제 고정 ([S4]).
+
+    set_joint_positions 만으로는 다음 물리 스텝에서 PD 가 *직전 drive target*
+    (이전 에피소드의 마지막 /joint_command, 첫 reset 시엔 USD default)으로 팔을
+    끌어간다. 따라서 reset 은 위치 강제 + 속도 0 + drive target 갱신을 함께,
+    한 물리 스텝 안에서 원자적으로 적용해야 하며 그 책임은 Isaac Sim 측
+    /joint_reset 핸들러에 있다 ([D4]) — ROS2 토픽만으로는 tick 단위 적용
+    순서를 보장할 수 없기 때문이다.
+
+    아래에서 /joint_command 를 함께 발행하는 것은, Isaac Sim 핸들러가 drive
+    target 까지 갱신하지 않는 경우를 대비한 fallback 이다 (핸들러가 3가지를
+    원자적으로 처리하면 이 publish 는 무해한 중복).
+
+    녹화는 이 함수 반환 후 작업자가 Enter 를 누른 시점부터 시작되므로, 토픽
+    적용 순서로 인한 일시적 transient 가 있더라도 RESET_SETTLE_S 안정화
+    구간에 흡수되어 데이터셋에는 들어가지 않는다. 반환 직전 joint_states 로
+    초기 자세 도달을 약식 검증한다.
     """
+    helper.publish_joint_command(initial_pose_rad)   # drive target = 초기 자세
+    helper.publish_joint_reset(initial_pose_rad)     # kinematic teleport
+    time.sleep(RESET_SETTLE_S)
+
+    # 약식 검증 — /joint_reset 이 SetJointPositions 로 라우팅됐는지 확인.
     js = helper.latest_joint_state()
     if js is None:
-        raise RuntimeError('home 복귀 불가 — sim joint_states 미수신.')
+        print(f'[ep {episode_idx}] 경고 — joint_states 미수신, 초기 자세 검증 불가.')
+        return
     name_to_pos = dict(zip(js.name, js.position))
-    cur = np.array([float(name_to_pos[n]) for n in SO101_JOINT_NAMES],
-                   dtype=np.float64)
-    home = np.asarray(home_pose_rad, dtype=np.float64)
-
-    n_steps = max(1, int(round(fps * duration_s)))
-    dt = 1.0 / fps
-    for i in range(1, n_steps + 1):
-        alpha = i / n_steps
-        target = (1.0 - alpha) * cur + alpha * home
-        helper.publish_joint_command(target.tolist())
-        time.sleep(dt)
+    try:
+        actual = np.array([float(name_to_pos[n]) for n in SO101_JOINT_NAMES],
+                          dtype=np.float64)
+    except KeyError:
+        print(f'[ep {episode_idx}] 경고 — joint_states 관절 누락, 초기 자세 검증 불가.')
+        return
+    target = np.asarray(initial_pose_rad, dtype=np.float64)
+    max_err_deg = math.degrees(float(np.max(np.abs(actual - target))))
+    if max_err_deg > 2.0:
+        print(f'[ep {episode_idx}] 경고 — 초기 자세 강제 후 최대 오차 '
+              f'{max_err_deg:.1f}° (>2°). /joint_reset → SetJointPositions '
+              f'Action Graph 배선 확인 ([D4]).')
 
 
 # ──────────────────────────────────────────────
@@ -810,15 +932,17 @@ def record_episode(
     follower_calib: dict,
     episode_idx:   int,
     label_record:  dict,
-    home_pose_rad: List[float],
+    initial_pose_rad: List[float],
 ) -> bool:
     """
-    1개 에피소드 녹화 → 저장 → follower home 복귀.
+    1개 에피소드 녹화 → 저장.
 
     Returns:
         True  — 사용자가 저장 선택, save_episode() 완료.
         False — 저장 거부, clear_episode_buffer() 로 버퍼 폐기.
         (호출자는 이 값으로 retry 시 delete_episode() 호출 여부 결정)
+
+    시작 시: initial_pose 로 follower 강제 고정 (_force_initial_pose, [S4]).
 
     각 틱(1/fps 초)마다:
       1) 종료 신호 확인 ('q'+Enter) — [S3]
@@ -832,7 +956,7 @@ def record_episode(
            action                         ← _leader_action_to_vec
       6) deadline 기반 sleep (drift 재동기화) — [S5]
 
-    종료 후: save_episode() → _return_follower_home()
+    종료 후: save_episode().
     """
     # observation.language_embedding 은 placeholder zero 벡터 ([D9]).
     # 실제 임베딩은 수집 후 generate_language_labels.py 가 채운다.
@@ -851,8 +975,12 @@ def record_episode(
             )
         time.sleep(0.05)
 
+    # follower 를 initial_pose 로 강제 고정 ([S4]) — 매 에피소드 동일 초기 상태
+    print(f'[ep {episode_idx}] follower 초기 자세 강제 (SetJointPositions)...')
+    _force_initial_pose(helper, initial_pose_rad, episode_idx)
+
     print(f'[ep {episode_idx}] task = {task_str!r}')
-    print(f'[ep {episode_idx}] Enter 로 녹화 시작.')
+    print(f'[ep {episode_idx}] Leader 를 초기 자세 근처로 옮긴 뒤 Enter 로 녹화 시작.')
     input()
 
     print(f'[ep {episode_idx}] 녹화 중 — "q"+Enter 또는 Ctrl+C 로 종료')
@@ -920,11 +1048,7 @@ def record_episode(
 
     dataset.save_episode()
     print(f'[ep {episode_idx}] save_episode 호출 완료 — 인코딩 백그라운드 진행')
-
-    # follower home pose 복귀 ([S4])
-    print(f'[ep {episode_idx}] follower → home pose 복귀 중 '
-          f'({RETURN_HOME_DURATION_S:.1f}s)...')
-    _return_follower_home(helper, home_pose_rad, args.fps)
+    # follower 초기 자세 복귀는 다음 에피소드 시작의 _force_initial_pose 가 담당.
     return True
 
 
@@ -984,8 +1108,9 @@ def main() -> None:
         print(f'[record_sim_teleop] dataset.root = {dataset.root}')
         print(f'[record_sim_teleop] label log    = {labels_jsonl}')
 
-        # 5) home pose ([D7])
-        home_pose_rad = _load_home_pose_rad(args)
+        # 5) 에피소드 시작 강제 자세 로드 — 실물 home_pose.yaml 재사용 ([S4], [D7])
+        initial_pose_rad = load_initial_pose(args.home_pose_file)
+        print(f'[record_sim_teleop] 초기 자세 로드: {args.home_pose_file}')
 
         # 6) 에피소드 루프
         start_ep = dataset.num_episodes
@@ -1000,7 +1125,7 @@ def main() -> None:
                 append_label_record(labels_jsonl, target)
                 saved = record_episode(
                     args, helper, leader, dataset,
-                    follower_calib, ep, target, home_pose_rad,
+                    follower_calib, ep, target, initial_pose_rad,
                 )
                 retry = input(
                     f'[ep {ep}] 이 에피소드를 다시 촬영할까요? (y/n): '
