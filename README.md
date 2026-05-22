@@ -283,12 +283,18 @@ PAI/
 │
 ├── sim/                                        # [데이터 수집] Isaac Sim teleop 전용
 │   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링
+│   ├── assets/                                 # URDF→USD 변환 자산
+│   │   └── so101_new_calib/                    # SO-101 USD (Isaac Sim 임포트 결과)
+│   ├── scenes/                                 # 씬 USD
+│   │   └── base_scene.usd                      # base 씬
 │   ├── config/
 │   │   ├── dr_config.yaml                      # Domain Randomization 설정
 │   │   └── multi_target_scenes.yaml            # multi-target 장면 구성
+│   ├── scene_setup/                            # Isaac Sim Script Editor 씬 저작 스크립트
+│   │   ├── setup_sim_camera.py                 # RGB 카메라 셋업 (캘리브레이션→USD)
+│   │   └── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
 │   └── teleop/                                 # Isaac Sim teleop 데이터 수집
 │       ├── record_sim_teleop.py                # Sim teleop 시연 수집 (씬·DR·녹화 통합, 신규)
-│       ├── setup_sim_camera.py                 # Isaac Sim RGB 카메라 셋업 (캘리브레이션→USD, 신규)
 │       ├── lerobot_to_rosbridge.py             # 실물 leader → EC2 rosbridge 브리지 (클라우드)
 │       ├── lerobot_to_ros2.py                  # 실물 leader → ROS2 직접 publish 브리지 (로컬)
 │       ├── sim_cloud_teleop_setting.md         # 클라우드(EC2) Isaac Sim teleop 셋업 가이드

@@ -206,7 +206,7 @@ ros2 topic pub --once /joint_command sensor_msgs/msg/JointState "{
 `record_sim_teleop.py` 가 구독할 카메라 토픽 발행(README [D4])의 prim 전제다.
 
 1. URDF 임포트(2-3) 완료 + 캘리브레이션 yaml 2개 준비 확인
-2. Script Editor 에서 [`setup_sim_camera.py`](setup_sim_camera.py) 실행
+2. Script Editor 에서 [`setup_sim_camera.py`](../scene_setup/setup_sim_camera.py) 실행
    - 파일 상단 "사용자 설정" 블록의 yaml 경로(로컬: `~/projects/PAI/...`)와
      `SO101_BASE_PRIM` / `CAMERA_PRIM` 경로를 스테이지에 맞게 확인
 3. Viewport → Cameras → `Camera_RGB` 로 시점 전환해 화각·위치 검증
