@@ -1,6 +1,6 @@
 """
 Configure RGB camera from PAI calibration yamls.
-Run in Script Editor with base_so101_recycling.usda open.
+Run in Script Editor with base_scene.usd open.
 """
 import yaml
 import numpy as np

@@ -1,7 +1,7 @@
 """
 Add 3 recycling bins (plastic / can / paper) to base scene.
 Open-top boxes made of 5 cuboids each.
-Run in Script Editor with base_so101_recycling.usda open.
+Run in Script Editor with base_scene.usd open.
 """
 from pxr import Usd, UsdGeom, UsdPhysics, Gf, Sdf
 import omni.usd
