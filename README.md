@@ -284,7 +284,8 @@ PAI/
 ├── sim/                                        # [데이터 수집] Isaac Sim teleop 전용
 │   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링
 │   ├── assets/                                 # URDF→USD 변환 자산
-│   │   └── so101_new_calib/                    # SO-101 USD (Isaac Sim 임포트 결과)
+│   │   ├── so101_new_calib/                    # SO-101 USD (Isaac Sim 임포트 결과)
+│   │   └── objects/recycling/                  # YCB 객체 래퍼 (생성물 — gitignore)
 │   ├── scenes/                                 # 씬 USD
 │   │   └── base_scene.usd                      # base 씬
 │   ├── config/
@@ -292,7 +293,8 @@ PAI/
 │   │   └── multi_target_scenes.yaml            # multi-target 장면 구성
 │   ├── scene_setup/                            # Isaac Sim Script Editor 씬 저작 스크립트
 │   │   ├── setup_sim_camera.py                 # RGB 카메라 셋업 (캘리브레이션→USD)
-│   │   └── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
+│   │   ├── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
+│   │   └── setup_recycling_objects.py          # YCB 분리수거 객체 래퍼 USD 생성
 │   └── teleop/                                 # Isaac Sim teleop 데이터 수집
 │       ├── record_sim_teleop.py                # Sim teleop 시연 수집 (씬·DR·녹화 통합, 신규)
 │       ├── lerobot_to_rosbridge.py             # 실물 leader → EC2 rosbridge 브리지 (클라우드)
