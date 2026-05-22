@@ -36,10 +36,10 @@ Isaac Sim teleop 기반 ACT 학습용 Sim 시연 데이터 수집 (Isaac Sim 직
   D5 자동 분포 타겟 선택    D6 gripper 0~100% ↔ -10°~100°
   D7 home_pose.yaml 초기자세  D8 fps=30  D9 embedding placeholder
 
-상태 — 스켈레톤. 아래는 핵심 로직이 미구현(NotImplementedError):
-  - SceneManager : multi-target 씬 구성 + DR (multi_target_scenes.yaml /
-                   dr_config.yaml 스키마 확정 필요)
+상태 — 스켈레톤. 핵심 로직 미구현(NotImplementedError):
+  - SceneManager.apply_domain_randomization : DR (dr_config.yaml 스키마 확정 필요)
   - select_episode_target : 자동 분포 보장 로직 (D5)
+  ※ SceneManager 의 객체 배치(setup_episode_scene/reset)는 구현 완료.
   SimInterface 의 Isaac Sim API 호출은 5.1 기준 best-effort — 실기 검증 필요.
 """
 from __future__ import annotations
@@ -151,9 +151,11 @@ import yaml                                                   # noqa: E402
 #   (4.x: omni.isaac.* 네임스페이스 / 5.x: isaacsim.*)
 from isaacsim.core.api import World                           # noqa: E402
 from isaacsim.core.prims import SingleArticulation            # noqa: E402
-from isaacsim.core.utils.stage import open_stage              # noqa: E402
+from isaacsim.core.utils.stage import open_stage, get_current_stage  # noqa: E402
 from isaacsim.core.utils.types import ArticulationAction      # noqa: E402
 from isaacsim.sensors.camera import Camera                    # noqa: E402
+
+from pxr import Gf, Sdf, Usd, UsdGeom                         # noqa: E402
 
 # LeRobot — Isaac Sim python 환경에 설치돼 있어야 함 (전제조건 1)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset                  # noqa: E402
@@ -242,17 +244,34 @@ def load_vocab(path: str, domain: str) -> LabelVocab:
 class SceneConfig:
     scenes:             List[dict]
     multi_target_ratio: float
+    placement:          dict          # 객체 배치 영역·규칙 (SceneManager 사용)
+    object_library:     str           # 래퍼 USD 디렉터리
     raw:                dict = field(default_factory=dict)
 
 
 def load_scenes(path: str) -> SceneConfig:
-    """multi_target_scenes.yaml 로드 (스키마 미확정 — 얕은 파싱)."""
+    """multi_target_scenes.yaml 로드 + placement 스키마 검증."""
     with open(path, 'r', encoding='utf-8') as f:
         raw = yaml.safe_load(f) or {}
     scenes = raw.get('scenes') or []
     if not scenes:
         raise ValueError(f'multi_target_scenes.yaml 에 scenes 정의 없음 ({path}).')
-    return SceneConfig(list(scenes), float(raw.get('multi_target_ratio', 0.0)), raw)
+    placement = raw.get('placement')
+    if not isinstance(placement, dict) or 'spawn_region' not in placement:
+        raise ValueError(
+            f'multi_target_scenes.yaml 에 placement.spawn_region 없음 ({path}).')
+    sr = placement['spawn_region']
+    if 'x_range' not in sr or 'y_range' not in sr:
+        raise ValueError(f'placement.spawn_region 에 x_range/y_range 필요 ({path}).')
+    object_library = os.path.expanduser(
+        raw.get('object_library', 'sim/assets/objects/recycling'))
+    return SceneConfig(
+        scenes=list(scenes),
+        multi_target_ratio=float(raw.get('multi_target_ratio', 0.0)),
+        placement=placement,
+        object_library=object_library,
+        raw=raw,
+    )
 
 
 @dataclass
@@ -362,11 +381,19 @@ def select_episode_target(scene_cfg: SceneConfig, vocab: LabelVocab,
     """
     이번 에피소드의 장면 + 타겟 객체를 선택하고 canonical 라벨을 만든다.
 
-    Returns: {scene, object, attribute, spatial, canonical, domain, episode}
+    Returns (SceneManager·record_episode 가 소비하는 계약):
+        {
+          'scene':         <multi_target_scenes.yaml scene name>,
+          'objects':       [<래퍼 USD 파일명>, ...],   # 이 에피소드에 배치할 객체
+          'target_object': <objects 중 grasp 대상 래퍼 파일명>,
+          'object': <범주>, 'attribute': ..., 'spatial': ...,
+          'canonical': <자연어 라벨>, 'domain': ..., 'episode': <int>,
+        }
+    'objects' 가 SceneManager.setup_episode_scene 의 입력이다.
 
     [D5] 자동 분포 보장 — multi-target shortcut 방지 가이드라인(같은 객체 다른
     spatial ≥30%, 한 장면 후보 2+ 다른 라벨 ≥40% 등)을 만족하도록 누적 분포를
-    추적하며 타겟을 배분한다. 구현은 multi_target_scenes.yaml 스키마 확정 필요.
+    추적하며 장면/타겟을 배분한다.
     """
     raise NotImplementedError(
         '[D5] 자동 분포 보장 타겟 선택 미구현 — 누적 분포 추적 + '
@@ -414,6 +441,7 @@ class SimInterface:
         open_stage(args.scene_usd)
         self.world = World(physics_dt=1.0 / args.fps,
                            rendering_dt=1.0 / args.fps)
+        self.stage = get_current_stage()   # SceneManager 의 USD 조작용
 
         self.robot = SingleArticulation(prim_path=args.robot_prim, name='so101_follower')
         self.camera = Camera(prim_path=args.camera_prim,
@@ -489,13 +517,21 @@ class SimInterface:
 
 class SceneManager:
     """
-    매 에피소드 multi-target 씬 구성 + Domain Randomization 을 Isaac Sim API 로
-    직접 수행한다 ([D2] — recorder 가 Isaac Sim 안에서 실행되므로 ROS2 서비스/
-    동반 스크립트 불필요).
+    매 에피소드 multi-target 객체 배치를 Isaac Sim USD API 로 직접 수행한다 ([D2]).
 
-    미구현: 실제 객체 배치/DR 로직은 multi_target_scenes.yaml · dr_config.yaml
-            스키마 확정과 sim/assets/objects/recycling/ 래퍼 준비가 선행돼야 한다.
+    배치 — `multi_target_scenes.yaml` 의 `placement` 규칙:
+      - spawn_region(테이블 위 ∩ 로봇 가동범위) 안에서 (x,y) rejection sampling
+      - 빈(bin) footprint·기배치 객체와 겹치면 재샘플 (min_separation)
+      - z 는 world bounding box 로 객체 바닥을 table_top_z 에 맞춤
+      - yaw 무작위 (DR 다양성)
+    객체는 `/World/Objects` 아래에 래퍼 USD 를 reference 하여 생성하고,
+    reset() 으로 다음 에피소드 전에 제거한다.
+
+    DR(apply_domain_randomization)은 dr_config.yaml 스키마가 별도로 확정돼야
+    구현 가능 — 현재 미구현.
     """
+
+    OBJECTS_ROOT = '/World/Objects'
 
     def __init__(self, scene_cfg: SceneConfig, dr_cfg: DRConfig,
                  sim: SimInterface, rng: np.random.Generator):
@@ -503,24 +539,112 @@ class SceneManager:
         self.dr_cfg = dr_cfg
         self.sim = sim
         self.rng = rng
+        self._placed: List[str] = []
 
-    def setup_episode_scene(self, episode_idx: int, target: Dict[str, str]) -> None:
-        """target 에 맞춰 multi-target 객체를 USD 스테이지에 배치 (래퍼 USD reference)."""
-        raise NotImplementedError(
-            '[D2] 씬 구성 미구현 — sim/assets/objects/recycling/ 래퍼를 스테이지에 '
-            'reference + 배치. multi_target_scenes.yaml 스키마 확정 필요.'
-        )
+        p = scene_cfg.placement
+        self._spawn         = p['spawn_region']
+        self._table_top_z   = float(p.get('table_top_z', 0.0))
+        self._min_sep       = float(p.get('min_separation', 0.08))
+        self._bin_exclusion = list(p.get('bin_exclusion') or [])
+        self._max_attempts  = int(p.get('max_sample_attempts', 100))
+        self._lib = Path(scene_cfg.object_library)
+
+        # 배치 객체 컨테이너 Xform
+        UsdGeom.Xform.Define(self.sim.stage, self.OBJECTS_ROOT)
+
+    # ── 공개 API ─────────────────────────────────────
+
+    def setup_episode_scene(self, episode_idx: int, target: Dict) -> None:
+        """
+        target['objects'](배치할 래퍼 USD 파일명 리스트)를 spawn_region 안에
+        배치한다. target 계약은 select_episode_target 의 docstring 참조.
+
+        NOTE: 동적으로 추가한 rigid body 는 이후 world.step() 에서 PhysX 에
+              등록된다 — record_episode 의 초기 안정화 스텝이 처리한다.
+        """
+        wrappers = target.get('objects')
+        if not wrappers:
+            raise ValueError("target['objects'] (배치할 래퍼 목록)이 비어 있음.")
+        placed_xy: List[Tuple[float, float]] = []
+        for slot, wrapper_name in enumerate(wrappers):
+            xy = self._sample_xy(placed_xy)
+            placed_xy.append(xy)
+            self._placed.append(
+                self._place_object(wrapper_name, xy, episode_idx, slot))
 
     def apply_domain_randomization(self, episode_idx: int) -> None:
         """dr_config.yaml 기준 조명·텍스처·FOV·질량·마찰·PD 게인·노이즈 무작위화."""
         raise NotImplementedError(
-            '[D2] DR 적용 미구현 — dr_config.yaml 스키마 확정 후 Isaac Sim API/'
-            'Replicator 로 구현.'
+            '[D2-DR] DR 적용 미구현 — dr_config.yaml 스키마 확정 필요 '
+            '(placement 스키마와 별개 결정).'
         )
 
     def reset(self) -> None:
-        """다음 에피소드를 위한 씬 정리 (배치 객체 제거 등)."""
-        raise NotImplementedError('[D2] 씬 reset 미구현.')
+        """배치한 객체 prim 을 모두 제거 (다음 에피소드 준비)."""
+        for prim_path in self._placed:
+            if self.sim.stage.GetPrimAtPath(prim_path).IsValid():
+                self.sim.stage.RemovePrim(Sdf.Path(prim_path))
+        self._placed = []
+
+    # ── 내부 ─────────────────────────────────────────
+
+    def _sample_xy(self, existing: List[Tuple[float, float]]) -> Tuple[float, float]:
+        """spawn_region 안에서 (x,y) rejection sampling — 간격·빈 회피."""
+        xr = self._spawn['x_range']
+        yr = self._spawn['y_range']
+        for _ in range(self._max_attempts):
+            x = float(self.rng.uniform(xr[0], xr[1]))
+            y = float(self.rng.uniform(yr[0], yr[1]))
+            if any((x - ex) ** 2 + (y - ey) ** 2 < self._min_sep ** 2
+                   for ex, ey in existing):
+                continue
+            if self._in_bin(x, y):
+                continue
+            return (x, y)
+        raise RuntimeError(
+            f'spawn 위치 샘플 실패 ({self._max_attempts}회) — spawn_region 이 '
+            '너무 좁거나 객체 수 대비 min_separation 이 큼.'
+        )
+
+    def _in_bin(self, x: float, y: float) -> bool:
+        for b in self._bin_exclusion:
+            bx, by = b['x_range'], b['y_range']
+            if bx[0] <= x <= bx[1] and by[0] <= y <= by[1]:
+                return True
+        return False
+
+    def _place_object(self, wrapper_name: str, xy: Tuple[float, float],
+                      episode_idx: int, slot: int) -> str:
+        """래퍼 USD 를 reference 한 prim 을 생성·배치하고 prim 경로를 반환."""
+        wrapper = self._lib / wrapper_name
+        if not wrapper.exists():
+            raise FileNotFoundError(
+                f'객체 래퍼 없음: {wrapper} — '
+                'sim/scene_setup/setup_recycling_objects.py 를 먼저 실행할 것.'
+            )
+        prim_path = (f'{self.OBJECTS_ROOT}/ep{episode_idx}'
+                     f'_{slot}_{Path(wrapper_name).stem}')
+        prim = self.sim.stage.DefinePrim(prim_path, 'Xform')
+        prim.GetReferences().AddReference(str(wrapper.resolve()))
+
+        x, y = xy
+        rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, 1.0),
+                          float(self.rng.uniform(0.0, 360.0)))   # yaw 무작위
+        xform = UsdGeom.Xformable(prim)
+        xform.ClearXformOpOrder()
+        xop = xform.AddTransformOp(UsdGeom.XformOp.PrecisionDouble)
+
+        # 임시로 table_top_z 에 두고 → world bbox 로 객체 바닥을 테이블에 정렬
+        xop.Set(Gf.Matrix4d().SetTransform(rot, Gf.Vec3d(x, y, self._table_top_z)))
+        rng_box = UsdGeom.Imageable(prim).ComputeWorldBound(
+            Usd.TimeCode.Default(),
+            UsdGeom.Tokens.default_, UsdGeom.Tokens.render).ComputeAlignedRange()
+        if rng_box.IsEmpty():
+            final_z = self._table_top_z + 0.10   # bbox 실패 → 띄우고 물리 settle
+        else:
+            final_z = 2.0 * self._table_top_z - rng_box.GetMin()[2]
+        xop.Set(Gf.Matrix4d().SetTransform(rot, Gf.Vec3d(x, y, final_z)))
+        return prim_path
 
 
 # ──────────────────────────────────────────────
