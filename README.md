@@ -1013,23 +1013,26 @@ datasets = [
 | 1 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | `merge_qa_dataset.py` |
 | 2 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
 
-### Sim teleop 수집 (`record_sim_teleop.py`)
+### Sim teleop 수집 (`record_sim_teleop.py`) — [D1]~[D9] 확정
 
-아래 [D1]~[D9]는 [`sim/teleop/record_sim_teleop.py`](sim/teleop/record_sim_teleop.py)
-상단 "확정 필요 항목" 블록과 동일 ID이며, 본문 `NotImplementedError` 메시지가 각
-ID를 참조한다. 결정 시 README + 해당 스크립트를 함께 갱신한다.
+설계 결정 [D1]~[D9]를 모두 확정했다. ID는 스크립트 재작성 시 참조용으로 유지한다.
 
-| # | 항목 | 영향 범위 |
-|---|------|---------|
-| D1 | local/cloud 통신 방식 및 녹화 스크립트 실행 위치 (rclpy 직접 / rosbridge 경유) | `connect_leader`, `SimRecordHelperNode` |
-| D2 | Isaac Sim 씬·DR 제어 메커니즘 + `multi_target_scenes.yaml` / `dr_config.yaml` 스키마 | `SceneManager` |
-| D3 | `observation.state` 단위 변환 (Isaac Sim rad → LeRobot SDK `.pos`) | `_sim_jointstate_to_sdk_units`, follower 캘리브레이션 yaml |
-| D4 | Isaac Sim Action Graph 확장 — `joint_states`·카메라 RGB 발행 + `/joint_reset` → 원자적 SetJointPositions 핸들러(위치 + 속도 0 + drive target) | Isaac Sim teleop 셋업, 녹화 전제조건 |
-| D5 | 타겟 선택 전략 (작업자 수동 선택 / 자동 분포 보장) | `select_episode_target` |
-| D6 | gripper 매핑 상수 (Leader 0~100% ↔ rad, 현재 -10°~100°) | `_gripper_pct_to_rad` |
-| D7 | sim follower 초기 자세 — **확정**: `deploy/calibration/home_pose.yaml`(record_real_teleop.py 캡처) 재사용, SetJointPositions 강제 + USD limit clamp | `load_initial_pose` |
-| D8 | 에피소드 길이 / fps (Real `record_real_teleop.py`와 일치) | CLI 기본값, ACT 학습 resample |
-| D9 | `language_embedding` 처리 (placeholder zero 후처리 — 현행 채택 / 녹화 중 즉시 임베딩) | `record_episode` |
+| # | 확정 내용 |
+|---|----------|
+| D1 | **로컬 통합** — Isaac Sim·SO-101 Leader·녹화 스크립트를 한 Ubuntu 머신에. `record_sim_teleop`은 Isaac Sim Python 내에서 실행, Leader는 LeRobot SDK 직접 read, follower·카메라·관절은 Isaac Sim API 직접 접근 |
+| D2 | `SceneManager`가 Isaac Sim API 직접 호출로 multi-target 씬 구성 + DR 적용 (D1 귀결 — ROS2 서비스/동반 스크립트 불필요) |
+| D3 | `observation.state` 변환 — arm은 plain deg↔rad, gripper는 %-매핑, affine 불필요. round-trip 검증 |
+| D4 | **불필요** — D1=로컬 통합으로 녹화가 Isaac Sim 직접 API를 쓰므로 ROS2 Action Graph 확장이 무효화 |
+| D5 | **자동 분포 보장** — `select_episode_target`이 multi-target shortcut 방지 가이드라인을 코드로 강제 |
+| D6 | gripper `0~100% ↔ -10°~100°` (USD joint limit 확인) |
+| D7 | sim follower 초기 자세 — `deploy/calibration/home_pose.yaml` 재사용, SetJointPositions 강제 + USD limit clamp |
+| D8 | `fps=30` (Real `record_real_teleop.py`와 일치), 에피소드 길이는 작업자 `'q'` 종료 |
+| D9 | `language_embedding` — 녹화 시 placeholder zero, 수집 후 `generate_language_labels.py`가 채움 |
+
+> ⚠️ 현재 `record_sim_teleop.py` 스켈레톤은 [D1] 미확정 시점의 **ROS2/rclpy 설계**다.
+> [D1]=로컬 통합 확정에 따라 **Isaac Sim Python 내장 실행 + 직접 API 설계로 재작성**이
+> 필요하다 — 스크립트의 "확정 필요 항목" 블록·`SimRecordHelperNode`·CLI(`--mode` 등)는
+> 재작성 시 함께 정리된다 (미구현 항목).
 
 > **확정 완료** (이전 미확정 항목):
 > - 임베딩 모델: `paraphrase-multilingual-MiniLM-L12-v2` (D=384)
