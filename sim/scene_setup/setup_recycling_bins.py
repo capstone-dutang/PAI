@@ -22,21 +22,18 @@ BINS = [
         "color": (0.90, 0.39, 0.08),   # 주황
         "pos":   (-0.3475, -0.305, 0.0),
         "semantic": "plastic",
-        "rotation_deg": 90.0,
     },
     {
         "name":  "bin_can",
         "color": (0.35, 0.00, 0.43),   # 보라
-        "pos":   (-0.2425, -0.305, 0.0),
+        "pos":   (-0.2325, -0.305, 0.0),
         "semantic": "can",
-        "rotation_deg": 90.0,
     },
     {
         "name":  "bin_paper",
         "color": (0.19, 0.07, 0.00),   # 갈색
-        "pos":   (-0.1375, -0.305, 0.0),
+        "pos":   (-0.1175, -0.305, 0.0),
         "semantic": "paper",
-        "rotation_deg": 90.0,
     },
 ]
 # ─────────────────────────────
@@ -85,6 +82,7 @@ def make_bin(stage, parent_path, spec):
     bxf = UsdGeom.Xformable(bin_xf.GetPrim())
     bxf.ClearXformOpOrder()
     bxf.AddTranslateOp().Set(Gf.Vec3d(*pos))
+    bxf.AddRotateZOp().Set(90.0)
 
     iw, id_, ih, wt = INNER_W, INNER_D, INNER_H, WALL_T
     outer_w = iw + 2*wt
