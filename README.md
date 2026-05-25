@@ -4,241 +4,6 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 
 ---
 
-## 전체 파이프라인
-
-```
-하드웨어 세팅 (카메라 캘리브레이션)
-  │
-  ├─▶ Isaac Sim ACT 시연 데이터 수집 (Sim teleop — EC2 또는 로컬)
-  │     실물 SO-101 Leader → Isaac Sim follower(디지털 트윈) teleop
-  │     + Domain Randomization
-  │     multi-target 장면 구성 (같은 시각에 여러 후보 객체 배치)
-  │     언어 라벨: Gemma 4 E2B 자체 라벨링 + 외부 LLM paraphrase 혼합
-  │     → Sim LeRobotDataset (~500 에피소드)
-  │
-  ├─▶ Gemma 도메인 LoRA 학습 (외부 PC)
-  │     ├─ 도메인별 PDF/문서 → LLM Q&A 자동 생성 → 필터링
-  │        3종 데이터 혼합: 도메인 지식 / 함수 호출 / 검증 시나리오
-  │     ├─ Unsloth QLoRA 파인튜닝 (예: RTX 5070급)
-  │     └─ GGUF 변환 → adapter_<domain>.gguf (각 수십 MB)
-  │        adapter_library.gguf, adapter_recycling.gguf, ...
-  │
-  ▼
-실제 시연 데이터 수집 (Jetson, 축소 운영)
-  teleop 기반 record_real_teleop.py (agent_node 미사용)
-  → Real LeRobotDataset (50~100 에피소드)
-  (observation.state + observation.language_embedding + observation.images.top + action)
-  │
-  └─▶ ACT Co-training (외부 PC, LeRobot 0.4.4 멀티 데이터셋)
-        Sim + Real 혼합 학습 → act.pth
-            │
-            ▼
-        통합 배포 (Sim 환경 + Jetson 실물 동일 노드 구성)
-            llama-server (Gemma 4 E2B base + LoRA hot-swap, systemd 상시)
-            + agent_node (오케스트레이션 함수 호출 루프)
-            + embedding_node (텍스트 → 벡터 임베딩 서비스)
-            + act_node
-            │
-            ▼
-        검증
-            Sim rollout / Jetson 실물 모두 동일 노드 구성으로 평가
-            (학습에 쓰지 않은 DR 파라미터로 held-out)
-```
-
-> Sim 데이터 수집과 Gemma 도메인 LoRA 학습은 독립적으로 병렬 진행 가능. Sim·Real
-> 시연 데이터 모두 ACT 학습 데이터 확보가 목적이므로 `agent_node` 없이 실물 SO-101
-> Leader teleop 으로 수집한다. Sim 은 Isaac Sim follower(디지털 트윈)를, Real 은
-> 실물 follower 를 leader 로 조종한다.
->
-> Sim과 Jetson 실물은 **동일 노드 구성**(camera_node, agent_node,
-> llama_server_manager, embedding_node, act_node, robot_controller_node)으로
-> 운영하며 검증도 같은 파이프라인에서 수행한다. Gemma LoRA는 도메인 1개만
-> 적재되고, 사용자 명령 → 도메인 분류 → llama-server `/lora-adapter` HTTP
-> 요청으로 hot-swap된다.
->
-> ACT는 Sim-to-Real Co-training 방식으로 학습한다. Sim 측 Domain Randomization:
-> 조명·텍스처·카메라 FOV, 질량·마찰·PD 게인, joint/이미지 노이즈.
-> Sim action space는 실기와 동일하게 position control. Sim 시연을 실물 SO-101
-> Leader teleop 으로 수집하므로 Sim·Real 의 action 생성 경로(같은 Leader, 같은
-> LeRobot SDK)가 일치하여 두 데이터셋의 행동 분포가 동질화된다.
-
----
-
-## 아키텍처 핵심 결정 사항
-
-### Language-conditioned VLA 패턴 (RT-2 / OpenVLA / π0 계열)
-
-`agent_node`의 `look_scene` 함수는 Gemma 4 E2B VLM에 RGB 이미지를 입력하여 **자연어 타겟 묘사**(예: "the blue can on the right side of the table")를 출력한다. 이 텍스트는 `embedding_node`에서 벡터로 변환되어 `SubtaskCommand`에 실려 `act_node`로 전달되고, ACT는 이 임베딩을 observation 채널 중 하나로 사용한다. 이전 설계의 3D 좌표 산출 방식은 폐기되었다.
-
-**이 결정의 결과**:
-- `agent_node`는 depth/intrinsics/hand-eye calibration에 의존하지 않는다 (좌표 산출 책임 없음)
-- ACT가 RGB + 언어 임베딩으로 perception을 직접 학습 (end-to-end 표현 학습)
-- Sim/Real 라벨링 일관성 부담이 줄어든다 (좌표 정확도가 아닌 자연어 일치만 요구)
-- depth는 ACT 학습 obs에서 제외되며, `verify_result`의 grasp 검증 보조 신호로만 사용된다
-
-### `target_description` 형식 — 확정
-
-| 항목 | 값 |
-|------|----|
-| 언어 | **영어 고정** |
-| 스키마 | 반구조화 자연어 템플릿 `"the {attribute} {object} {spatial}"` |
-| 길이 | 5~15 단어 |
-| 필수 구성요소 | `attribute` (색/재질 등 변별 가능 1개), `object` (단일 명사), `spatial` (위치/관계 표현) |
-| 어휘 사전 | [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) — Sim/Real/배포 분포 일치 강제 |
-| 예시 | `"the blue can on the right side of the table"`, `"the transparent plastic next to the paper"` |
-| 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
-
-이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_real_teleop.py`는 vocabulary 외 입력을 거부한다.
-
-### 임베딩 모델 — 확정
-
-| 항목 | 값 |
-|------|----|
-| 모델 | **`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`** |
-| 차원 D | **384** |
-| 크기 | ~120MB |
-| 언어 | 다국어 (50+ 언어, 영어 코어가 가장 안정) |
-| 정규화 | L2 정규화 (코사인 유사도 기반 학습 친화) |
-| 강제 범위 | Sim 라벨링 / Real 수집 / ACT 학습 / 배포 전 구간 |
-
-paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](training/data_collection/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
-
-### 자율성 범위
-
-한 태스크 진행 중에는 도메인이 고정되며, `agent_node`는 동일 도메인 내에서 `look_scene → execute_subtask → verify_result` 루프만 반복한다. 자율 도메인 재분류, 동적 함수 생성 등 자율성 확장은 향후 작업으로 유보한다. `verify_result`는 최대 3회까지 반복하며, 그 이상은 사용자 개입 대기 상태로 진입한다.
-
----
-
-## 실행 환경
-
-### Jetson
-
-| 항목 | 내용 |
-|------|------|
-| 하드웨어 | NVIDIA Jetson Orin Nano 8GB |
-| JetPack | 6.2.1 |
-| OS | Ubuntu 22.04 LTS |
-| CUDA | 12.6 |
-| ROS2 | Humble Hawksbill |
-| Python | 3.10 |
-| 빌드 시스템 | ament_python |
-
-```
-~/
-├── ros2_ws/
-│   ├── src/
-│   │   ├── robot_arm_msgs/        # 커스텀 메시지 패키지 (신규)
-│   │   └── robot_arm_pkg/
-│   └── config/
-│       └── domain_map.yaml        # deploy/config/domain_map.yaml에서 복사
-│
-├── models/
-│   ├── gemma/
-│   │   ├── gemma_4_e2b_q4.gguf   # base 모델, 상시 적재
-│   │   └── adapters/              # 도메인별 LoRA, hot-swap
-│   │       ├── adapter_library.gguf
-│   │       └── adapter_recycling.gguf
-│   ├── embedding/                 # paraphrase-multilingual-MiniLM-L12-v2 (D=384)
-│   │   └── <model_files>          # HF hub 캐시 또는 사전 다운로드
-│   └── act/
-│       └── act.pth                # ACT Policy 체크포인트 (단일)
-│
-├── calibration/
-│   ├── camera_intrinsics.yaml
-│   ├── camera_robot_transform.yaml
-│   ├── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
-│   └── home_pose.yaml             # SO-101 follower rest 자세. record_real_teleop 첫 실행 시 자동 생성.
-│                                  # robot_controller_node /go_home 서비스가 같은 파일을 읽는다.
-│
-└── llama.cpp/
-    └── llama-server               # systemd 서비스, --jinja 활성
-```
-
-### 외부 PC (학습 / Isaac Sim)
-
-| 항목 | 내용 |
-|------|------|
-| OS | Ubuntu |
-| GPU VRAM | 16GB 이상 |
-| CUDA | 12.6 |
-| 주요 작업 | Gemma 도메인 LoRA 학습 (Unsloth QLoRA), ACT 모방학습, Isaac Sim teleop 데이터 수집 |
-
-> Sim teleop 데이터 수집용 Isaac Sim 은 이 외부 PC(로컬) 또는 EC2 클라우드
-> 워크스테이션(g6e.4xlarge)에서 구동한다. 환경별 셋업은
-> [`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md) /
-> [`sim/teleop/sim_cloud_teleop_setting.md`](sim/teleop/sim_cloud_teleop_setting.md) 참조.
-
----
-
-## 하드웨어
-
-| 항목 | 내용 |
-|------|------|
-| 카메라 | Intel RealSense (RGB-D) |
-| 로봇 팔 | SO-101 (HuggingFace LeRobot) |
-| 리더 팔 | SO-101 Leader (데이터 수집 시 사용) |
-
-> RealSense의 depth 스트림은 `verify_result`의 grasp 검증에만 사용된다.
-> ACT 학습 obs에는 RGB만 포함된다.
-
----
-
-## Jetson 환경 설치
-
-용도에 따라 두 가지 clone 모드를 권장합니다.
-
-| 워크플로우 | clone 범위 | 필요 스크립트 |
-|---|---|---|
-| **검증 / 배포만** | `deploy/` 만 (sparse-checkout 등) | `setup_jetson_base.sh` |
-| **학습 준비** (캘리브레이션 + 모방 데이터 수집) | PAI 전체 | `setup_jetson_base.sh` + `setup_calibration.sh` |
-
-저장소 루트의 스크립트로 환경을 구성합니다.
-
-| 스크립트 | 대상 작업 |
-|----------|-----------|
-| `deploy/scripts/setup_jetson_base.sh` | ROS2 + LeRobot 베이스 환경 (양쪽 워크플로우 공통) |
-| `deploy/scripts/setup_calibration.sh` | aruco_ros / easy_handeye2 — 학습 준비 시에만 필요 |
-
-```bash
-# 1. 기본 환경 설치 (양쪽 워크플로우 공통)
-chmod +x deploy/scripts/setup_jetson_base.sh
-./deploy/scripts/setup_jetson_base.sh
-
-# 2. 학습 준비 모드일 때만: 캘리브레이션 환경 추가 설치
-chmod +x deploy/scripts/setup_calibration.sh
-./deploy/scripts/setup_calibration.sh
-```
-
-### 소프트웨어 의존성 상세
-
-#### apt 패키지
-
-| 패키지 | 설치 스크립트 | 용도 |
-|--------|--------------|------|
-| `python3-opencv`, `libopencv-dev` | base, calibration | OpenCV |
-| `ros-humble-realsense2-camera/description` | base | RealSense 드라이버 |
-| `ros-humble-message-filters` | base | 카메라 토픽 동기화 |
-| `ros-humble-cv-bridge` | base | ROS2 ↔ OpenCV 변환 |
-| `ros-humble-robot-state-publisher` | calibration | URDF → TF |
-| `ros-humble-rqt`, `ros-humble-rqt-gui` | calibration | EasyHandeye2 GUI |
-| `aruco_opencv` (소스 빌드) | calibration | ArUco 마커 검출 |
-| `easy_handeye2` (소스 빌드) | calibration | Hand-Eye 캘리브레이션 |
-
-#### Python 패키지 (`requirements.txt`)
-
-| 패키지 | 버전 | 용도 |
-|--------|------|------|
-| setuptools | ≥58.2.0 | ROS2 Humble 빌드 호환 |
-| numpy | ≥1.21.0 | 이미지/텐서 데이터 처리 |
-| Pillow | - | 카메라 이미지 처리 |
-| requests | ≥2.28.0 | llama-server HTTP 통신 (agent_node, llama_server_manager) |
-| torch | ≥2.0.0 | ACT Policy 추론, SO-101 모터 제어, 임베딩 모델 추론 |
-| lerobot | 0.4.4 | SO-101 SDK, LeRobotDataset, ACTPolicy |
-| PyYAML | ≥6.0 | calibration / config YAML 파싱 |
-| sentence-transformers | ≥2.2.0 | `embedding_node` — paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
-
----
-
 ## 저장소 구조
 
 본 저장소는 **데이터 생성(sim) / 학습(training) / 배포(deploy)** 3가지 목적을
@@ -328,6 +93,51 @@ PAI/
 
 > `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/` 이중 폴더는 ament_python 패키지의
 > 표준 레이아웃이며, 바깥쪽은 ROS2 패키지명 / 안쪽은 Python 모듈 경로입니다.
+
+---
+
+## 아키텍처 핵심 결정 사항
+
+### Language-conditioned VLA 패턴 (RT-2 / OpenVLA / π0 계열)
+
+`agent_node`의 `look_scene` 함수는 Gemma 4 E2B VLM에 RGB 이미지를 입력하여 **자연어 타겟 묘사**(예: "the blue can on the right side of the table")를 출력한다. 이 텍스트는 `embedding_node`에서 벡터로 변환되어 `SubtaskCommand`에 실려 `act_node`로 전달되고, ACT는 이 임베딩을 observation 채널 중 하나로 사용한다. 이전 설계의 3D 좌표 산출 방식은 폐기되었다.
+
+**이 결정의 결과**:
+- `agent_node`는 depth/intrinsics/hand-eye calibration에 의존하지 않는다 (좌표 산출 책임 없음)
+- ACT가 RGB + 언어 임베딩으로 perception을 직접 학습 (end-to-end 표현 학습)
+- Sim/Real 라벨링 일관성 부담이 줄어든다 (좌표 정확도가 아닌 자연어 일치만 요구)
+- depth는 ACT 학습 obs에서 제외되며, `verify_result`의 grasp 검증 보조 신호로만 사용된다
+
+### `target_description` 형식 — 확정
+
+| 항목 | 값 |
+|------|----|
+| 언어 | **영어 고정** |
+| 스키마 | 반구조화 자연어 템플릿 `"the {attribute} {object} {spatial}"` |
+| 길이 | 5~15 단어 |
+| 필수 구성요소 | `attribute` (색/재질 등 변별 가능 1개), `object` (단일 명사), `spatial` (위치/관계 표현) |
+| 어휘 사전 | [`deploy/config/label_vocab.yaml`](deploy/config/label_vocab.yaml) — Sim/Real/배포 분포 일치 강제 |
+| 예시 | `"the blue can on the right side of the table"`, `"the transparent plastic next to the paper"` |
+| 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
+
+이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_real_teleop.py`는 vocabulary 외 입력을 거부한다.
+
+### 임베딩 모델 — 확정
+
+| 항목 | 값 |
+|------|----|
+| 모델 | **`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`** |
+| 차원 D | **384** |
+| 크기 | ~120MB |
+| 언어 | 다국어 (50+ 언어, 영어 코어가 가장 안정) |
+| 정규화 | L2 정규화 (코사인 유사도 기반 학습 친화) |
+| 강제 범위 | Sim 라벨링 / Real 수집 / ACT 학습 / 배포 전 구간 |
+
+paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](training/data_collection/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
+
+### 자율성 범위
+
+한 태스크 진행 중에는 도메인이 고정되며, `agent_node`는 동일 도메인 내에서 `look_scene → execute_subtask → verify_result` 루프만 반복한다. 자율 도메인 재분류, 동적 함수 생성 등 자율성 확장은 향후 작업으로 유보한다. `verify_result`는 최대 3회까지 반복하며, 그 이상은 사용자 개입 대기 상태로 진입한다.
 
 ---
 
@@ -458,6 +268,154 @@ PAI/
 
 ---
 
+## 실행 환경
+
+### Jetson
+
+| 항목 | 내용 |
+|------|------|
+| 하드웨어 | NVIDIA Jetson Orin Nano 8GB |
+| JetPack | 6.2.1 |
+| OS | Ubuntu 22.04 LTS |
+| CUDA | 12.6 |
+| ROS2 | Humble Hawksbill |
+| Python | 3.10 |
+| 빌드 시스템 | ament_python |
+
+```
+~/
+├── ros2_ws/
+│   ├── src/
+│   │   ├── robot_arm_msgs/        # 커스텀 메시지 패키지 (신규)
+│   │   └── robot_arm_pkg/
+│   └── config/
+│       └── domain_map.yaml        # deploy/config/domain_map.yaml에서 복사
+│
+├── models/
+│   ├── gemma/
+│   │   ├── gemma_4_e2b_q4.gguf   # base 모델, 상시 적재
+│   │   └── adapters/              # 도메인별 LoRA, hot-swap
+│   │       ├── adapter_library.gguf
+│   │       └── adapter_recycling.gguf
+│   ├── embedding/                 # paraphrase-multilingual-MiniLM-L12-v2 (D=384)
+│   │   └── <model_files>          # HF hub 캐시 또는 사전 다운로드
+│   └── act/
+│       └── act.pth                # ACT Policy 체크포인트 (단일)
+│
+├── calibration/
+│   ├── camera_intrinsics.yaml
+│   ├── camera_robot_transform.yaml
+│   ├── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
+│   └── home_pose.yaml             # SO-101 follower rest 자세. record_real_teleop 첫 실행 시 자동 생성.
+│                                  # robot_controller_node /go_home 서비스가 같은 파일을 읽는다.
+│
+└── llama.cpp/
+    └── llama-server               # systemd 서비스, --jinja 활성
+```
+
+### 외부 PC (학습 / Isaac Sim)
+
+| 항목 | 내용 |
+|------|------|
+| OS | Ubuntu |
+| GPU VRAM | 16GB 이상 |
+| CUDA | 12.6 |
+| 주요 작업 | Gemma 도메인 LoRA 학습 (Unsloth QLoRA), ACT 모방학습, Isaac Sim teleop 데이터 수집 |
+
+> Sim teleop 데이터 수집용 Isaac Sim 은 이 외부 PC(로컬) 또는 EC2 클라우드
+> 워크스테이션(g6e.4xlarge)에서 구동한다. 환경별 셋업은
+> [`sim/teleop/sim_local_teleop_setting.md`](sim/teleop/sim_local_teleop_setting.md) /
+> [`sim/teleop/sim_cloud_teleop_setting.md`](sim/teleop/sim_cloud_teleop_setting.md) 참조.
+
+---
+
+## 하드웨어
+
+| 항목 | 내용 |
+|------|------|
+| 카메라 | Intel RealSense (RGB-D) |
+| 로봇 팔 | SO-101 (HuggingFace LeRobot) |
+| 리더 팔 | SO-101 Leader (데이터 수집 시 사용) |
+
+> RealSense의 depth 스트림은 `verify_result`의 grasp 검증에만 사용된다.
+> ACT 학습 obs에는 RGB만 포함된다.
+
+---
+
+## Jetson 메모리 배분 (Orin Nano 8GB)
+
+| 컴포넌트 | RAM | 비고 |
+|----------|-----|------|
+| OS + ROS2 | ~1.5 GB | |
+| Gemma 4 E2B base (GGUF Q4) | ~3.0 GB | llama-server 상주 |
+| **도메인 LoRA (active 1개)** | ~수십 MB | **hot-swap — 동시 적재 금지** |
+| 임베딩 모델 | ~120 MB | paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
+| ACT Policy | ~0.3 GB | 상주 |
+| RGB-D 드라이버 + 버퍼 | ~0.3 GB | |
+| KV Cache / 기타 | ~1.0 GB | Gemma 컨텍스트 윈도우 |
+| **합계** | **~6.2 GB** | 도메인 수가 늘어도 합계 불변 |
+
+> Gemma LoRA는 llama-server에 HTTP `/lora-adapter` 요청으로 hot-swap (서브-초 latency).
+> 한 태스크가 끝나는 시점(verify_result 직후)에 스왑하면 안정적이다.
+
+---
+
+## Jetson 환경 설치
+
+용도에 따라 두 가지 clone 모드를 권장합니다.
+
+| 워크플로우 | clone 범위 | 필요 스크립트 |
+|---|---|---|
+| **검증 / 배포만** | `deploy/` 만 (sparse-checkout 등) | `setup_jetson_base.sh` |
+| **학습 준비** (캘리브레이션 + 모방 데이터 수집) | PAI 전체 | `setup_jetson_base.sh` + `setup_calibration.sh` |
+
+저장소 루트의 스크립트로 환경을 구성합니다.
+
+| 스크립트 | 대상 작업 |
+|----------|-----------|
+| `deploy/scripts/setup_jetson_base.sh` | ROS2 + LeRobot 베이스 환경 (양쪽 워크플로우 공통) |
+| `deploy/scripts/setup_calibration.sh` | aruco_ros / easy_handeye2 — 학습 준비 시에만 필요 |
+
+```bash
+# 1. 기본 환경 설치 (양쪽 워크플로우 공통)
+chmod +x deploy/scripts/setup_jetson_base.sh
+./deploy/scripts/setup_jetson_base.sh
+
+# 2. 학습 준비 모드일 때만: 캘리브레이션 환경 추가 설치
+chmod +x deploy/scripts/setup_calibration.sh
+./deploy/scripts/setup_calibration.sh
+```
+
+### 소프트웨어 의존성 상세
+
+#### apt 패키지
+
+| 패키지 | 설치 스크립트 | 용도 |
+|--------|--------------|------|
+| `python3-opencv`, `libopencv-dev` | base, calibration | OpenCV |
+| `ros-humble-realsense2-camera/description` | base | RealSense 드라이버 |
+| `ros-humble-message-filters` | base | 카메라 토픽 동기화 |
+| `ros-humble-cv-bridge` | base | ROS2 ↔ OpenCV 변환 |
+| `ros-humble-robot-state-publisher` | calibration | URDF → TF |
+| `ros-humble-rqt`, `ros-humble-rqt-gui` | calibration | EasyHandeye2 GUI |
+| `aruco_opencv` (소스 빌드) | calibration | ArUco 마커 검출 |
+| `easy_handeye2` (소스 빌드) | calibration | Hand-Eye 캘리브레이션 |
+
+#### Python 패키지 (`requirements.txt`)
+
+| 패키지 | 버전 | 용도 |
+|--------|------|------|
+| setuptools | ≥58.2.0 | ROS2 Humble 빌드 호환 |
+| numpy | ≥1.21.0 | 이미지/텐서 데이터 처리 |
+| Pillow | - | 카메라 이미지 처리 |
+| requests | ≥2.28.0 | llama-server HTTP 통신 (agent_node, llama_server_manager) |
+| torch | ≥2.0.0 | ACT Policy 추론, SO-101 모터 제어, 임베딩 모델 추론 |
+| lerobot | 0.4.4 | SO-101 SDK, LeRobotDataset, ACTPolicy |
+| PyYAML | ≥6.0 | calibration / config YAML 파싱 |
+| sentence-transformers | ≥2.2.0 | `embedding_node` — paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
+
+---
+
 ## 빌드 및 실행
 
 ### 빌드 단계 개요
@@ -472,6 +430,66 @@ llama-server (Gemma base GGUF, `--jinja`) 를 systemd 로 상시 구동하고, R
 `robot_controller_node`) 를 띄운 뒤 `/user_command` 토픽으로 사용자 명령을 발행합니다.
 
 > 빌드·실행의 자세한 명령은 [`deploy/README.md`](deploy/README.md) 참조.
+
+---
+
+## 전체 파이프라인
+
+```
+하드웨어 세팅 (카메라 캘리브레이션)
+  │
+  ├─▶ Isaac Sim ACT 시연 데이터 수집 (Sim teleop — EC2 또는 로컬)
+  │     실물 SO-101 Leader → Isaac Sim follower(디지털 트윈) teleop
+  │     + Domain Randomization
+  │     multi-target 장면 구성 (같은 시각에 여러 후보 객체 배치)
+  │     언어 라벨: Gemma 4 E2B 자체 라벨링 + 외부 LLM paraphrase 혼합
+  │     → Sim LeRobotDataset (~500 에피소드)
+  │
+  ├─▶ Gemma 도메인 LoRA 학습 (외부 PC)
+  │     ├─ 도메인별 PDF/문서 → LLM Q&A 자동 생성 → 필터링
+  │        3종 데이터 혼합: 도메인 지식 / 함수 호출 / 검증 시나리오
+  │     ├─ Unsloth QLoRA 파인튜닝 (예: RTX 5070급)
+  │     └─ GGUF 변환 → adapter_<domain>.gguf (각 수십 MB)
+  │        adapter_library.gguf, adapter_recycling.gguf, ...
+  │
+  ▼
+실제 시연 데이터 수집 (Jetson, 축소 운영)
+  teleop 기반 record_real_teleop.py (agent_node 미사용)
+  → Real LeRobotDataset (50~100 에피소드)
+  (observation.state + observation.language_embedding + observation.images.top + action)
+  │
+  └─▶ ACT Co-training (외부 PC, LeRobot 0.4.4 멀티 데이터셋)
+        Sim + Real 혼합 학습 → act.pth
+            │
+            ▼
+        통합 배포 (Sim 환경 + Jetson 실물 동일 노드 구성)
+            llama-server (Gemma 4 E2B base + LoRA hot-swap, systemd 상시)
+            + agent_node (오케스트레이션 함수 호출 루프)
+            + embedding_node (텍스트 → 벡터 임베딩 서비스)
+            + act_node
+            │
+            ▼
+        검증
+            Sim rollout / Jetson 실물 모두 동일 노드 구성으로 평가
+            (학습에 쓰지 않은 DR 파라미터로 held-out)
+```
+
+> Sim 데이터 수집과 Gemma 도메인 LoRA 학습은 독립적으로 병렬 진행 가능. Sim·Real
+> 시연 데이터 모두 ACT 학습 데이터 확보가 목적이므로 `agent_node` 없이 실물 SO-101
+> Leader teleop 으로 수집한다. Sim 은 Isaac Sim follower(디지털 트윈)를, Real 은
+> 실물 follower 를 leader 로 조종한다.
+>
+> Sim과 Jetson 실물은 **동일 노드 구성**(camera_node, agent_node,
+> llama_server_manager, embedding_node, act_node, robot_controller_node)으로
+> 운영하며 검증도 같은 파이프라인에서 수행한다. Gemma LoRA는 도메인 1개만
+> 적재되고, 사용자 명령 → 도메인 분류 → llama-server `/lora-adapter` HTTP
+> 요청으로 hot-swap된다.
+>
+> ACT는 Sim-to-Real Co-training 방식으로 학습한다. Sim 측 Domain Randomization:
+> 조명·텍스처·카메라 FOV, 질량·마찰·PD 게인, joint/이미지 노이즈.
+> Sim action space는 실기와 동일하게 position control. Sim 시연을 실물 SO-101
+> Leader teleop 으로 수집하므로 Sim·Real 의 action 생성 경로(같은 Leader, 같은
+> LeRobot SDK)가 일치하여 두 데이터셋의 행동 분포가 동질화된다.
 
 ---
 
@@ -769,24 +787,6 @@ datasets = [
 
 > Sim/Real의 `language_embedding` 차원과 임베딩 모델이 다르면 학습 불가.
 > 데이터 수집 시점부터 동일 모델 사용 보장.
-
----
-
-## Jetson 메모리 배분 (Orin Nano 8GB)
-
-| 컴포넌트 | RAM | 비고 |
-|----------|-----|------|
-| OS + ROS2 | ~1.5 GB | |
-| Gemma 4 E2B base (GGUF Q4) | ~3.0 GB | llama-server 상주 |
-| **도메인 LoRA (active 1개)** | ~수십 MB | **hot-swap — 동시 적재 금지** |
-| 임베딩 모델 | ~120 MB | paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
-| ACT Policy | ~0.3 GB | 상주 |
-| RGB-D 드라이버 + 버퍼 | ~0.3 GB | |
-| KV Cache / 기타 | ~1.0 GB | Gemma 컨텍스트 윈도우 |
-| **합계** | **~6.2 GB** | 도메인 수가 늘어도 합계 불변 |
-
-> Gemma LoRA는 llama-server에 HTTP `/lora-adapter` 요청으로 hot-swap (서브-초 latency).
-> 한 태스크가 끝나는 시점(verify_result 직후)에 스왑하면 안정적이다.
 
 ---
 
