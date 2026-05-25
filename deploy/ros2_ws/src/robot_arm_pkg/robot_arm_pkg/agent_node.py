@@ -68,12 +68,9 @@ from robot_arm_msgs.msg import (
 )
 from robot_arm_msgs.srv import EmbedText
 
-
-# verify_result 결과 상태 (README "verify_result 함수 명세")
-VERIFY_SUCCESS = 'SUCCESS'
-VERIFY_FAIL    = 'FAIL'
-VERIFY_PARTIAL = 'PARTIAL'
-VERIFY_UNCLEAR = 'UNCLEAR'
+# 시스템 프롬프트 / 상태 enum SSoT — robot_arm_pkg.prompts
+# (학습 측 generate_function_call_qa 도 같은 모듈을 import 한다)
+from robot_arm_pkg.prompts import SYSTEM_PROMPT, VerifyStatus, ExecStatus  # noqa: F401
 
 
 class AgentNode(Node):
@@ -337,8 +334,8 @@ class AgentNode(Node):
 
         TODO: 구현 시 결정
           - llama-server /v1/chat/completions 페이로드 (이미지 base64 임베드)
-          - 시스템 프롬프트는 generate_function_call_qa.FUNCTION_CALL_SYSTEM_PROMPT와
-            정확히 동일한 문자열 사용 (LoRA 학습 분포와 일치 보장)
+          - 시스템 프롬프트는 robot_arm_pkg.prompts.SYSTEM_PROMPT 를 그대로 사용
+            (LoRA 학습 분포와 일치 보장 — Cat-B 합성기도 같은 상수를 import)
           - 응답 파싱(JSON 함수 호출) 또는 그냥 본문 텍스트
           - 최신 RGB 미수신 시 처리 정책 (대기 / 즉시 실패)
         """
@@ -355,21 +352,26 @@ class AgentNode(Node):
         """
         raise NotImplementedError("[agent_node] _call_execute_subtask() 미구현")
 
-    def _call_verify_result(self) -> str:
+    def _call_verify_result(self, original_command: str) -> str:
         """
-        verify_result 함수 명세 (README L352-373) 구현.
+        verify_result 함수 명세 (README "verify_result 함수 명세") 구현.
+
+        Stateless 인터페이스로 freeze (2026-05-25):
+          Gemma 가 함수 호출 시 original_command 를 args 로 전달하며, agent_node
+          는 self._user_command 캐시 대신 인자를 우선 사용한다 (Cat-B 학습 분포
+          및 robot_arm_pkg.prompts.SYSTEM_PROMPT 와 일치).
 
         입력:
+          - original_command (인자): Gemma 가 전달하는 원본 사용자 명령 문자열
           - 현재 RGB / depth (latest-only 캐시)
-          - 원본 user_command
-          - 직전 subtask 정보 (subtask_id / target_description)
+          - 직전 subtask 정보 (subtask_id / target_description) — 노드 상태
 
         처리:
           1) Gemma 시각 검증
           2) depth grasp 보조 검증 — _depth_grasp_check()
           3) 종합 판정 — README 미확정 #4 (depth 우선 / Gemma 우선 / 가중평균)
 
-        출력: VERIFY_SUCCESS | VERIFY_FAIL | VERIFY_PARTIAL | VERIFY_UNCLEAR
+        출력: VerifyStatus.SUCCESS | FAIL | PARTIAL | UNCLEAR (문자열)
         """
         raise NotImplementedError("[agent_node] _call_verify_result() 미구현")
 

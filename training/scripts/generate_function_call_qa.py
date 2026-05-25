@@ -20,7 +20,7 @@ Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력이 모두 같은 분포가 �
 출력 포맷 (JSONL 한 줄당 하나의 sample):
   {
     "messages": [
-      {"role": "system",  "content": <FUNCTION_CALL_SYSTEM_PROMPT>},
+      {"role": "system",  "content": <SYSTEM_PROMPT>},   # robot_arm_pkg.prompts
       {"role": "user",    "content": "쓰레기 좀 정리해줘"},
       {"role": "assistant","content": "{\\"function\\": \\"look_scene\\",
                                        \\"args\\": {\\"prompt\\": \\"...\\"}}"}
@@ -55,6 +55,7 @@ import argparse
 import json
 import os
 import random
+import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -62,32 +63,19 @@ import yaml
 
 
 # ──────────────────────────────────────────────
-# 함수 시그니처 — agent_node와 정확히 일치해야 함
-# (agent_node._run_function_loop 구현 시점에 동기화)
+# SSoT import — 시스템 프롬프트와 상태 enum 은 robot_arm_pkg.prompts 에 있다.
+# training/scripts/ 는 패키지가 아니므로 sys.path 에 ROS2 패키지 루트를 추가해
+# robot_arm_pkg 를 import 한다.
 # ──────────────────────────────────────────────
 
-FUNCTION_CALL_SYSTEM_PROMPT = (
-    '사용 가능 함수:\n'
-    '  look_scene(prompt: str) -> str\n'
-    '      RGB 장면을 보고 잡을 객체의 자연어 묘사를 반환한다.\n'
-    '      반환 형식 (엄격): "the {attribute} {object} {spatial}"\n'
-    '      - 영어 고정, 5~15 단어\n'
-    '      - attribute: 색/재질/크기 중 변별 가능한 것 1개\n'
-    '      - object:    can / plastic / paper / book 등 단일 명사\n'
-    '      - spatial:   위치/관계 표현 (예: "on the right side of the table")\n'
-    '      예: "the blue can on the right side of the table"\n'
-    '\n'
-    '  execute_subtask(target_description: str) -> str\n'
-    '      look_scene의 반환 형식 그대로 받아 ACT에 전달. SUCCESS/FAIL/TIMEOUT 중 하나 반환.\n'
-    '\n'
-    '  verify_result(original_command: str) -> str\n'
-    '      직전 subtask 완료 여부 시각 검증. SUCCESS/FAIL/PARTIAL/UNCLEAR 중 하나 반환.\n'
-    '\n'
-    '응답 규칙:\n'
-    '  - 함수 호출은 JSON 한 객체로만 응답: '
-    '{"function": "<name>", "args": {...}}\n'
-    '  - 추가 자연어 설명/추론 텍스트는 응답에 포함하지 않는다.\n'
-)
+_ROBOT_ARM_PKG_ROOT = os.path.abspath(os.path.join(
+    os.path.dirname(__file__),
+    '..', '..', 'deploy', 'ros2_ws', 'src', 'robot_arm_pkg',
+))
+if _ROBOT_ARM_PKG_ROOT not in sys.path:
+    sys.path.insert(0, _ROBOT_ARM_PKG_ROOT)
+
+from robot_arm_pkg.prompts import SYSTEM_PROMPT, VerifyStatus, ExecStatus  # noqa: E402,F401
 
 
 # ──────────────────────────────────────────────
@@ -154,13 +142,12 @@ def sample_description(vocab: dict, rng: random.Random) -> str:
 # ──────────────────────────────────────────────
 
 def build_system_prompt() -> str:
-    """agent_node가 런타임에 보내는 시스템 프롬프트와 정확히 일치시켜야 한다.
+    """robot_arm_pkg.prompts.SYSTEM_PROMPT 를 그대로 반환.
 
-    동기화 책임:
-      - agent_node._run_function_loop 구현 시 본 상수와 동일 문자열 사용
-      - 변경 시 LoRA 재학습 필요
+    agent_node 와 본 합성기는 같은 SSoT 상수를 import 하므로 두 곳의 문자열은
+    자동으로 일치한다. 변경 시 LoRA 재학습 필요.
     """
-    return FUNCTION_CALL_SYSTEM_PROMPT
+    return SYSTEM_PROMPT
 
 
 # ──────────────────────────────────────────────

@@ -352,7 +352,7 @@ PAI/
 | 메시지 | 주요 필드 | 발행자 → 구독자 |
 |--------|----------|-----------------|
 | `SubtaskCommand` | `string subtask_id`, `string domain`, `string target_description`, `float32[] language_embedding` | `agent_node` → `act_node` |
-| `ExecutionStatus` | `string subtask_id`, `string status` (success/fail/timeout), `string failure_reason`, `float32 confidence` | `act_node` → `agent_node` |
+| `ExecutionStatus` | `string subtask_id`, `string status` (SUCCESS/FAIL/TIMEOUT — `robot_arm_pkg.prompts.ExecStatus`), `string failure_reason`, `float32 confidence` | `act_node` → `agent_node` |
 | `DomainSelection` | `string domain`, `float32 scale` | `agent_node` → `llama_server_manager` |
 | `AgentLog` | `string timestamp`, `string thought`, `string tool_called`, `string tool_args`, `string tool_result` | `agent_node` → 디버그 |
 
