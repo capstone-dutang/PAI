@@ -101,7 +101,7 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 | 정규화 | L2 정규화 (코사인 유사도 기반 학습 친화) |
 | 강제 범위 | Sim 라벨링 / Real 수집 / ACT 학습 / 배포 전 구간 |
 
-paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](training/scripts/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
+paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](training/data_collection/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
 
 ### 자율성 범위
 
@@ -308,15 +308,15 @@ PAI/
 │       └── sim_local_teleop_setting.md         # 로컬 Isaac Sim teleop 셋업 가이드
 │
 ├── training/                                   # [학습 데이터 수집 + 모델 학습]
-│   ├── data_collection/                        # 시연 데이터 수집 스크립트 (신규)
+│   ├── data_collection/                        # 시연 데이터 수집 + 후처리 스크립트
 │   │   ├── record_real_teleop.py               # Jetson 실기 teleop 수집 (ROS2)
-│   │   └── record_sim_teleop.py                # Isaac Sim teleop 수집 (직접 API)
+│   │   ├── record_sim_teleop.py                # Isaac Sim teleop 수집 (직접 API)
+│   │   └── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
 │   └── scripts/
 │       ├── generate_qa_from_pdf.py             # 도메인 PDF → Q&A (도메인 지식)
 │       ├── generate_function_call_qa.py        # 함수 호출 시나리오 합성 (신규)
 │       ├── generate_verify_qa.py               # 검증 시나리오 합성 (신규)
 │       ├── merge_qa_dataset.py                 # 3종 Q&A 혼합 (신규)
-│       ├── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
 │       ├── train_gemma_qlora.py                # Unsloth QLoRA 학습
 │       ├── convert_lora_to_gguf.sh             # GGUF 변환
 │       └── train_act_cotraining.sh             # ACT Co-training
@@ -681,7 +681,7 @@ python <repo>/training/data_collection/record_real_teleop.py \
   --num-episodes    50
 
 # 5. 수집 종료 후 paraphrase + 임베딩 후처리 (외부 PC 또는 Jetson 어디서나)
-python <repo>/training/scripts/postprocess_real_labels.py \
+python <repo>/training/data_collection/postprocess_real_labels.py \
   --dataset                ~/datasets/myname/dataset_real \
   --labels-jsonl           labels_myname_dataset_real.jsonl \
   --external-llm           gpt-4 \
@@ -700,7 +700,7 @@ python <repo>/training/scripts/postprocess_real_labels.py \
 > - 자유 텍스트 입력 금지 (vocabulary 외 입력 거부)
 > - 영어 고정 → Sim 라벨 / 배포 시 Gemma 출력과 분포 일치
 > - 같은 작업의 라벨이 너무 다르지 않도록 자동 보장
-> - 수집 후 [`postprocess_real_labels.py`](training/scripts/postprocess_real_labels.py)로
+> - 수집 후 [`postprocess_real_labels.py`](training/data_collection/postprocess_real_labels.py)로
 >   paraphrase 3개 + 임베딩을 일괄 부여 → ACT 학습 시 random augmentation
 >
 > **Multi-target shortcut 방지 가이드라인** (50–100 에피소드 분포):
@@ -996,7 +996,7 @@ datasets = [
 | `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Gemma 도메인 LoRA 학습, llama-server 구동, embedding_node |
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
-| `training/scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
+| `training/data_collection/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `training/data_collection/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
