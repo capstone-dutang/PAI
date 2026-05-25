@@ -1,6 +1,8 @@
 """
 calibration.launch.py
 
+실행 위치: Jetson (학습 준비 단계 — PAI 전체 clone 권장).
+
 카메라-로봇 Hand-Eye 캘리브레이션 (Eye-to-Hand)
   카메라 고정, SO-101 엔드이펙터에 ArUco 마커 부착
 

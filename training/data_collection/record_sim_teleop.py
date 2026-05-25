@@ -1,6 +1,8 @@
 """
 record_sim_teleop.py
 
+실행 위치: Isaac Sim Python (외부 PC 로컬 또는 EC2 클라우드).
+
 Isaac Sim teleop 기반 ACT 학습용 Sim 시연 데이터 수집 (Isaac Sim 직접 API).
 
 [D1] 로컬 통합 — Isaac Sim · SO-101 Leader · 본 스크립트를 한 Ubuntu 머신에서
@@ -16,7 +18,7 @@ Isaac Sim teleop 기반 ACT 학습용 Sim 시연 데이터 수집 (Isaac Sim 직
   action                         (6,)    float32 — 실물 Leader 관절 값 (SDK .pos)
 
 실행 — 반드시 Isaac Sim 의 python 으로 (시스템 python 아님):
-  ~/isaacsim/python.sh sim/teleop/record_sim_teleop.py \\
+  ~/isaacsim/python.sh training/data_collection/record_sim_teleop.py \\
       --scene-usd        sim/scenes/base_scene.usd \\
       --teleop-port      /dev/ttyACM0 \\
       --dataset-repo-id  myname/dataset_sim \\

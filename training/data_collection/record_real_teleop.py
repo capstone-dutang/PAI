@@ -1,6 +1,8 @@
 """
 record_real_teleop.py
 
+실행 위치: Jetson (학습 준비 단계 — PAI 전체 clone + `source ~/ros2_ws/install/setup.bash` 필요).
+
 SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립트.
 
 `agent_node` / Gemma LoRA는 사용하지 않는다. SO-101 리더(작업자가 직접 조작)의
@@ -21,7 +23,7 @@ SO-101 teleop 기반 ACT 학습용 시연 데이터 수집 스크립트.
       예: "the blue can on the right side of the table"
 
   자유 텍스트 입력 금지 — 영어 템플릿 고정으로 Sim/Real 분포 일치 보장.
-  수집 후 paraphrase는 별도 scripts/postprocess_real_labels.py로 후처리.
+  수집 후 paraphrase는 별도 training/scripts/postprocess_real_labels.py로 후처리.
 
 전제조건 (README "데이터 수집" 참조):
   1. realsense2_camera 드라이버 실행 (align_depth.enable:=true)

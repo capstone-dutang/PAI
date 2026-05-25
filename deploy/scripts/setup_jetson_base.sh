@@ -3,7 +3,9 @@
 # setup_jetson_base.sh
 #
 # Jetson 기본 환경 설치 스크립트
-# 대상 작업: 모방 데이터 수집, 실제 로봇 구동
+# 양쪽 워크플로우 공통 베이스:
+#   - 검증/배포 (deploy/만 clone): 실제 로봇 구동
+#   - 학습 준비 (PAI 전체 clone): 모방 데이터 수집 (record_real_teleop.py)
 #
 # 전제 조건:
 #   - Jetson Orin Nano, JetPack 6.2 (L4T 36.4.x)

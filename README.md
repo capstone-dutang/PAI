@@ -101,7 +101,7 @@ RGB 카메라와 **Gemma 4 E2B VLA 에이전트**로 환경 도메인(도서관�
 | 정규화 | L2 정규화 (코사인 유사도 기반 학습 친화) |
 | 강제 범위 | Sim 라벨링 / Real 수집 / ACT 학습 / 배포 전 구간 |
 
-paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
+paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README Sim 데이터 생성](#학습-파이프라인--sim-데이터-생성))과 Real의 [`postprocess_real_labels.py`](training/scripts/postprocess_real_labels.py) 증강이 같은 임베딩 공간 안에서 자연스럽게 일반화된다.
 
 ### 자율성 범위
 
@@ -111,7 +111,7 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 
 ## 실행 환경
 
-### Jetson (데이터 수집 / 배포)
+### Jetson
 
 | 항목 | 내용 |
 |------|------|
@@ -185,19 +185,26 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 
 ## Jetson 환경 설치
 
+용도에 따라 두 가지 clone 모드를 권장합니다.
+
+| 워크플로우 | clone 범위 | 필요 스크립트 |
+|---|---|---|
+| **검증 / 배포만** | `deploy/` 만 (sparse-checkout 등) | `setup_jetson_base.sh` |
+| **학습 준비** (캘리브레이션 + 모방 데이터 수집) | PAI 전체 | `setup_jetson_base.sh` + `setup_calibration.sh` |
+
 저장소 루트의 스크립트로 환경을 구성합니다.
 
 | 스크립트 | 대상 작업 |
 |----------|-----------|
-| `deploy/scripts/setup_jetson_base.sh` | 모방 데이터 수집, 실제 로봇 구동 |
-| `deploy/scripts/setup_calibration.sh` | 카메라 캘리브레이션 — base 설치 후 실행 |
+| `deploy/scripts/setup_jetson_base.sh` | ROS2 + LeRobot 베이스 환경 (양쪽 워크플로우 공통) |
+| `deploy/scripts/setup_calibration.sh` | aruco_ros / easy_handeye2 — 학습 준비 시에만 필요 |
 
 ```bash
-# 1. 기본 환경 설치 (데이터 수집 / 배포 공통)
+# 1. 기본 환경 설치 (양쪽 워크플로우 공통)
 chmod +x deploy/scripts/setup_jetson_base.sh
 ./deploy/scripts/setup_jetson_base.sh
 
-# 2. 캘리브레이션 환경 추가 설치 (필요 시)
+# 2. 학습 준비 모드일 때만: 캘리브레이션 환경 추가 설치
 chmod +x deploy/scripts/setup_calibration.sh
 ./deploy/scripts/setup_calibration.sh
 ```
@@ -239,7 +246,7 @@ top-level 폴더로 분리하여 관리합니다.
 
 ```
 PAI/
-├── deploy/                                     # [배포 목적] Jetson에서 실행
+├── deploy/                                     # [배포/검증] Jetson — 자체 완결 (deploy/만 clone으로 검증 가능)
 │   ├── scripts/
 │   │   ├── setup_jetson_base.sh                # 기본 환경 설치 (데이터 수집 / 배포)
 │   │   └── setup_calibration.sh                # 캘리브레이션 환경 설치
@@ -268,9 +275,6 @@ PAI/
 │               │   ├── llama_server_manager.py # llama-server LoRA hot-swap (신규)
 │               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
 │               │   └── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
-│               ├── scripts/
-│               │   ├── record_real_teleop.py        # 데이터 수집 스크립트 (신규)
-│               │   └── postprocess_real_labels.py   # Real 라벨 paraphrase + 임베딩 후처리 (신규)
 │               ├── launch/
 │               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
 │               │   ├── so101.urdf
@@ -281,7 +285,7 @@ PAI/
 │               ├── setup.cfg
 │               └── requirements.txt
 │
-├── sim/                                        # [데이터 수집] Isaac Sim teleop 전용
+├── sim/                                        # Isaac Sim 자산 + teleop 인프라
 │   ├── generate_language_labels.py             # Sim 에피소드 언어 라벨링
 │   ├── assets/                                 # URDF→USD 변환 자산
 │   │   ├── so101_new_calib/                    # SO-101 USD (Isaac Sim 임포트 결과)
@@ -297,19 +301,22 @@ PAI/
 │   │   ├── setup_recycling_objects.py          # YCB 분리수거 객체 래퍼 USD 생성
 │   │   ├── measure_placement.py                # placement 실측 (table_top_z·bin_exclusion)
 │   │   └── probe_reach.py                      # 로봇 가동범위(reach) 실측
-│   └── teleop/                                 # Isaac Sim teleop 데이터 수집
-│       ├── record_sim_teleop.py                # Sim teleop 시연 수집 (씬·DR·녹화 통합, 신규)
+│   └── teleop/                                 # Isaac Sim teleop 인프라
 │       ├── lerobot_to_rosbridge.py             # 실물 leader → EC2 rosbridge 브리지 (클라우드)
 │       ├── lerobot_to_ros2.py                  # 실물 leader → ROS2 직접 publish 브리지 (로컬)
 │       ├── sim_cloud_teleop_setting.md         # 클라우드(EC2) Isaac Sim teleop 셋업 가이드
 │       └── sim_local_teleop_setting.md         # 로컬 Isaac Sim teleop 셋업 가이드
 │
-├── training/                                   # [학습 목적] 외부 PC 전용
+├── training/                                   # [학습 데이터 수집 + 모델 학습]
+│   ├── data_collection/                        # 시연 데이터 수집 스크립트 (신규)
+│   │   ├── record_real_teleop.py               # Jetson 실기 teleop 수집 (ROS2)
+│   │   └── record_sim_teleop.py                # Isaac Sim teleop 수집 (직접 API)
 │   └── scripts/
 │       ├── generate_qa_from_pdf.py             # 도메인 PDF → Q&A (도메인 지식)
 │       ├── generate_function_call_qa.py        # 함수 호출 시나리오 합성 (신규)
 │       ├── generate_verify_qa.py               # 검증 시나리오 합성 (신규)
 │       ├── merge_qa_dataset.py                 # 3종 Q&A 혼합 (신규)
+│       ├── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
 │       ├── train_gemma_qlora.py                # Unsloth QLoRA 학습
 │       ├── convert_lora_to_gguf.sh             # GGUF 변환
 │       └── train_act_cotraining.sh             # ACT Co-training
@@ -663,7 +670,7 @@ ros2 run robot_arm_pkg embedding_node \
   --ros-args -p model_path:=~/models/embedding/
 
 # 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
-python ~/ros2_ws/src/robot_arm_pkg/scripts/record_real_teleop.py \
+python <repo>/training/data_collection/record_real_teleop.py \
   --robot-port      /dev/ttyACM1 \
   --robot-id        follower \
   --teleop-port     /dev/ttyACM0 \
@@ -674,7 +681,7 @@ python ~/ros2_ws/src/robot_arm_pkg/scripts/record_real_teleop.py \
   --num-episodes    50
 
 # 5. 수집 종료 후 paraphrase + 임베딩 후처리 (외부 PC 또는 Jetson 어디서나)
-python ~/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py \
+python <repo>/training/scripts/postprocess_real_labels.py \
   --dataset                ~/datasets/myname/dataset_real \
   --labels-jsonl           labels_myname_dataset_real.jsonl \
   --external-llm           gpt-4 \
@@ -693,7 +700,7 @@ python ~/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py \
 > - 자유 텍스트 입력 금지 (vocabulary 외 입력 거부)
 > - 영어 고정 → Sim 라벨 / 배포 시 Gemma 출력과 분포 일치
 > - 같은 작업의 라벨이 너무 다르지 않도록 자동 보장
-> - 수집 후 [`postprocess_real_labels.py`](deploy/ros2_ws/src/robot_arm_pkg/scripts/postprocess_real_labels.py)로
+> - 수집 후 [`postprocess_real_labels.py`](training/scripts/postprocess_real_labels.py)로
 >   paraphrase 3개 + 임베딩을 일괄 부여 → ACT 학습 시 random augmentation
 >
 > **Multi-target shortcut 방지 가이드라인** (50–100 에피소드 분포):
@@ -890,7 +897,7 @@ Sim API 로 직접 제어하며 (ROS2 미사용 — [D1]·[D4]), 매 에피소�
 
 ```bash
 # 1. Sim teleop 시연 데이터 수집 (~500 에피소드) — 반드시 Isaac Sim 의 python 으로 실행
-~/isaacsim/python.sh sim/teleop/record_sim_teleop.py \
+~/isaacsim/python.sh training/data_collection/record_sim_teleop.py \
   --scene-usd        sim/scenes/base_scene.usd \
   --teleop-port      /dev/ttyACM0 \
   --dataset-repo-id  myname/dataset_sim \
@@ -989,8 +996,8 @@ datasets = [
 | `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Gemma 도메인 LoRA 학습, llama-server 구동, embedding_node |
 | `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
-| `scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
-| `sim/teleop/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
+| `training/scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
+| `training/data_collection/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
 | `sim/config/multi_target_scenes.yaml` | placement 의 spawn_region·table_top_z·bin_exclusion 실측값 (현재 placeholder — Isaac Sim 에서 측정) | base_scene.usd 실측 |
@@ -1007,7 +1014,7 @@ datasets = [
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
 > - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
-> - `scripts/record_real_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
+> - `training/data_collection/record_real_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
 > - `deploy/config/domain_map.yaml` 템플릿
 > - `deploy/config/label_vocab.yaml` (데이터 수집 / Cat-B / Sim 공유 vocabulary)
 > - `camera_node.py`
@@ -1019,7 +1026,7 @@ datasets = [
 > **이전 설계 대비 추가 제거 항목**: `agent_node`의 3D 좌표 산출 로직,
 > `observation.target_position` 채널, `SubtaskCommand`의 `target_class` /
 > `target_position` 필드, depth 노이즈 DR 항목, `sim/generate_act_dataset.py`
-> (규칙기반 IK 전문가 — `sim/teleop/record_sim_teleop.py` teleop 수집으로 대체).
+> (규칙기반 IK 전문가 — `training/data_collection/record_sim_teleop.py` teleop 수집으로 대체).
 
 ---
 
@@ -1037,7 +1044,7 @@ datasets = [
 ### Sim teleop 수집 (`record_sim_teleop.py`) — [D1]~[D9] 확정
 
 설계 결정 [D1]~[D9]는 모두 확정됐다. **확정 내용 전문은
-[`record_sim_teleop.py`](sim/teleop/record_sim_teleop.py) 파일 헤더 주석으로
+[`record_sim_teleop.py`](training/data_collection/record_sim_teleop.py) 파일 헤더 주석으로
 이관**했다 (결정과 코드를 한곳에서 관리). 본 문서 곳곳의 `[D1]`~`[D9]` 참조는
 그 주석의 항목과 대응한다.
 

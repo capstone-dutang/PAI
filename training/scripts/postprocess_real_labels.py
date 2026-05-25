@@ -1,6 +1,8 @@
 """
 postprocess_real_labels.py
 
+실행 위치: Jetson 또는 외부 PC (ROS2 의존 없음, pure Python).
+
 데이터 수집 후처리 — record_real_teleop.py가 수집한 LeRobotDataset 에피소드들에
 외부 LLM으로 paraphrase를 추가하고, paraphrase 풀의 임베딩을 함께 계산하여
 LeRobotDataset frame/episode metadata에 기록한다.
