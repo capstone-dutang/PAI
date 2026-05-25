@@ -781,7 +781,8 @@ class SceneManager:
     매 에피소드 multi-target 객체 배치를 Isaac Sim USD API 로 직접 수행한다 ([D2]).
 
     배치 — `multi_target_scenes.yaml` 의 `placement` 규칙:
-      - spawn_region(테이블 위 ∩ 로봇 가동범위) 안에서 (x,y) rejection sampling
+      - spawn_region(테이블 사각형) ∩ reach(가동범위 환형섹터, 선택적) 안에서
+        (x,y) rejection sampling — reach 미정의면 사각형만
       - 빈(bin) footprint·기배치 객체와 겹치면 재샘플 (min_separation)
       - z 는 world bounding box 로 객체 바닥을 table_top_z 에 맞춤
       - yaw 무작위 (DR 다양성)
@@ -809,6 +810,22 @@ class SceneManager:
         self._bin_exclusion = list(p.get('bin_exclusion') or [])
         self._max_attempts  = int(p.get('max_sample_attempts', 100))
         self._lib = Path(scene_cfg.object_library)
+
+        # reach (annular sector, 선택적) — 사각형 spawn_region ∩ 환형 가동범위.
+        # 없으면 None → _in_reach 가 항상 True (이전 사각형-only 동작).
+        reach_cfg = p.get('reach')
+        if isinstance(reach_cfg, dict):
+            cx, cy   = reach_cfg['center']
+            r_lo, r_hi   = reach_cfg['r_range']
+            th_lo, th_hi = reach_cfg['theta_range_deg']
+            self._reach = {
+                'cx': float(cx), 'cy': float(cy),
+                'r_min': float(r_lo), 'r_max': float(r_hi),
+                'th_min': math.radians(float(th_lo)),
+                'th_max': math.radians(float(th_hi)),
+            }
+        else:
+            self._reach = None
 
         # 배치 객체 컨테이너 Xform
         UsdGeom.Xform.Define(self.sim.stage, self.OBJECTS_ROOT)
@@ -884,7 +901,7 @@ class SceneManager:
     # ── 내부 ─────────────────────────────────────────
 
     def _sample_xy(self, existing: List[Tuple[float, float]]) -> Tuple[float, float]:
-        """spawn_region 안에서 (x,y) rejection sampling — 간격·빈 회피."""
+        """spawn_region(사각형) ∩ reach(환형섹터, 선택적) 안 rejection sampling."""
         xr = self._spawn['x_range']
         yr = self._spawn['y_range']
         for _ in range(self._max_attempts):
@@ -895,10 +912,12 @@ class SceneManager:
                 continue
             if self._in_bin(x, y):
                 continue
+            if not self._in_reach(x, y):
+                continue
             return (x, y)
         raise RuntimeError(
-            f'spawn 위치 샘플 실패 ({self._max_attempts}회) — spawn_region 이 '
-            '너무 좁거나 객체 수 대비 min_separation 이 큼.'
+            f'spawn 위치 샘플 실패 ({self._max_attempts}회) — spawn_region·reach '
+            '가 너무 좁거나 객체 수 대비 min_separation 이 큼.'
         )
 
     def _in_bin(self, x: float, y: float) -> bool:
@@ -907,6 +926,23 @@ class SceneManager:
             if bx[0] <= x <= bx[1] and by[0] <= y <= by[1]:
                 return True
         return False
+
+    def _in_reach(self, x: float, y: float) -> bool:
+        """reach 환형섹터 안인지 — reach 미정의면 항상 True (제약 없음).
+
+        축 규약: x+ = 로봇 정면(forward), y+ = 로봇 기준 왼쪽.
+        theta = atan2(dy, dx) — 정면(+x)이 0, +90°가 왼쪽(+y).
+        ⚠️ theta_range 가 ±π 를 가로지르는 wrap-around 는 미지원.
+        """
+        if self._reach is None:
+            return True
+        r = self._reach
+        dx, dy = x - r['cx'], y - r['cy']
+        rad = math.hypot(dx, dy)
+        if rad < r['r_min'] or rad > r['r_max']:
+            return False
+        theta = math.atan2(dy, dx)
+        return r['th_min'] <= theta <= r['th_max']
 
     def _place_object(self, wrapper_name: str, xy: Tuple[float, float],
                       episode_idx: int, slot: int) -> str:

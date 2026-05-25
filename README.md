@@ -295,7 +295,8 @@ PAI/
 │   │   ├── setup_sim_camera.py                 # RGB 카메라 셋업 (캘리브레이션→USD)
 │   │   ├── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
 │   │   ├── setup_recycling_objects.py          # YCB 분리수거 객체 래퍼 USD 생성
-│   │   └── measure_placement.py                # placement 실측 (table_top_z·bin_exclusion)
+│   │   ├── measure_placement.py                # placement 실측 (table_top_z·bin_exclusion)
+│   │   └── probe_reach.py                      # 로봇 가동범위(reach) 실측
 │   └── teleop/                                 # Isaac Sim teleop 데이터 수집
 │       ├── record_sim_teleop.py                # Sim teleop 시연 수집 (씬·DR·녹화 통합, 신규)
 │       ├── lerobot_to_rosbridge.py             # 실물 leader → EC2 rosbridge 브리지 (클라우드)
@@ -829,7 +830,11 @@ ACT가 언어 임베딩을 무시하고 시각 정보에만 의존하는 **short
 # sim/config/multi_target_scenes.yaml (발췌)
 object_library: sim/assets/objects/recycling   # 래퍼 USD 디렉터리
 placement:                                     # SceneManager 배치 영역·규칙
-  spawn_region: {x_range: [0.15, 0.45], y_range: [-0.25, 0.25]}
+  spawn_region: {x_range: [0.15, 0.45], y_range: [-0.25, 0.25]}   # 테이블 footprint
+  reach:                                       # 선택 — 가동범위(annular sector)
+    center: [0.0, 0.0]
+    r_range: [0.10, 0.42]
+    theta_range_deg: [-90.0, 90.0]
   table_top_z: 0.74
   min_separation: 0.08
 scenes:                          # can/plastic/paper 대칭 — 총 7개 장면
