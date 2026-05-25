@@ -2,6 +2,17 @@
 Generate PAI wrapper USDs for YCB recycling objects.
 PhysicsMaterial(카테고리별 마찰계수) 포함 버전.
 Run in Isaac Sim Script Editor (pxr is guaranteed available).
+
+사전 준비 — YCB 원본 에셋 다운로드 (`YCB_ROOT` 경로에 없으면 실행 전 1회 수행):
+
+    pip install awscli
+    aws s3 sync --no-sign-request \\
+      --exclude "*.thumb.usd" --exclude ".thumbs/*" \\
+      s3://omniverse-content-production/Assets/Isaac/5.1/Isaac/Props/YCB/Axis_Aligned/ \\
+      ~/isaacsim_assets/Assets/Isaac/5.1/Isaac/Props/YCB/Axis_Aligned/
+
+NVIDIA Omniverse 퍼블릭 버킷이라 인증 불필요(`--no-sign-request`). 썸네일은
+제외(불필요·용량 절감).
 """
 from pathlib import Path
 from pxr import Usd, UsdGeom, UsdPhysics, UsdShade, Sdf
