@@ -460,75 +460,18 @@ PAI/
 
 ## 빌드 및 실행
 
-### 빌드
+### 빌드 단계 개요
 
-```bash
-# 저장소 루트 기준 (개발 PC에서 확인용)
-cd deploy/ros2_ws
-colcon build --packages-select robot_arm_msgs robot_arm_pkg
-source install/setup.bash
-```
+- **개발 PC 확인용**: `cd deploy/ros2_ws && colcon build --packages-select robot_arm_msgs robot_arm_pkg`
+- **Jetson 실기**: 저장소의 `deploy/ros2_ws/src/*` · `deploy/config/*` 를 Jetson 의 `~/ros2_ws/src/` · `~/ros2_ws/config/` · `~/calibration/` 로 복사한 뒤 동일하게 `colcon build`.
 
-Jetson 실기 배포 시 다음을 복사한 후 빌드:
+### 배포 실행 단계 개요
 
-```bash
-# 1) 저장소의 deploy/ros2_ws/src/* 를 Jetson의 ~/ros2_ws/src/ 로 복사
-cp -r <repo>/deploy/ros2_ws/src/* ~/ros2_ws/src/
+llama-server (Gemma base GGUF, `--jinja`) 를 systemd 로 상시 구동하고, ROS2 노드 6개
+(`camera_node`, `llama_server_manager`, `embedding_node`, `agent_node`, `act_node`,
+`robot_controller_node`) 를 띄운 뒤 `/user_command` 토픽으로 사용자 명령을 발행합니다.
 
-# 2) 런타임 설정 복사
-mkdir -p ~/ros2_ws/config ~/calibration
-cp <repo>/deploy/config/domain_map.yaml  ~/ros2_ws/config/domain_map.yaml
-cp <repo>/deploy/config/label_vocab.yaml ~/ros2_ws/config/label_vocab.yaml
-cp <repo>/deploy/config/grasp_roi.yaml   ~/calibration/grasp_roi.yaml   # 캘리브레이션 후 실측값으로 갱신
-
-# 3) 빌드
-cd ~/ros2_ws
-colcon build --packages-select robot_arm_msgs robot_arm_pkg
-source install/setup.bash
-```
-
-### 배포 실행
-
-```bash
-# llama-server (Gemma 4 E2B base, --jinja로 함수 호출 활성화)
-# systemd 서비스로 상시 구동 권장
-~/llama.cpp/llama-server \
-  -m ~/models/gemma/gemma_4_e2b_q4.gguf \
-  --jinja \
-  --host 0.0.0.0 --port 8080
-
-# 카메라
-ros2 run robot_arm_pkg camera_node
-
-# llama-server LoRA 스왑 매니저
-ros2 run robot_arm_pkg llama_server_manager \
-  --ros-args -p server_url:=http://localhost:8080 \
-             -p adapter_dir:=~/models/gemma/adapters/
-
-# 임베딩 노드 (텍스트 → 벡터 Service)
-ros2 run robot_arm_pkg embedding_node \
-  --ros-args -p model_path:=~/models/embedding/
-
-# 에이전트 (Gemma 함수 호출 오케스트레이션)
-ros2 run robot_arm_pkg agent_node \
-  --ros-args -p server_url:=http://localhost:8080 \
-             -p domain_map:=~/ros2_ws/config/domain_map.yaml \
-             -p grasp_roi:=~/calibration/grasp_roi.yaml \
-             -p max_verify_iterations:=3
-
-# ACT Policy
-ros2 run robot_arm_pkg act_node \
-  --ros-args -p model_path:=~/models/act/act.pth \
-             -p chunk_size:=100
-
-# 로봇 컨트롤러 (SO-101 팔로워)
-ros2 run robot_arm_pkg robot_controller_node \
-  --ros-args -p robot_port:=/dev/ttyACM0 \
-             -p robot_id:=follower
-
-# 사용자 명령 발행
-ros2 topic pub /user_command std_msgs/String "data: '쓰레기 좀 정리해줘'"
-```
+> 빌드·실행의 자세한 명령은 [`deploy/README.md`](deploy/README.md) 참조.
 
 ---
 
@@ -541,85 +484,16 @@ Hand-Eye 캘리브레이션 (Eye-to-Hand 방식): 카메라 고정, SO-101 엔�
 > **일관성**(학습 시점과 배포 시점 간)이 중요하므로 캘리브레이션 자체는 여전히 수행한다.
 > `verify_result`의 grasp ROI 정의에 카메라-로봇 변환이 사용된다.
 
-### Jetson 사전 설치
+### 캘리브레이션 단계 개요
 
-```bash
-# setup_jetson_base.sh 실행 후 아래 스크립트 실행
-./deploy/scripts/setup_calibration.sh
-```
+1. **Jetson 사전 설치** — `setup_calibration.sh` 로 aruco_opencv, easy_handeye2 소스 빌드.
+2. **URDF 배치** — 저장소 포함 `urdf/so101.urdf` 가 colcon build 시 `share/robot_arm_pkg/urdf/` 로 자동 복사. 엔드이펙터 링크명이 `calibration.launch.py` 의 `robot_effector_frame` 과 일치하는지 확인.
+3. **캘리브레이션 launch** — `ros2 launch robot_arm_pkg calibration.launch.py robot_port:=/dev/follower` + rqt EasyHandeye2 GUI.
+4. **포즈 샘플링** — 10~15개 포즈에서 Take Sample → Compute → Save.
+5. **결과 저장** — `~/calibration/camera_intrinsics.yaml`, `~/calibration/camera_robot_transform.yaml` 로 복사 (+ 저장소 백업).
+6. **`grasp_roi.yaml` 작성** — `verify_result` 의 depth grasp 보조 검증용 ROI (`{frame, x/y/z_range, depth_change_threshold}`) 정의.
 
-aruco_opencv, easy_handeye2 소스 빌드 및 관련 apt 패키지가 자동으로 설치됩니다.
-
-### SO-101 URDF 배치
-
-저장소에 SO-101 URDF와 STL 자산이 포함되어 있다:
-
-- `deploy/ros2_ws/src/robot_arm_pkg/urdf/so101.urdf`
-- `deploy/ros2_ws/src/robot_arm_pkg/urdf/assets/*.stl`
-
-`setup.py`가 빌드 시 `share/robot_arm_pkg/urdf/`로 복사하도록 활성화되어 있어
-별도 외부 복사 없이 그대로 사용 가능하다.
-
-> URDF의 엔드이펙터 링크 이름을 확인하여 `calibration.launch.py`의
-> `robot_effector_frame` 파라미터와 일치시킬 것.
-
-### 캘리브레이션 실행
-
-```bash
-# 패키지 빌드 및 소스
-cd ~/ros2_ws
-colcon build --packages-select robot_arm_pkg
-source install/setup.bash
-
-# 캘리브레이션 launch (마커 크기 5cm 기준)
-export DISPLAY=:1
-ros2 launch robot_arm_pkg calibration.launch.py robot_port:=/dev/follower
-
-# 별도 터미널: rqt GUI에서 EasyHandeye2 플러그인 실행
-ros2 run rqt_gui rqt_gui --force-discover
-
-# aruco_tracker의 debug 영상 보기
-export DISPLAY=:1
-ros2 run rqt_image_view rqt_image_view /aruco_tracker/debug
-```
-
-### 캘리브레이션 절차
-
-1. SO-101 엔드이펙터에 ArUco 마커(ID=0, 5cm) 부착
-2. rqt → EasyHandeye2 플러그인 열기
-3. 로봇을 수동으로 이동 → 카메라가 마커를 인식하면 **Take Sample** 클릭
-4. 10~15개 포즈에서 반복 (포즈 간 충분한 회전 변화 필요)
-5. **Compute** → 변환 행렬 확인 → **Save**
-6. 결과 파일 복사:
-
-```bash
-mkdir -p ~/calibration
-cp ~/.ros2/easy_handeye2/calibrations/eye_on_base_calibration.calib \
-   ~/calibration/camera_robot_transform.yaml
-
-# camera_intrinsics는 RealSense camera_info 토픽에서 추출
-ros2 topic echo /camera/color/camera_info --once > ~/calibration/camera_intrinsics.yaml
-
-# 저장소에도 보관 (백업 / 외부 PC Sim 학습에서 동일 intrinsics 사용)
-cp ~/calibration/camera_intrinsics.yaml      <repo>/deploy/calibration/
-cp ~/calibration/camera_robot_transform.yaml <repo>/deploy/calibration/
-```
-
-### `grasp_roi.yaml` 작성
-
-`verify_result`의 depth 기반 grasp 보조 검증에 사용되는 ROI를 정의한다.
-SO-101 엔드이펙터 위치 근처에서 grasp 성공 시 depth 값이 변화하는 영역을 측정하여
-설정한다. 카메라 frame 기준 좌표를 사용한다.
-
-```yaml
-# ~/calibration/grasp_roi.yaml (예시)
-roi:
-  frame: camera        # camera | base_link
-  x_range: [-0.05, 0.05]   # m
-  y_range: [-0.05, 0.05]
-  z_range: [0.20, 0.40]
-depth_change_threshold: 0.02  # m, 이 이상의 변화가 있으면 grasp 성공으로 간주
-```
+> 자세한 셋업·실행·결과 저장 절차는 [`deploy/calibration/README.md`](deploy/calibration/README.md) 참조.
 
 ---
 
@@ -632,61 +506,15 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 > 의 포트 open 단계에서 실패하므로, 데이터 수집 동안에는 `robot_controller_node`
 > 를 반드시 종료할 것. (스크립트 상단 "운영 / 측정 결정 사항" 블록 [1] 참고)
 
-### 실행 전 준비
+### 실행 단계 개요
 
-1. SO-101 리더/팔로워 USB 포트 확인
-2. LeRobot 캘리브레이션 완료 (`lerobot-calibrate`)
-3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
-4. 임베딩 모델 결정 및 배치 (Gemma 도메인 LoRA 학습 / ACT Co-training과 동일 모델 사용 필수)
-5. `robot_controller_node` 가 떠 있다면 중지 (위 포트 점유 정책)
-6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_real_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포 시 `/go_home` 서비스에서 같은 파일을 공유한다. 자세를 바꾸려면 파일 삭제 후 재실행.
+1. **준비** — USB 포트 / `lerobot-calibrate` 완료 / 카메라 캘리브레이션 결과 `~/calibration/` 배치 / 임베딩 모델 배치 / `robot_controller_node` 종료(포트 점유 정책) / `home_pose.yaml` 첫 실행 시 자동 캡처.
+2. **teleop 동작 검증** — `lerobot-teleoperate` 로 리더↔팔로워 미러링 + 카메라 표시 사전 확인.
+3. **ROS2 노드 기동** — `realsense2_camera` 드라이버 → `camera_node` (/camera/rgb 발행) → `embedding_node` (라벨→임베딩 Service).
+4. **teleop 수집** — `python <repo>/training/data_collection/record_real_teleop.py ...` (Option C 슬롯 기반 라벨).
+5. **paraphrase + 임베딩 후처리** — `python <repo>/training/data_collection/postprocess_real_labels.py ...` (외부 PC 또는 Jetson 어디서나 가능).
 
-teleoperation 동작 검증
-```bash
-source ~/venv/lerobot/bin/activate
-sudo chmod 666 /dev/follower /dev/leader
-lerobot-teleoperate \
-  --robot.type=so101_follower \
-  --robot.port=/dev/follower \
-  --robot.id=follower \
-  --teleop.type=so101_leader \
-  --teleop.port=/dev/leader \
-  --teleop.id=leader \
-  --robot.cameras='{"front": {"type": "intelrealsense", "serial_number_or_name": "919122073151", "width": 640, "height": 480, "fps": 15}}' \
-  --display_data=true
-```
-
-### 실행 순서
-
-```bash
-# 1. RealSense 드라이버 실행
-ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true
-
-# 2. camera_node 실행 (/camera/rgb 발행)
-ros2 run robot_arm_pkg camera_node
-
-# 3. embedding_node 실행 (수집 시 자연어 라벨 → 임베딩 변환에 사용)
-ros2 run robot_arm_pkg embedding_node \
-  --ros-args -p model_path:=~/models/embedding/
-
-# 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
-python <repo>/training/data_collection/record_real_teleop.py \
-  --robot-port      /dev/ttyACM1 \
-  --robot-id        follower \
-  --teleop-port     /dev/ttyACM0 \
-  --teleop-id       leader \
-  --dataset-repo-id myname/dataset_real \
-  --domain          recycling \
-  --label-vocab     ~/ros2_ws/config/label_vocab.yaml \
-  --num-episodes    50
-
-# 5. 수집 종료 후 paraphrase + 임베딩 후처리 (외부 PC 또는 Jetson 어디서나)
-python <repo>/training/data_collection/postprocess_real_labels.py \
-  --dataset                ~/datasets/myname/dataset_real \
-  --labels-jsonl           labels_myname_dataset_real.jsonl \
-  --external-llm           gpt-4 \
-  --paraphrase-per-episode 3
-```
+> 자세한 실행 명령은 [`training/data_collection/README.md`](training/data_collection/README.md) 참조.
 
 > **언어 라벨 부여 방법 — Option C (템플릿+변수 슬롯) 확정**:
 >
@@ -790,24 +618,13 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 }
 ```
 
-### Unsloth QLoRA 파인튜닝
+### 학습 단계 개요
 
-```bash
-python training/scripts/train_gemma_qlora.py \
-  --base-model google/gemma-4-e2b \
-  --dataset training/data/qa_recycling_merged.jsonl \
-  --output-dir training/outputs/lora_recycling \
-  --rank 16 --alpha 32 \
-  --epochs 3
-```
+1. **Q&A 혼합** — `merge_qa_dataset.py` 로 Cat-A/B/C 비율 옵션에 따라 단일 JSONL 생성.
+2. **Unsloth QLoRA 파인튜닝** — `train_gemma_qlora.py` (RTX 5070급 GPU, base = `google/gemma-4-e2b`).
+3. **GGUF 변환** — `convert_lora_to_gguf.sh` 로 llama.cpp 적재용 `adapter_<domain>.gguf` 산출.
 
-### GGUF 변환
-
-```bash
-bash training/scripts/convert_lora_to_gguf.sh \
-  training/outputs/lora_recycling \
-  models/gemma/adapters/adapter_recycling.gguf
-```
+> 자세한 실행 명령은 [`training/scripts/README.md`](training/scripts/README.md) 참조.
 
 ---
 
@@ -895,22 +712,11 @@ Sim API 로 직접 제어하며 (ROS2 미사용 — [D1]·[D4]), 매 에피소�
 전제: Isaac Sim 의 python 환경에 lerobot 0.4.4 설치
 (`~/isaacsim/python.sh -m pip install "lerobot[feetech]==0.4.4"`).
 
-```bash
-# 1. Sim teleop 시연 데이터 수집 (~500 에피소드) — 반드시 Isaac Sim 의 python 으로 실행
-~/isaacsim/python.sh training/data_collection/record_sim_teleop.py \
-  --scene-usd        sim/scenes/base_scene.usd \
-  --teleop-port      /dev/ttyACM0 \
-  --dataset-repo-id  myname/dataset_sim \
-  --domain           recycling \
-  --num-episodes     500
+수집은 `~/isaacsim/python.sh training/data_collection/record_sim_teleop.py ...` 로
+Isaac Sim Python 에서 직접 실행하고, 이후 `python sim/generate_language_labels.py ...`
+로 Gemma + 외부 LLM 라벨을 부여합니다.
 
-# 2. 각 에피소드에 Gemma + 외부 LLM 라벨 부여
-python sim/generate_language_labels.py \
-  --dataset dataset_sim/ \
-  --gemma-server http://localhost:8080 \
-  --external-llm gpt-4 \
-  --paraphrase-per-episode 3
-```
+> 자세한 실행 명령은 [`training/data_collection/README.md`](training/data_collection/README.md) 참조.
 
 > **단위 정합성**: `action`(Leader 관절값)은 Real 수집과 동일하게 LeRobot SDK
 > `.pos` 단위로 기록되어 변환이 불필요하다. `observation.state`(Isaac Sim
@@ -939,10 +745,9 @@ depth는 ACT 학습에 사용되지 않으므로 depth 노이즈 DR은 제거됨
 ## 학습 파이프라인 — ACT Co-training
 
 LeRobot 0.4.4의 멀티 데이터셋 가중치 기능을 사용하여 Sim + Real 혼합 학습.
+실행은 `bash training/scripts/train_act_cotraining.sh` 한 줄.
 
-```bash
-bash training/scripts/train_act_cotraining.sh
-```
+> 자세한 실행 명령·하이퍼파라미터는 [`training/scripts/README.md`](training/scripts/README.md) 및 스크립트 헤더 주석 참조.
 
 스크립트 내부 (의사 코드):
 ```python
