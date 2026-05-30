@@ -792,9 +792,7 @@ datasets = [
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
 | `sim/config/multi_target_scenes.yaml` | placement 의 spawn_region·table_top_z·bin_exclusion 실측값 (현재 placeholder — Isaac Sim 에서 측정) | base_scene.usd 실측 |
-| `training/scripts/generate_function_call_qa.py` | LLM 합성 본체 (시스템 프롬프트/vocab 로딩은 구현 완료) | 외부 LLM 클라이언트 |
-| `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 (description 형식 강제 명시 완료) | Sim 환경, ground truth 라벨러 |
-| `training/scripts/merge_qa_dataset.py` | 부족분 처리 정책 결정 후 본체 구현 (비율은 70:30 freeze) | Cat-B/C 데이터 |
+| `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 (description 형식 강제 명시 완료) | Sim 환경, ground truth 라벨러, Unsloth 멀티모달 입력 규약 |
 | `training/scripts/train_gemma_qlora.py` | Unsloth 모델/데이터/학습 루프 | 혼합 Q&A 데이터셋, Unsloth 호환 확인 |
 | `training/scripts/convert_lora_to_gguf.sh` | llama.cpp 변환 호출 활성화 | llama.cpp 빌드, 변환 스크립트 경로 확인 |
 | `training/scripts/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |

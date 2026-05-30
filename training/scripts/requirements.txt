@@ -1,0 +1,6 @@
+# Gemma 도메인 LoRA 학습 파이프라인 (외부 PC) 의존성.
+# 데이터 합성 단계 (Cat-B/C, merge) 만의 최소 요구사항.
+# Unsloth/QLoRA 학습 본체 의존성은 train_gemma_qlora.py 구현 시 추가 예정.
+
+PyYAML>=6.0
+openai>=1.0

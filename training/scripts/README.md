@@ -12,6 +12,58 @@ Q&A 데이터 생성(`generate_function_call_qa.py` 의 Cat-B, `generate_verify_
 의 Cat-C)과 70:30 비율 혼합(`merge_qa_dataset.py`)을 거쳐 단일 JSONL 을 만든
 후, 아래 두 단계로 학습·변환합니다.
 
+### 학습 환경 준비 (외부 PC)
+
+```bash
+pip install -r training/scripts/requirements.txt
+export OPENAI_API_KEY=sk-...   # gpt-4o-mini 호출용 (Cat-B/C 합성기 공통)
+```
+
+### Cat-B 합성 (함수 호출 시나리오)
+
+```bash
+# 도메인별로 1회씩 (recycling, tableware)
+python training/scripts/generate_function_call_qa.py \
+  --domain         recycling \
+  --label-vocab    deploy/config/label_vocab.yaml \
+  --output         training/data/qa_recycling_catB.jsonl \
+  --external-llm   gpt-4o-mini \
+  --num-samples    500
+```
+
+> 비용 추정: 500 샘플 ≈ $0.02–0.05 (gpt-4o-mini). 진행률·누적 토큰·비용이
+> stderr 로 50샘플마다 출력된다.
+
+**먼저 dry run (10샘플)** 으로 출력 JSONL 한두 줄 직접 검사 권장:
+```bash
+python training/scripts/generate_function_call_qa.py \
+  --domain recycling --output /tmp/catB_dry.jsonl --num-samples 10
+head -n 2 /tmp/catB_dry.jsonl | python -m json.tool
+```
+
+### Cat-C 합성 (검증 시나리오) — Sim 자산 준비 필요
+
+(`generate_verify_qa.py` 본체 구현 후 작성)
+
+### Q&A 병합 (70:30, oversample)
+
+```bash
+python training/scripts/merge_qa_dataset.py \
+  --cat-b   training/data/qa_recycling_catB.jsonl \
+  --cat-c   training/data/qa_recycling_catC.jsonl \
+  --output  training/data/qa_recycling_merged.jsonl
+```
+
+Cat-C 가 비어 있어도 동작 (Cat-B 만 사용 + 경고). 1차 학습 시 Cat-B 만으로
+시험하려면 빈 파일을 `--cat-c` 로 넘기면 됨:
+```bash
+: > /tmp/catC_empty.jsonl
+python training/scripts/merge_qa_dataset.py \
+  --cat-b training/data/qa_recycling_catB.jsonl \
+  --cat-c /tmp/catC_empty.jsonl \
+  --output training/data/qa_recycling_merged.jsonl
+```
+
 ### Unsloth QLoRA 파인튜닝
 
 ```bash

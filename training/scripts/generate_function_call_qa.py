@@ -35,18 +35,24 @@ Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력이 모두 같은 분포가 �
   tool_result → "SUCCESS"
   assistant   → verify_result(original_command="캔을 캔류 통에 넣어줘")
 
-CLI 사용 예 (예정):
-  python generate_function_call_qa.py \\
+CLI 사용 예:
+  export OPENAI_API_KEY=...
+  python training/scripts/generate_function_call_qa.py \\
     --domain         recycling \\
     --label-vocab    deploy/config/label_vocab.yaml \\
     --output         training/data/qa_recycling_catB.jsonl \\
-    --external-llm   gpt-4 \\
+    --external-llm   gpt-4o-mini \\
     --num-samples    500
 
-미구현 항목 (구현 시 결정 필요):
-  - 외부 LLM 클라이언트 (OpenAI / Anthropic / 로컬)
-  - 사용자 명령 다양성 확보 — 도메인별 명령 풀 + paraphrase
-  - 단일 함수 호출 / 다단계 시나리오 비율
+구현 정책 (2026-05-25 freeze):
+  - LLM (gpt-4o-mini) 는 사용자 명령 1건 합성에만 사용 (1 호출/샘플).
+  - 함수 호출 시퀀스(assistant turns)는 결정론적으로 합성:
+      assistant   → look_scene(prompt=LOOK_SCENE_PROMPTS 중 랜덤)
+      tool_result → sample_description(vocab) — 형식·vocabulary 강제
+      assistant   → execute_subtask(target_description=look_scene 결과)
+      tool_result → ExecStatus 가중 샘플링 (SUCCESS 80% / FAIL 15% / TIMEOUT 5%)
+      assistant   → verify_result(original_command=user_command)
+    LLM 으로 JSON 생성을 맡기지 않는 이유는 형식 신뢰성 확보 + 분포 보장.
 """
 
 from __future__ import annotations
@@ -77,6 +83,60 @@ if _ROBOT_ARM_PKG_ROOT not in sys.path:
 
 from robot_arm_pkg.prompts import SYSTEM_PROMPT, VerifyStatus, ExecStatus  # noqa: E402,F401
 
+# llm_client.py 는 본 파일과 같은 디렉터리. 스크립트로 실행 시 자동 sys.path 에
+# 포함되지만 명시적으로 추가해 안전성 확보.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+from llm_client import LLMClient  # noqa: E402
+
+
+# ──────────────────────────────────────────────
+# 도메인별 컨텍스트 / 합성 보조 상수
+# ──────────────────────────────────────────────
+
+# synthesize_user_command 가 LLM 에 전달하는 도메인 자연어 설명.
+# 새 도메인 추가 시 본 dict 갱신 필요.
+DOMAIN_DESCRIPTIONS: Dict[str, str] = {
+    'recycling': (
+        '재활용 분리수거 — 캔/플라스틱(페트병)/종이를 종류별 수거함에 분리해서 넣기. '
+        '테이블 위의 객체를 집어 알맞은 통으로 이동시키는 작업.'
+    ),
+    'tableware': (
+        '식기 정리 — 접시/그릇/컵/포크/숟가락을 정해진 위치(선반·정리함)로 옮기기. '
+        '테이블 위의 식기를 집어 정리하는 작업.'
+    ),
+}
+
+USER_CMD_SYSTEM_PROMPT = (
+    'You generate ONE realistic short voice command that a user would say to a '
+    'home assistant robot.\n'
+    'Output rules:\n'
+    '  - Korean OR English (vary freely across samples — both are acceptable).\n'
+    '  - 3 to 20 words/characters total. Conversational, natural.\n'
+    '  - Vary tone: polite formal ("정리해주세요"), casual ("정리 좀"),\n'
+    '    brief imperative, or descriptive request.\n'
+    '  - Sometimes specify a target object (e.g., "캔만 정리"), sometimes generic.\n'
+    '  - No quotes, no explanation, no list — output ONLY the command text.\n'
+)
+
+# look_scene 의 prompt 인자 풀 (assistant turn 의 다양성 확보).
+LOOK_SCENE_PROMPTS: List[str] = [
+    'describe the object to grasp',
+    'what should I pick up from this scene',
+    'find the next target object',
+    'identify the object I should handle',
+    'tell me what to grasp next',
+    'describe the next target to pick up',
+]
+
+# execute_subtask tool_result 분포 (실제 운영의 대략 분포 모사).
+EXEC_STATUS_WEIGHTS = [
+    (ExecStatus.SUCCESS, 0.80),
+    (ExecStatus.FAIL,    0.15),
+    (ExecStatus.TIMEOUT, 0.05),
+]
+
 
 # ──────────────────────────────────────────────
 # 데이터 클래스
@@ -98,7 +158,8 @@ def parse_args() -> QAArgs:
     p.add_argument('--label-vocab',  default='deploy/config/label_vocab.yaml',
                    help='target_description 어휘 사전')
     p.add_argument('--output',       required=True, help='JSONL 출력 경로')
-    p.add_argument('--external-llm', default='gpt-4', help='Q&A 합성용 외부 LLM')
+    p.add_argument('--external-llm', default='gpt-4o-mini',
+                   help='Q&A 합성용 외부 LLM (OpenAI 모델 ID)')
     p.add_argument('--num-samples',  type=int, default=500, help='생성할 샘플 수')
     p.add_argument('--seed',         type=int, default=0)
     a = p.parse_args()
@@ -163,40 +224,65 @@ def build_system_prompt() -> str:
 # Q&A 합성 (외부 LLM 클라이언트 미구현)
 # ──────────────────────────────────────────────
 
-def synthesize_user_command(domain: str, llm: str) -> str:
+def synthesize_user_command(domain: str, llm: LLMClient) -> str:
     """도메인 맥락에 맞는 사용자 명령(한국어/영어 혼합) 1건 합성.
 
-    TODO: 외부 LLM 호출 또는 도메인 명령 풀 + paraphrase 정책 확정 후 구현.
+    LLM 한 번 호출. 응답 텍스트의 앞뒤 따옴표/공백을 제거하고 반환.
     """
-    raise NotImplementedError(
-        '[generate_function_call_qa] synthesize_user_command() 미구현'
-    )
+    domain_desc = DOMAIN_DESCRIPTIONS.get(domain, domain)
+    messages = [
+        {'role': 'system', 'content': USER_CMD_SYSTEM_PROMPT},
+        {'role': 'user',
+         'content': f'Domain: {domain_desc}\n'
+                    f'Generate ONE user voice command for this domain.'},
+    ]
+    text = llm.chat(messages, temperature=0.9, max_tokens=80)
+    # 앞뒤 따옴표·공백 제거 (LLM 이 종종 인용부호로 감쌈)
+    return text.strip().strip('"\'').strip()
+
+
+def _weighted_choice(choices, rng: random.Random):
+    items, weights = zip(*choices)
+    return rng.choices(items, weights=weights, k=1)[0]
+
+
+def _assistant_call(function_name: str, args: dict) -> dict:
+    """assistant 의 함수 호출 메시지 — JSON 한 객체 문자열."""
+    payload = {'function': function_name, 'args': args}
+    return {
+        'role': 'assistant',
+        'content': json.dumps(payload, ensure_ascii=False),
+    }
 
 
 def synthesize_function_call_response(
     user_command: str,
     vocab:        dict,
     rng:          random.Random,
-    llm:          str,
+    llm:          Optional[LLMClient] = None,   # 현재 미사용 — API 일관성 유지용
 ) -> List[dict]:
     """사용자 명령 → 다단계 함수 호출 시나리오 메시지 리스트.
 
-    반환 예 (단일 step):
-      [{"role": "assistant",
-        "content": "{\"function\": \"look_scene\",
-                     \"args\": {\"prompt\": \"describe the object to grasp\"}}"}]
-
-    다단계는 tool/role 시퀀스로 확장. look_scene 결과는 본 vocab에서 샘플링한
-    description으로 채워 학습 분포를 보장 (외부 LLM이 임의 형식 생성하는 것 차단).
-
-    TODO: 외부 LLM 호출부 및 단계별 비율 정책 확정 후 구현.
-          현재는 다음 규칙만 명시:
-            - look_scene tool_result는 sample_description(vocab, rng)로 강제 주입
-            - execute_subtask args.target_description은 look_scene 결과를 그대로 전달
+    결정론적 합성 (LLM 미사용):
+      assistant   → look_scene(prompt=LOOK_SCENE_PROMPTS 랜덤)
+      tool_result → sample_description(vocab, rng)        # 형식·vocabulary 강제
+      assistant   → execute_subtask(target_description=look_scene 결과)
+      tool_result → ExecStatus 가중 샘플링
+      assistant   → verify_result(original_command=user_command)
     """
-    raise NotImplementedError(
-        '[generate_function_call_qa] synthesize_function_call_response() 미구현'
-    )
+    del llm  # 호출 일관성용 파라미터, 현재 사용 안 함
+
+    look_prompt = rng.choice(LOOK_SCENE_PROMPTS)
+    target_desc = sample_description(vocab, rng)
+    exec_result = _weighted_choice(EXEC_STATUS_WEIGHTS, rng)
+
+    return [
+        _assistant_call('look_scene', {'prompt': look_prompt}),
+        {'role': 'tool', 'content': target_desc},
+        _assistant_call('execute_subtask', {'target_description': target_desc}),
+        {'role': 'tool', 'content': exec_result},
+        _assistant_call('verify_result', {'original_command': user_command}),
+    ]
 
 
 # ──────────────────────────────────────────────
@@ -213,12 +299,53 @@ def main() -> None:
         os.makedirs(out_dir, exist_ok=True)
 
     system_prompt = build_system_prompt()
+    llm = LLMClient(model=args.external_llm)
 
-    raise NotImplementedError(
-        '[generate_function_call_qa] main 합성 루프 미구현. '
-        'synthesize_* 구현 후 단순 루프 + JSONL 저장. '
-        f'system_prompt / vocab 준비 완료 (domain={args.domain}, '
-        f'objects={list(vocab["objects"].keys())})'
+    print(
+        f'[generate_function_call_qa] start — domain={args.domain} '
+        f'objects={list(vocab["objects"].keys())} '
+        f'spatials={len(vocab["spatials"])} num_samples={args.num_samples} '
+        f'model={args.external_llm} output={args.output}',
+        file=sys.stderr,
+    )
+
+    n_written = 0
+    n_failed  = 0
+    with open(args.output, 'w', encoding='utf-8') as f:
+        for i in range(args.num_samples):
+            try:
+                user_cmd = synthesize_user_command(args.domain, llm)
+                if not user_cmd:
+                    raise ValueError('빈 user_command')
+                turns = synthesize_function_call_response(user_cmd, vocab, rng)
+            except Exception as e:  # noqa: BLE001
+                n_failed += 1
+                print(
+                    f'[generate_function_call_qa] sample {i+1} 실패: '
+                    f'{type(e).__name__}: {e}',
+                    file=sys.stderr,
+                )
+                continue
+
+            messages = [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user',   'content': user_cmd},
+                *turns,
+            ]
+            f.write(json.dumps({'messages': messages}, ensure_ascii=False) + '\n')
+            n_written += 1
+
+            if (i + 1) % 50 == 0 or (i + 1) == args.num_samples:
+                print(
+                    f'[generate_function_call_qa] progress {i+1}/{args.num_samples} '
+                    f'written={n_written} failed={n_failed} | {llm.format_usage()}',
+                    file=sys.stderr,
+                )
+
+    print(
+        f'[generate_function_call_qa] done — written={n_written}/{args.num_samples} '
+        f'failed={n_failed} | {llm.format_usage()} | output={args.output}',
+        file=sys.stderr,
     )
 
 
