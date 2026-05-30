@@ -12,7 +12,7 @@ import 경로:
   배포 (ROS2 패키지 내부 — colcon build 후 자동으로 sys.path 에 들어감):
       from robot_arm_pkg.prompts import SYSTEM_PROMPT, VerifyStatus, ExecStatus
 
-  학습 (저장소 루트의 training/scripts 에서 실행):
+  학습 (저장소 루트의 training/lora_finetuning 에서 실행):
       import os, sys
       sys.path.insert(0, os.path.abspath(os.path.join(
           os.path.dirname(__file__),

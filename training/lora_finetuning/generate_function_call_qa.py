@@ -37,10 +37,10 @@ Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력이 모두 같은 분포가 �
 
 CLI 사용 예:
   export OPENAI_API_KEY=...
-  python training/scripts/generate_function_call_qa.py \\
+  python training/lora_finetuning/generate_function_call_qa.py \\
     --domain         recycling \\
     --label-vocab    deploy/config/label_vocab.yaml \\
-    --output         training/data/qa_recycling_catB.jsonl \\
+    --output         training/lora_finetuning/data/recycling/qa_cat_b.jsonl \\
     --external-llm   gpt-4o-mini \\
     --num-samples    500
 
@@ -70,7 +70,7 @@ import yaml
 
 # ──────────────────────────────────────────────
 # SSoT import — 시스템 프롬프트와 상태 enum 은 robot_arm_pkg.prompts 에 있다.
-# training/scripts/ 는 패키지가 아니므로 sys.path 에 ROS2 패키지 루트를 추가해
+# training/lora_finetuning/ 는 패키지가 아니므로 sys.path 에 ROS2 패키지 루트를 추가해
 # robot_arm_pkg 를 import 한다.
 # ──────────────────────────────────────────────
 

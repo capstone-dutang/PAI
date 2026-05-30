@@ -15,10 +15,10 @@ freeze 결정 (2026-05-25):
   Cat-C 를 약 214 개로 oversample (≈2.14x 중복). 데이터 손실 없이 비율 보장.
 
 CLI 사용 예:
-  python training/scripts/merge_qa_dataset.py \\
-    --cat-b   training/data/qa_recycling_catB.jsonl \\
-    --cat-c   training/data/qa_recycling_catC.jsonl \\
-    --output  training/data/qa_recycling_merged.jsonl
+  python training/lora_finetuning/merge_qa_dataset.py \\
+    --cat-b   training/lora_finetuning/data/recycling/qa_cat_b.jsonl \\
+    --cat-c   training/lora_finetuning/data/recycling/qa_cat_c.jsonl \\
+    --output  training/lora_finetuning/data/recycling/qa_merged.jsonl
 
 엣지 케이스:
   - Cat-B 또는 Cat-C 한 쪽이 비어 있으면 다른 쪽만 셔플해서 반환 + 경고.
