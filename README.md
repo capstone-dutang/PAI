@@ -78,10 +78,9 @@ PAI/
 │   │   ├── record_sim_teleop.py                # Isaac Sim teleop 수집 (직접 API)
 │   │   └── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
 │   └── scripts/
-│       ├── generate_qa_from_pdf.py             # 도메인 PDF → Q&A (도메인 지식)
-│       ├── generate_function_call_qa.py        # 함수 호출 시나리오 합성 (신규)
-│       ├── generate_verify_qa.py               # 검증 시나리오 합성 (신규)
-│       ├── merge_qa_dataset.py                 # 3종 Q&A 혼합 (신규)
+│       ├── generate_function_call_qa.py        # Cat-B 함수 호출 시나리오 합성
+│       ├── generate_verify_qa.py               # Cat-C 검증 시나리오 합성
+│       ├── merge_qa_dataset.py                 # Cat-B/C 70:30 혼합
 │       ├── train_gemma_qlora.py                # Unsloth QLoRA 학습
 │       ├── convert_lora_to_gguf.sh             # GGUF 변환
 │       └── train_act_cotraining.sh             # ACT Co-training
@@ -446,11 +445,11 @@ llama-server (Gemma base GGUF, `--jinja`) 를 systemd 로 상시 구동하고, R
   │     → Sim LeRobotDataset (~500 에피소드)
   │
   ├─▶ Gemma 도메인 LoRA 학습 (외부 PC)
-  │     ├─ 도메인별 PDF/문서 → LLM Q&A 자동 생성 → 필터링
-  │        3종 데이터 혼합: 도메인 지식 / 함수 호출 / 검증 시나리오
+  │     ├─ 도메인별 LLM 합성 Q&A 데이터 생성
+  │        2종 혼합 (70:30): 함수 호출(Cat-B) / 검증 시나리오(Cat-C)
   │     ├─ Unsloth QLoRA 파인튜닝 (예: RTX 5070급)
   │     └─ GGUF 변환 → adapter_<domain>.gguf (각 수십 MB)
-  │        adapter_library.gguf, adapter_recycling.gguf, ...
+  │        adapter_recycling.gguf, adapter_tableware.gguf, ...
   │
   ▼
 실제 시연 데이터 수집 (Jetson, 축소 운영)
@@ -579,39 +578,26 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 
 ## 학습 파이프라인 — Gemma 도메인 LoRA
 
-### Q&A 데이터 생성 (3종 혼합)
+### Q&A 데이터 생성 (2종 혼합, 70:30)
 
-도메인별로 **3개 카테고리의 Q&A**를 생성하고 혼합하여 LoRA 학습에 사용한다.
+도메인별로 **2개 카테고리의 Q&A**를 생성하고 혼합하여 LoRA 학습에 사용한다.
 LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `agent_node`가 요구하는
-3가지 작업 형식(도메인 지식 답변 / 함수 호출 / 시각 검증)을 모두 학습 데이터에
-반영해야 한다.
+2가지 작업 형식(함수 호출 / 시각 검증)을 모두 학습 데이터에 반영해야 한다.
+
+> **Cat-A(도메인 지식 QA) 제거 (2026-05-25 freeze)**: 도메인 범위가
+> 분리수거(종이·캔·플라스틱 3종)와 식기 정리로 좁아 도메인 지식 QA의 학습 효용이
+> 거의 없다. LoRA 의 실제 작업 표면인 함수 호출과 시각 검증만 학습한다.
 
 | 카테고리 | 목적 | 형식 | 생성 방법 |
 |---|---|---|---|
-| **Cat-A: 도메인 지식 Q&A** | LoRA의 도메인 적응 | 자연어 Q&A | PDF/문서에서 추출 (`generate_qa_from_pdf.py`) |
 | **Cat-B: 함수 호출 시나리오** | `look_scene`/`execute_subtask` 정확도 | 사용자 명령 → JSON 함수 호출 | 외부 LLM으로 합성 (`generate_function_call_qa.py`) |
 | **Cat-C: 검증 시나리오** | `verify_result` 정확도 | 이미지 + 명령 → enum + reasoning | Sim 렌더링 + 자동 라벨링 (`generate_verify_qa.py`) |
 
-#### 비율 옵션 (확정 미정)
+#### 비율 (freeze)
 
-학습 후 평가 결과를 보며 조정. 다음 3가지 후보 중 선택:
-
-| 옵션 | Cat-A | Cat-B | Cat-C | 특징 |
-|------|-------|-------|-------|------|
-| **균형형** | 50% | 30% | 20% | 표준, 도메인 지식 우선 |
-| **함수호출 강화형** | 40% | 40% | 20% | 함수 호출 정확도 우선 |
-| **검증 강화형** | 40% | 30% | 30% | grasp/verify 안정성 우선 |
-
-#### Cat-A 예시 (도메인 지식)
-
-```json
-{
-  "messages": [
-    {"role": "user", "content": "유리병은 어떻게 분리수거하나요?"},
-    {"role": "assistant", "content": "유리병은 내용물을 비우고 깨끗이 헹군 후 유리류 수거함에 넣습니다. 깨진 유리는 신문지로 싸서 일반 쓰레기로 배출하세요."}
-  ]
-}
-```
+| Cat-B | Cat-C | 근거 |
+|-------|-------|------|
+| **70%** | **30%** | 한 태스크에 `look_scene` → `execute_subtask` → `verify_result` 가 다단계로 발생 → 함수 호출 표본이 더 자주 필요. `verify_result`는 단일 호출이고 출력이 4-way enum 이라 적은 표본으로도 학습 가능. |
 
 #### Cat-B 예시 (함수 호출)
 
@@ -638,7 +624,7 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 
 ### 학습 단계 개요
 
-1. **Q&A 혼합** — `merge_qa_dataset.py` 로 Cat-A/B/C 비율 옵션에 따라 단일 JSONL 생성.
+1. **Q&A 혼합** — `merge_qa_dataset.py` 로 Cat-B/C 를 70:30 으로 병합해 단일 JSONL 생성.
 2. **Unsloth QLoRA 파인튜닝** — `train_gemma_qlora.py` (RTX 5070급 GPU, base = `google/gemma-4-e2b`).
 3. **GGUF 변환** — `convert_lora_to_gguf.sh` 로 llama.cpp 적재용 `adapter_<domain>.gguf` 산출.
 
@@ -806,10 +792,9 @@ datasets = [
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
 | `sim/config/multi_target_scenes.yaml` | placement 의 spawn_region·table_top_z·bin_exclusion 실측값 (현재 placeholder — Isaac Sim 에서 측정) | base_scene.usd 실측 |
-| `training/scripts/generate_qa_from_pdf.py` | PDF 추출 + LLM Q&A 생성 + 필터링 | 도메인 문서 수집 |
 | `training/scripts/generate_function_call_qa.py` | LLM 합성 본체 (시스템 프롬프트/vocab 로딩은 구현 완료) | 외부 LLM 클라이언트 |
 | `training/scripts/generate_verify_qa.py` | Sim 시나리오 합성 + 자동 라벨링 (description 형식 강제 명시 완료) | Sim 환경, ground truth 라벨러 |
-| `training/scripts/merge_qa_dataset.py` | 부족분 처리 정책 결정 후 본체 구현 | Cat-A/B/C 데이터 |
+| `training/scripts/merge_qa_dataset.py` | 부족분 처리 정책 결정 후 본체 구현 (비율은 70:30 freeze) | Cat-B/C 데이터 |
 | `training/scripts/train_gemma_qlora.py` | Unsloth 모델/데이터/학습 루프 | 혼합 Q&A 데이터셋, Unsloth 호환 확인 |
 | `training/scripts/convert_lora_to_gguf.sh` | llama.cpp 변환 호출 활성화 | llama.cpp 빌드, 변환 스크립트 경로 확인 |
 | `training/scripts/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
@@ -843,8 +828,7 @@ datasets = [
 
 | # | 항목 | 영향 범위 |
 |---|------|---------|
-| 1 | LoRA Q&A 비율 (균형형 / 함수호출 강화형 / 검증 강화형) | `merge_qa_dataset.py` |
-| 2 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
+| 1 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
 
 ### Sim teleop 수집 (`record_sim_teleop.py`) — [D1]~[D9] 확정
 

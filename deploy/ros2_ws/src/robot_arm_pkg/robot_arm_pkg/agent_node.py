@@ -46,7 +46,7 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
   _call_execute_subtask()    — SubtaskCommand 발행 + ExecutionStatus 대기 로직
   _call_verify_result()      — Gemma 시각 검증 + depth ROI 검증 종합
   _depth_grasp_check()       — grasp_roi.yaml 기반 depth 변화 측정
-  _comb policy (Gemma vs depth) — README 미확정 #4 (depth 우선 / Gemma 우선 / 가중)
+  _comb policy (Gemma vs depth) — README 미확정 #1 (depth 우선 / Gemma 우선 / 가중)
 """
 
 from __future__ import annotations
@@ -369,7 +369,7 @@ class AgentNode(Node):
         처리:
           1) Gemma 시각 검증
           2) depth grasp 보조 검증 — _depth_grasp_check()
-          3) 종합 판정 — README 미확정 #4 (depth 우선 / Gemma 우선 / 가중평균)
+          3) 종합 판정 — README 미확정 #1 (depth 우선 / Gemma 우선 / 가중평균)
 
         출력: VerifyStatus.SUCCESS | FAIL | PARTIAL | UNCLEAR (문자열)
         """

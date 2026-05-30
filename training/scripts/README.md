@@ -8,9 +8,9 @@ Gemma 도메인 LoRA 학습과 ACT Co-training 실행 절차입니다.
 
 ## Gemma 도메인 LoRA
 
-Q&A 데이터 생성(`generate_qa_from_pdf.py` / `generate_function_call_qa.py` /
-`generate_verify_qa.py`)과 비율 혼합(`merge_qa_dataset.py`)을 거쳐 단일 JSONL 을
-만든 후, 아래 두 단계로 학습·변환합니다.
+Q&A 데이터 생성(`generate_function_call_qa.py` 의 Cat-B, `generate_verify_qa.py`
+의 Cat-C)과 70:30 비율 혼합(`merge_qa_dataset.py`)을 거쳐 단일 JSONL 을 만든
+후, 아래 두 단계로 학습·변환합니다.
 
 ### Unsloth QLoRA 파인튜닝
 

@@ -14,7 +14,7 @@ CLI 사용 예 (README L646-654):
 
 학습 데이터:
   merge_qa_dataset.py가 만든 단일 JSONL. 각 행은 {"messages": [...]} 형식이며,
-  Cat-A(텍스트만) / Cat-B(텍스트만) / Cat-C(이미지+텍스트)가 섞여 있다.
+  Cat-B(텍스트만) / Cat-C(이미지+텍스트)가 70:30 비율로 섞여 있다.
   Unsloth가 multi-modal 입력을 어떻게 받는지에 따라 Cat-C 행 처리 방식이 결정.
 
 선행 조건:
