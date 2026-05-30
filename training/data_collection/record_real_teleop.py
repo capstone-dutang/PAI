@@ -248,15 +248,18 @@ def load_vocab(path: str, domain: str) -> LabelVocab:
     """label_vocab.yaml 로드 + 지정 도메인 추출.
 
     스키마 검증:
-      - template, spatial_qualifiers, domains[domain].objects 필수
+      - template, 전역 spatial_qualifiers, domains[domain].objects 필수
       - 각 object는 attributes 리스트 필수
+      - LabelVocab.spatials 는 (전역 spatial_qualifiers + 도메인별 spatial_qualifiers)
+        병합 결과. 도메인별 항목은 "next to the {other_object}" 같은 관계형
+        spatial 로, 해당 도메인 안에서만 의미가 있다.
     """
     with open(path, 'r', encoding='utf-8') as f:
         raw = yaml.safe_load(f)
 
-    template = raw.get('template')
-    spatials = raw.get('spatial_qualifiers') or []
-    domains  = raw.get('domains') or {}
+    template        = raw.get('template')
+    global_spatials = raw.get('spatial_qualifiers') or []
+    domains         = raw.get('domains') or {}
 
     if not template or '{attribute}' not in template \
        or '{object}' not in template or '{spatial}' not in template:
@@ -264,14 +267,18 @@ def load_vocab(path: str, domain: str) -> LabelVocab:
             f'label_vocab template이 비어 있거나 슬롯 누락 ({path}). '
             f'"the {{attribute}} {{object}} {{spatial}}" 형식 필요.'
         )
-    if not spatials:
-        raise ValueError(f'spatial_qualifiers가 비어 있음 ({path}).')
+    if not global_spatials:
+        raise ValueError(f'전역 spatial_qualifiers가 비어 있음 ({path}).')
     if domain not in domains:
         raise ValueError(
             f"도메인 '{domain}'이 label_vocab에 없음. 가능한 도메인: {list(domains)}"
         )
 
-    obj_block = domains[domain].get('objects') or {}
+    domain_block      = domains[domain] or {}
+    domain_spatials   = domain_block.get('spatial_qualifiers') or []
+    merged_spatials   = list(global_spatials) + list(domain_spatials)
+
+    obj_block = domain_block.get('objects') or {}
     objects: Dict[str, List[str]] = {}
     for obj_name, obj_def in obj_block.items():
         attrs = (obj_def or {}).get('attributes') or []
@@ -286,7 +293,7 @@ def load_vocab(path: str, domain: str) -> LabelVocab:
 
     return LabelVocab(
         template=template,
-        spatials=list(spatials),
+        spatials=merged_spatials,
         objects=objects,
         domain=domain,
         raw=raw,

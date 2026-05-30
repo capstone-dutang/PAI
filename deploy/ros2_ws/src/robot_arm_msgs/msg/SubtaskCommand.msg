@@ -5,7 +5,7 @@
 # 폐기되었고, 자연어 묘사 + 사전 임베딩 벡터로 대체됨.
 #
 # subtask_id          : agent_node가 발급하는 subtask 식별자 (UUID 또는 단조증가 카운터)
-# domain              : 현재 활성 도메인 ("library", "recycling" 등)
+# domain              : 현재 활성 도메인 ("recycling", "tableware" 등)
 # target_description  : Gemma look_scene이 산출한 자연어 타겟 묘사.
 #                       형식: 영어 반구조화 템플릿
 #                         "the {attribute} {object} {spatial_qualifier}"

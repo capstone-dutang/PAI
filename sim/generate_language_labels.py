@@ -65,7 +65,7 @@ GEMMA_LABEL_SYSTEM_PROMPT = (
     '\n'
     'Constraints:\n'
     '  - 5 to 15 words total.\n'
-    '  - object: one of {can, plastic, paper, book} (use the actual class in the image).\n'
+    '  - object: one of {can, plastic, paper, plate, bowl, cup, fork, spoon} (use the actual class in the image).\n'
     '  - attribute: ONE discriminative attribute (color or material).\n'
     '  - spatial: a location/relation phrase, e.g.\n'
     '      "on the left side of the table",\n'

@@ -15,8 +15,8 @@ mapping:
   - keywords: ["쓰레기", "분리수거", "재활용", "캔", "페트병", "병"]
     domain: recycling
 
-  - keywords: ["책", "도서", "도서관", "정리"]
-    domain: library
+  - keywords: ["식기", "그릇", "접시", "컵", "숟가락", "포크", "설거지"]
+    domain: tableware
 
   # TODO: 도메인 추가 시 위 형식대로 entry 추가.
   #       매칭 실패 시 fallback 정책(default 도메인 / 사용자에게 재질문)은

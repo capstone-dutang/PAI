@@ -94,7 +94,7 @@ class QAArgs:
 
 def parse_args() -> QAArgs:
     p = argparse.ArgumentParser(description='Cat-B — 함수 호출 시나리오 Q&A 합성')
-    p.add_argument('--domain',       required=True, help='대상 도메인 (recycling/library/...)')
+    p.add_argument('--domain',       required=True, help='대상 도메인 (recycling/tableware/...)')
     p.add_argument('--label-vocab',  default='deploy/config/label_vocab.yaml',
                    help='target_description 어휘 사전')
     p.add_argument('--output',       required=True, help='JSONL 출력 경로')
@@ -117,14 +117,23 @@ def parse_args() -> QAArgs:
 # ──────────────────────────────────────────────
 
 def load_vocab(path: str, domain: str) -> dict:
+    """label_vocab.yaml 로드 + 도메인 추출.
+
+    spatials 는 (전역 spatial_qualifiers + 도메인별 spatial_qualifiers) 병합본.
+    record_real_teleop.py / record_sim_teleop.py 의 load_vocab 과 동일 규약.
+    """
     with open(path, 'r', encoding='utf-8') as f:
         raw = yaml.safe_load(f)
-    if domain not in (raw.get('domains') or {}):
+    domains = raw.get('domains') or {}
+    if domain not in domains:
         raise ValueError(f'도메인 {domain}이 label_vocab에 없음.')
+    domain_block = domains[domain] or {}
+    global_spatials = list(raw.get('spatial_qualifiers') or [])
+    domain_spatials = list(domain_block.get('spatial_qualifiers') or [])
     return {
         'template': raw['template'],
-        'spatials': raw['spatial_qualifiers'],
-        'objects':  raw['domains'][domain]['objects'],
+        'spatials': global_spatials + domain_spatials,
+        'objects':  domain_block['objects'],
     }
 
 

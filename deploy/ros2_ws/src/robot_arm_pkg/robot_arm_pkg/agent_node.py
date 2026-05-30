@@ -151,8 +151,8 @@ class AgentNode(Node):
           mapping:
             - keywords: ["쓰레기", "분리수거", "재활용"]
               domain : recycling
-            - keywords: ["책", "도서"]
-              domain : library
+            - keywords: ["식기", "그릇", "접시"]
+              domain : tableware
 
         반환 형식: {keyword: domain} flat dict (단순 키워드 인덱스).
         파일 없거나 파싱 실패 시 빈 dict 반환.

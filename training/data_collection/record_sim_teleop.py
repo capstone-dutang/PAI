@@ -231,28 +231,35 @@ class LabelVocab:
 
 
 def load_vocab(path: str, domain: str) -> LabelVocab:
-    """label_vocab.yaml 로드 + 도메인 추출 (record_real_teleop.py 와 동일 규약)."""
+    """label_vocab.yaml 로드 + 도메인 추출 (record_real_teleop.py 와 동일 규약).
+
+    LabelVocab.spatials = (전역 spatial_qualifiers + 도메인별 spatial_qualifiers).
+    REGION_SPATIALS 5개는 전역 측에 있어야 하며, _validate 가 이를 검증한다.
+    """
     with open(path, 'r', encoding='utf-8') as f:
         raw = yaml.safe_load(f)
-    template = raw.get('template')
-    spatials = raw.get('spatial_qualifiers') or []
-    domains  = raw.get('domains') or {}
+    template        = raw.get('template')
+    global_spatials = raw.get('spatial_qualifiers') or []
+    domains         = raw.get('domains') or {}
     if not template or '{attribute}' not in template \
        or '{object}' not in template or '{spatial}' not in template:
         raise ValueError(f'label_vocab template 슬롯 누락 ({path}).')
-    if not spatials:
-        raise ValueError(f'spatial_qualifiers 가 비어 있음 ({path}).')
+    if not global_spatials:
+        raise ValueError(f'전역 spatial_qualifiers 가 비어 있음 ({path}).')
     if domain not in domains:
         raise ValueError(f"도메인 '{domain}' 이 label_vocab 에 없음. 가능: {list(domains)}")
+    domain_block    = domains[domain] or {}
+    domain_spatials = domain_block.get('spatial_qualifiers') or []
+    merged_spatials = list(global_spatials) + list(domain_spatials)
     objects: Dict[str, List[str]] = {}
-    for obj_name, obj_def in (domains[domain].get('objects') or {}).items():
+    for obj_name, obj_def in (domain_block.get('objects') or {}).items():
         attrs = (obj_def or {}).get('attributes') or []
         if not attrs:
             raise ValueError(f"객체 '{obj_name}' attributes 비어 있음.")
         objects[obj_name] = list(attrs)
     if not objects:
         raise ValueError(f"도메인 '{domain}' 에 등록된 객체 없음.")
-    return LabelVocab(template, list(spatials), objects, domain, raw)
+    return LabelVocab(template, merged_spatials, objects, domain, raw)
 
 
 @dataclass

@@ -294,8 +294,8 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 │   ├── gemma/
 │   │   ├── gemma_4_e2b_q4.gguf   # base 모델, 상시 적재
 │   │   └── adapters/              # 도메인별 LoRA, hot-swap
-│   │       ├── adapter_library.gguf
-│   │       └── adapter_recycling.gguf
+│   │       ├── adapter_recycling.gguf
+│   │       └── adapter_tableware.gguf
 │   ├── embedding/                 # paraphrase-multilingual-MiniLM-L12-v2 (D=384)
 │   │   └── <model_files>          # HF hub 캐시 또는 사전 다운로드
 │   └── act/
