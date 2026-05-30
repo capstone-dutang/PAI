@@ -44,11 +44,17 @@ CLI 사용 예:
     --external-llm   gpt-4o-mini \\
     --num-samples    500
 
-구현 정책 (2026-05-25 freeze):
+구현 정책 (2026-05-25 freeze, 2026-05-25 dry run 검토 후 보완):
   - LLM (gpt-4o-mini) 는 사용자 명령 1건 합성에만 사용 (1 호출/샘플).
+    언어는 per-sample 결정: 영어 ~30% / 한국어 ~70% (LANGUAGE_ENGLISH_RATIO).
   - 함수 호출 시퀀스(assistant turns)는 결정론적으로 합성:
-      assistant   → look_scene(prompt=LOOK_SCENE_PROMPTS 중 랜덤)
-      tool_result → sample_description(vocab) — 형식·vocabulary 강제
+      assistant   → look_scene(prompt=...)
+                    user_command 에서 vocab object 키워드 추출 성공 시
+                    object-aware prompt (e.g., "describe the can to grasp"),
+                    실패 시 generic prompt.
+      tool_result → target_description
+                    object 매칭 시 그 object 로 고정 + attribute/spatial 만 랜덤
+                    (자기-참조 spatial 제외 — 예: paper 객체에 "next to the paper").
       assistant   → execute_subtask(target_description=look_scene 결과)
       tool_result → ExecStatus 가중 샘플링 (SUCCESS 80% / FAIL 15% / TIMEOUT 5%)
       assistant   → verify_result(original_command=user_command)
@@ -112,16 +118,19 @@ USER_CMD_SYSTEM_PROMPT = (
     'You generate ONE realistic short voice command that a user would say to a '
     'home assistant robot.\n'
     'Output rules:\n'
-    '  - Korean OR English (vary freely across samples — both are acceptable).\n'
+    '  - Follow the Language instruction in the user message strictly\n'
+    '    (Korean ONLY or English ONLY — never mix in one command).\n'
     '  - 3 to 20 words/characters total. Conversational, natural.\n'
-    '  - Vary tone: polite formal ("정리해주세요"), casual ("정리 좀"),\n'
-    '    brief imperative, or descriptive request.\n'
+    '  - Vary tone: polite formal, casual, brief imperative, or descriptive request.\n'
     '  - Sometimes specify a target object (e.g., "캔만 정리"), sometimes generic.\n'
     '  - No quotes, no explanation, no list — output ONLY the command text.\n'
 )
 
-# look_scene 의 prompt 인자 풀 (assistant turn 의 다양성 확보).
-LOOK_SCENE_PROMPTS: List[str] = [
+# 한국어 / 영어 명령 비율 — 영어 ~30% 강제 (rng 로 per-sample 결정).
+LANGUAGE_ENGLISH_RATIO = 0.30
+
+# look_scene 의 prompt 인자 풀 — 객체 미지정 (user_command 가 generic 일 때 사용).
+LOOK_SCENE_PROMPTS_GENERIC: List[str] = [
     'describe the object to grasp',
     'what should I pick up from this scene',
     'find the next target object',
@@ -129,6 +138,42 @@ LOOK_SCENE_PROMPTS: List[str] = [
     'tell me what to grasp next',
     'describe the next target to pick up',
 ]
+
+# look_scene prompt — 객체 지정형 (user_command 에서 추출된 object 를 substitute).
+LOOK_SCENE_PROMPTS_OBJECT_AWARE: List[str] = [
+    'describe the {object} to grasp',
+    'find the {object} I should pick up',
+    'identify the {object} to handle',
+    'tell me which {object} to grasp',
+    'describe the next {object} to pick up',
+]
+
+# 도메인별 user_command 키워드 → vocab object 매핑.
+# 매칭은 substring (영어는 lowercase 비교, 한국어는 원문 비교).
+# dict 삽입 순서 = 우선순위 (여러 키워드 매칭 시 앞쪽 우선).
+KEYWORD_TO_OBJECT: Dict[str, Dict[str, str]] = {
+    'recycling': {
+        '캔':      'can',
+        'can':     'can',
+        '페트병':   'plastic',
+        '플라스틱': 'plastic',
+        'plastic': 'plastic',
+        '종이':    'paper',
+        'paper':   'paper',
+    },
+    'tableware': {
+        '접시':    'plate',
+        'plate':   'plate',
+        '그릇':    'bowl',
+        'bowl':    'bowl',
+        '컵':      'cup',
+        'cup':     'cup',
+        '포크':    'fork',
+        'fork':    'fork',
+        '숟가락':   'spoon',
+        'spoon':   'spoon',
+    },
+}
 
 # execute_subtask tool_result 분포 (실제 운영의 대략 분포 모사).
 EXEC_STATUS_WEIGHTS = [
@@ -198,13 +243,50 @@ def load_vocab(path: str, domain: str) -> dict:
     }
 
 
-def sample_description(vocab: dict, rng: random.Random) -> str:
-    obj_name = rng.choice(list(vocab['objects'].keys()))
-    attr     = rng.choice(vocab['objects'][obj_name]['attributes']
-                          if isinstance(vocab['objects'][obj_name], dict)
-                          else vocab['objects'][obj_name])
-    spat     = rng.choice(vocab['spatials'])
+def _attrs_of(vocab: dict, obj_name: str) -> List[str]:
+    """vocab.objects[obj_name].attributes 호환 추출 (dict / list 둘 다 허용)."""
+    block = vocab['objects'][obj_name]
+    return list(block['attributes'] if isinstance(block, dict) else block)
+
+
+def sample_description_for_object(
+    vocab:    dict,
+    obj_name: str,
+    rng:      random.Random,
+) -> str:
+    """주어진 object 로 description 생성.
+
+    자기-참조 spatial 제외: object 명사가 spatial 문자열에 포함되면 후보에서 빠짐.
+    예: object='paper' → 'next to the paper' 제외. 후보가 전부 빠지는 극단 케이스
+    (도메인이 단일 객체이고 모든 spatial 이 그 객체 참조) 에서만 fallback 으로
+    원본 spatials 에서 샘플링.
+    """
+    attr = rng.choice(_attrs_of(vocab, obj_name))
+    candidates = [s for s in vocab['spatials'] if obj_name not in s]
+    spat = rng.choice(candidates) if candidates else rng.choice(vocab['spatials'])
     return vocab['template'].format(attribute=attr, object=obj_name, spatial=spat)
+
+
+def sample_description(vocab: dict, rng: random.Random) -> str:
+    """object 를 랜덤 선택 후 sample_description_for_object 위임."""
+    obj_name = rng.choice(list(vocab['objects'].keys()))
+    return sample_description_for_object(vocab, obj_name, rng)
+
+
+def extract_target_object(user_command: str, domain: str) -> Optional[str]:
+    """user_command 에서 도메인 vocab object 키워드 추출. 못 찾으면 None.
+
+    영어 키워드는 lowercase 비교, 한국어는 원문 비교. KEYWORD_TO_OBJECT 의 dict
+    삽입 순서가 우선순위 (여러 키워드 동시 매칭 시 앞쪽 우선).
+    """
+    kw_map = KEYWORD_TO_OBJECT.get(domain) or {}
+    cmd_lower = user_command.lower()
+    for kw, obj in kw_map.items():
+        haystack = cmd_lower if kw.isascii() else user_command
+        needle   = kw.lower() if kw.isascii() else kw
+        if needle in haystack:
+            return obj
+    return None
 
 
 # ──────────────────────────────────────────────
@@ -224,20 +306,29 @@ def build_system_prompt() -> str:
 # Q&A 합성 (외부 LLM 클라이언트 미구현)
 # ──────────────────────────────────────────────
 
-def synthesize_user_command(domain: str, llm: LLMClient) -> str:
-    """도메인 맥락에 맞는 사용자 명령(한국어/영어 혼합) 1건 합성.
+def synthesize_user_command(
+    domain: str,
+    llm:    LLMClient,
+    rng:    random.Random,
+) -> str:
+    """도메인 맥락에 맞는 사용자 명령 1건 합성.
 
-    LLM 한 번 호출. 응답 텍스트의 앞뒤 따옴표/공백을 제거하고 반환.
+    rng 로 per-sample 언어 결정 (영어 ~LANGUAGE_ENGLISH_RATIO 확률), 결정한
+    언어를 user 메시지에 명시하여 LLM 이 단일 언어로 응답하도록 강제.
     """
     domain_desc = DOMAIN_DESCRIPTIONS.get(domain, domain)
+    use_english = rng.random() < LANGUAGE_ENGLISH_RATIO
+    lang_hint = 'English ONLY' if use_english else 'Korean ONLY'
     messages = [
         {'role': 'system', 'content': USER_CMD_SYSTEM_PROMPT},
         {'role': 'user',
-         'content': f'Domain: {domain_desc}\n'
-                    f'Generate ONE user voice command for this domain.'},
+         'content': (
+             f'Domain: {domain_desc}\n'
+             f'Language: {lang_hint}.\n'
+             f'Generate ONE user voice command for this domain.'
+         )},
     ]
     text = llm.chat(messages, temperature=0.9, max_tokens=80)
-    # 앞뒤 따옴표·공백 제거 (LLM 이 종종 인용부호로 감쌈)
     return text.strip().strip('"\'').strip()
 
 
@@ -258,22 +349,30 @@ def _assistant_call(function_name: str, args: dict) -> dict:
 def synthesize_function_call_response(
     user_command: str,
     vocab:        dict,
+    domain:       str,
     rng:          random.Random,
-    llm:          Optional[LLMClient] = None,   # 현재 미사용 — API 일관성 유지용
+    llm:          Optional[LLMClient] = None,   # API 일관성용 — 현재 미사용
 ) -> List[dict]:
     """사용자 명령 → 다단계 함수 호출 시나리오 메시지 리스트.
 
-    결정론적 합성 (LLM 미사용):
-      assistant   → look_scene(prompt=LOOK_SCENE_PROMPTS 랜덤)
-      tool_result → sample_description(vocab, rng)        # 형식·vocabulary 강제
-      assistant   → execute_subtask(target_description=look_scene 결과)
-      tool_result → ExecStatus 가중 샘플링
-      assistant   → verify_result(original_command=user_command)
+    user_command 에서 vocab object 키워드를 추출한 경우:
+      - look_scene prompt 에 해당 object 명시 (e.g., "describe the can to grasp")
+      - target_description 의 object 도 그 키워드로 고정 (attribute/spatial 만 랜덤)
+    추출 실패 시 (예: "쓰레기 좀 정리"):
+      - generic prompt + 완전 랜덤 sampling
     """
-    del llm  # 호출 일관성용 파라미터, 현재 사용 안 함
+    del llm  # API 일관성용
 
-    look_prompt = rng.choice(LOOK_SCENE_PROMPTS)
-    target_desc = sample_description(vocab, rng)
+    matched_obj = extract_target_object(user_command, domain)
+
+    if matched_obj is not None:
+        look_prompt = rng.choice(LOOK_SCENE_PROMPTS_OBJECT_AWARE).format(
+            object=matched_obj)
+        target_desc = sample_description_for_object(vocab, matched_obj, rng)
+    else:
+        look_prompt = rng.choice(LOOK_SCENE_PROMPTS_GENERIC)
+        target_desc = sample_description(vocab, rng)
+
     exec_result = _weighted_choice(EXEC_STATUS_WEIGHTS, rng)
 
     return [
@@ -314,10 +413,11 @@ def main() -> None:
     with open(args.output, 'w', encoding='utf-8') as f:
         for i in range(args.num_samples):
             try:
-                user_cmd = synthesize_user_command(args.domain, llm)
+                user_cmd = synthesize_user_command(args.domain, llm, rng)
                 if not user_cmd:
                     raise ValueError('빈 user_command')
-                turns = synthesize_function_call_response(user_cmd, vocab, rng)
+                turns = synthesize_function_call_response(
+                    user_cmd, vocab, args.domain, rng)
             except Exception as e:  # noqa: BLE001
                 n_failed += 1
                 print(
