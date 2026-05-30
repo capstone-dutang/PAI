@@ -111,6 +111,15 @@ Q&A 데이터 생성(`generate_function_call_qa.py` 의 Cat-B, `generate_verify_
 의 Cat-C)과 70:30 비율 혼합(`merge_qa_dataset.py`)을 거쳐 단일 JSONL 을 만든
 후, 아래 두 단계로 학습·변환합니다.
 
+> **데이터 포맷 — Unsloth FastVisionModel typed-array content (2026-05-25 freeze)**:
+> Cat-B 와 Cat-C 가 같은 FastVisionModel 학습 패스에 들어가도록 모든 샘플의
+> `content` 는 `[{"type":"text","text":...}]` (이미지 케이스에서는
+> `{"type":"image","image":...}` 가 text 앞에 추가) 형식. tool role 은
+> FastVisionModel 미지원이라 `user` role + `"[tool_result] "` prefix 로 변환됨.
+> `generate_function_call_qa.py` 는 이미 신 형식으로 직접 생성하며,
+> 기존 string-content 데이터는 [`convert_cat_b_to_vision_format.py`](lora_finetuning/convert_cat_b_to_vision_format.py)
+> 로 1회 변환 가능.
+
 ## 2-1. 학습 환경 준비 (외부 PC)
 
 ```bash
@@ -140,11 +149,28 @@ python training/lora_finetuning/generate_function_call_qa.py \
 head -n 2 /tmp/catB_dry.jsonl | python -m json.tool
 ```
 
-## 2-3. Cat-C 합성 (검증 시나리오) — Sim 자산 준비 필요
+## 2-3. 기존 Cat-B JSONL 을 vision 포맷으로 변환 (1회용)
+
+이전 string-content + tool role 형식으로 생성된 JSONL 이 있다면 다음으로 변환:
+
+```bash
+python training/lora_finetuning/convert_cat_b_to_vision_format.py \
+  --input  training/lora_finetuning/data/recycling/function_call_qa_recycling.jsonl \
+  --output training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl
+
+python training/lora_finetuning/convert_cat_b_to_vision_format.py \
+  --input  training/lora_finetuning/data/tableware/function_call_qa_tableware.jsonl \
+  --output training/lora_finetuning/data/tableware/function_call_qa_tableware.vision.jsonl
+```
+
+> 멱등 변환 — 이미 typed-array 인 입력은 그대로 통과. 신규 합성한 JSONL 은
+> 이미 vision 포맷이므로 본 단계 불필요.
+
+## 2-4. Cat-C 합성 (검증 시나리오) — Sim 자산 준비 필요
 
 (`generate_verify_qa.py` 본체 구현 후 작성)
 
-## 2-4. Q&A 병합 (70:30, oversample)
+## 2-5. Q&A 병합 (70:30, oversample)
 
 ```bash
 python training/lora_finetuning/merge_qa_dataset.py \
@@ -163,18 +189,23 @@ python training/lora_finetuning/merge_qa_dataset.py \
   --output training/lora_finetuning/data/recycling/qa_merged.jsonl
 ```
 
-## 2-5. Unsloth QLoRA 파인튜닝
+## 2-6. Unsloth QLoRA 파인튜닝 (FastVisionModel)
 
 ```bash
 python training/lora_finetuning/train_gemma_qlora.py \
-  --base-model google/gemma-4-e2b \
+  --base-model unsloth/gemma-4-E2B-it \
   --dataset training/lora_finetuning/data/recycling/qa_merged.jsonl \
   --output-dir training/outputs/lora_recycling \
   --rank 16 --alpha 32 \
   --epochs 3
 ```
 
-## 2-6. GGUF 변환
+> Cat-B(text-only) 와 Cat-C(image+text) 를 한 `FastVisionModel` 패스로 학습.
+> Cat-B 는 image 항목이 없는 typed-array text 만 포함되며, `UnslothVisionDataCollator`
+> 가 image=None 케이스를 처리하는지는 [unslothai/unsloth#1590](https://github.com/unslothai/unsloth/issues/1590)
+> 의 workaround 패턴을 작은 batch 로 사전 검증할 것.
+
+## 2-7. GGUF 변환
 
 ```bash
 bash training/lora_finetuning/convert_lora_to_gguf.sh \
@@ -182,7 +213,7 @@ bash training/lora_finetuning/convert_lora_to_gguf.sh \
   models/gemma/adapters/adapter_recycling.gguf
 ```
 
-## 2-7. 데이터 보관 위치
+## 2-8. 데이터 보관 위치
 
 Cat-B/C/merged JSONL 은 **도메인별 하위 폴더**로 관리합니다 (git 추적):
 

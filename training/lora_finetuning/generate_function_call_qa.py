@@ -17,23 +17,35 @@ verify_result reasoning 내 객체 참조 표현 모두 위 템플릿 분포를 
 Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력이 모두 같은 분포가 되어야 ACT가
 학습한 임베딩 공간 안에서 동작.
 
-출력 포맷 (JSONL 한 줄당 하나의 sample):
+출력 포맷 (JSONL — Unsloth FastVisionModel 통합 학습용 typed-array content):
   {
     "messages": [
-      {"role": "system",  "content": <SYSTEM_PROMPT>},   # robot_arm_pkg.prompts
-      {"role": "user",    "content": "쓰레기 좀 정리해줘"},
-      {"role": "assistant","content": "{\\"function\\": \\"look_scene\\",
-                                       \\"args\\": {\\"prompt\\": \\"...\\"}}"}
+      {"role": "system",
+       "content": [{"type": "text", "text": "<SYSTEM_PROMPT>"}]},
+      {"role": "user",
+       "content": [{"type": "text", "text": "쓰레기 좀 정리해줘"}]},
+      {"role": "assistant",
+       "content": [{"type": "text",
+                    "text": "{\\"function\\":\\"look_scene\\",\\"args\\":{...}}"}]},
+      {"role": "user",
+       "content": [{"type": "text",
+                    "text": "[tool_result] the red can on the left side of the table"}]},
+      ... (execute_subtask, tool_result, verify_result 3턴 추가)
     ]
   }
 
-다단계 시나리오 예 (한 sample 내에 assistant 발화 여러 개):
-  user        → "캔을 캔류 통에 넣어줘"
-  assistant   → look_scene(prompt="describe the can to grasp")
-  tool_result → "the red can on the left side of the table"   # description 형식
-  assistant   → execute_subtask(target_description="the red can on the left side of the table")
-  tool_result → "SUCCESS"
-  assistant   → verify_result(original_command="캔을 캔류 통에 넣어줘")
+다단계 시나리오 (한 sample = 7 messages, user/assistant 교대):
+  system    → <SYSTEM_PROMPT>
+  user      → "캔을 캔류 통에 넣어줘"
+  assistant → look_scene(prompt="describe the can to grasp")
+  user      → "[tool_result] the red can on the left side of the table"
+  assistant → execute_subtask(target_description="the red can on the left side of the table")
+  user      → "[tool_result] SUCCESS"
+  assistant → verify_result(original_command="캔을 캔류 통에 넣어줘")
+
+  tool role 미사용 — Unsloth FastVisionModel + UnslothVisionDataCollator 는
+  user/assistant 외 role 을 지원하지 않으므로 '[tool_result] ' prefix 가 붙은
+  user 메시지로 치환한다. 런타임 agent_node 의 OpenAI-style tool feed 와도 일치.
 
 CLI 사용 예:
   export OPENAI_API_KEY=...
@@ -400,13 +412,31 @@ def _weighted_choice(choices, rng: random.Random):
     return rng.choices(items, weights=weights, k=1)[0]
 
 
+# Cat-C(이미지) 통합 학습을 위해 Unsloth FastVisionModel 의 typed-array content
+# 포맷을 사용한다. tool role 미지원이라 user role + '[tool_result] ' prefix 로
+# 치환 (convert_cat_b_to_vision_format.py 와 동일 규약).
+TOOL_RESULT_PREFIX = '[tool_result] '
+
+
+def _typed_text(text: str) -> List[Dict[str, str]]:
+    """typed-array content 한 항목 (text only)."""
+    return [{'type': 'text', 'text': text}]
+
+
+def _msg_text(role: str, text: str) -> dict:
+    """role 메시지 — content 는 typed-array text 1개."""
+    return {'role': role, 'content': _typed_text(text)}
+
+
 def _assistant_call(function_name: str, args: dict) -> dict:
-    """assistant 의 함수 호출 메시지 — JSON 한 객체 문자열."""
+    """assistant 의 함수 호출 메시지 — JSON 한 객체 문자열을 typed-array 로 wrap."""
     payload = {'function': function_name, 'args': args}
-    return {
-        'role': 'assistant',
-        'content': json.dumps(payload, ensure_ascii=False),
-    }
+    return _msg_text('assistant', json.dumps(payload, ensure_ascii=False))
+
+
+def _user_tool_result(value: str) -> dict:
+    """tool_result 메시지 — user role + '[tool_result] ' prefix."""
+    return _msg_text('user', TOOL_RESULT_PREFIX + str(value))
 
 
 def synthesize_function_call_response(
@@ -423,6 +453,10 @@ def synthesize_function_call_response(
       - target_description 의 object 도 그 키워드로 고정 (attribute/spatial 만 랜덤)
     추출 실패 시 (예: "쓰레기 좀 정리"):
       - generic prompt + 완전 랜덤 sampling
+
+    반환 메시지는 user/assistant 교대 구조 (tool role 사용 안 함):
+      assistant(look) → user(tool_result desc) → assistant(execute)
+      → user(tool_result status) → assistant(verify)
     """
     del llm  # API 일관성용
 
@@ -440,9 +474,9 @@ def synthesize_function_call_response(
 
     return [
         _assistant_call('look_scene', {'prompt': look_prompt}),
-        {'role': 'tool', 'content': target_desc},
+        _user_tool_result(target_desc),
         _assistant_call('execute_subtask', {'target_description': target_desc}),
-        {'role': 'tool', 'content': exec_result},
+        _user_tool_result(exec_result),
         _assistant_call('verify_result', {'original_command': user_command}),
     ]
 
@@ -491,8 +525,8 @@ def main() -> None:
                 continue
 
             messages = [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user',   'content': user_cmd},
+                _msg_text('system', system_prompt),
+                _msg_text('user',   user_cmd),
                 *turns,
             ]
             f.write(json.dumps({'messages': messages}, ensure_ascii=False) + '\n')
