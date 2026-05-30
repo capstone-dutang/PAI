@@ -44,9 +44,11 @@ CLI 사용 예:
     --external-llm   gpt-4o-mini \\
     --num-samples    500
 
-구현 정책 (2026-05-25 freeze, 2026-05-25 dry run 검토 후 보완):
+구현 정책 (2026-05-25 freeze, dry run 및 500샘플 분석 후 2회 보완):
   - LLM (gpt-4o-mini) 는 사용자 명령 1건 합성에만 사용 (1 호출/샘플).
-    언어는 per-sample 결정: 영어 ~30% / 한국어 ~70% (LANGUAGE_ENGLISH_RATIO).
+    언어 per-sample 결정: 영어 ~30% / 한국어 ~70% (LANGUAGE_ENGLISH_RATIO).
+    타겟 per-sample 결정: 도메인 객체 균등 순회 ~90% (OBJECT_SPECIFIC_RATIO)
+      + collective term ~10%. 객체 분포 skew 와 표현 중복 동시 완화.
   - 함수 호출 시퀀스(assistant turns)는 결정론적으로 합성:
       assistant   → look_scene(prompt=...)
                     user_command 에서 vocab object 키워드 추출 성공 시
@@ -118,16 +120,52 @@ USER_CMD_SYSTEM_PROMPT = (
     'You generate ONE realistic short voice command that a user would say to a '
     'home assistant robot.\n'
     'Output rules:\n'
-    '  - Follow the Language instruction in the user message strictly\n'
+    '  - Follow the Language and Guidance in the user message strictly\n'
     '    (Korean ONLY or English ONLY — never mix in one command).\n'
     '  - 3 to 20 words/characters total. Conversational, natural.\n'
     '  - Vary tone: polite formal, casual, brief imperative, or descriptive request.\n'
-    '  - Sometimes specify a target object (e.g., "캔만 정리"), sometimes generic.\n'
+    '  - Vary phrasing — avoid repeating the same sentence structure used in '
+    'previous samples.\n'
     '  - No quotes, no explanation, no list — output ONLY the command text.\n'
 )
 
 # 한국어 / 영어 명령 비율 — 영어 ~30% 강제 (rng 로 per-sample 결정).
 LANGUAGE_ENGLISH_RATIO = 0.30
+
+# 객체 균등 순회 — synthesize_user_command 에서 매 호출 객체 1개를 강제 지정
+# (90%) 또는 collective 명령 (10%) 으로 분기. 객체 분포 skew 와 명령 중복을
+# 동시에 완화. 500 샘플 기준:
+#   recycling: 객체별 ~150개 + collective ~50
+#   tableware: 객체별 ~90개  + collective ~50
+OBJECT_SPECIFIC_RATIO = 0.90
+
+# 객체 → 도메인·언어별 자연어 hint (LLM 에 "이 단어를 명령에 포함하라" 지시).
+OBJECT_KEYWORD_HINTS: Dict[str, Dict[str, Dict[str, str]]] = {
+    'recycling': {
+        'can':     {'ko': '캔',          'en': 'can'},
+        'plastic': {'ko': '페트병 또는 플라스틱', 'en': 'plastic bottle'},
+        'paper':   {'ko': '종이',         'en': 'paper'},
+    },
+    'tableware': {
+        'plate': {'ko': '접시',  'en': 'plate'},
+        'bowl':  {'ko': '그릇',  'en': 'bowl'},
+        'cup':   {'ko': '컵',    'en': 'cup'},
+        'fork':  {'ko': '포크',  'en': 'fork'},
+        'spoon': {'ko': '숟가락', 'en': 'spoon'},
+    },
+}
+
+# Collective term hint (10% 케이스) — generic fallback 학습 표본 확보용.
+COLLECTIVE_HINTS: Dict[str, Dict[str, str]] = {
+    'recycling': {
+        'ko': "예: '쓰레기 좀 정리해줘', '분리수거 부탁해'",
+        'en': "e.g., 'sort the trash', 'do the recycling please'",
+    },
+    'tableware': {
+        'ko': "예: '식기 정리해줘', '그릇 좀 치워줘'",
+        'en': "e.g., 'put the dishes away', 'clean up the tableware'",
+    },
+}
 
 # look_scene 의 prompt 인자 풀 — 객체 미지정 (user_command 가 generic 일 때 사용).
 LOOK_SCENE_PROMPTS_GENERIC: List[str] = [
@@ -308,23 +346,48 @@ def build_system_prompt() -> str:
 
 def synthesize_user_command(
     domain: str,
+    vocab:  dict,
     llm:    LLMClient,
     rng:    random.Random,
 ) -> str:
     """도메인 맥락에 맞는 사용자 명령 1건 합성.
 
-    rng 로 per-sample 언어 결정 (영어 ~LANGUAGE_ENGLISH_RATIO 확률), 결정한
-    언어를 user 메시지에 명시하여 LLM 이 단일 언어로 응답하도록 강제.
+    rng 로 per-sample 결정:
+      - 언어: 영어 ~LANGUAGE_ENGLISH_RATIO 확률
+      - 타겟: OBJECT_SPECIFIC_RATIO 확률로 도메인 객체 1개 균등 순회,
+              나머지는 collective term (도메인 vocab 어느 객체에도 직접 매칭
+              안 되는 일반적 표현) hint.
+
+    이로써 객체 분포 skew 와 표현 중복을 동시에 완화한다.
     """
     domain_desc = DOMAIN_DESCRIPTIONS.get(domain, domain)
     use_english = rng.random() < LANGUAGE_ENGLISH_RATIO
     lang_hint = 'English ONLY' if use_english else 'Korean ONLY'
+    lang_key  = 'en' if use_english else 'ko'
+
+    use_specific = rng.random() < OBJECT_SPECIFIC_RATIO
+    if use_specific and domain in OBJECT_KEYWORD_HINTS:
+        obj_name = rng.choice(list(vocab['objects'].keys()))
+        kw_map   = OBJECT_KEYWORD_HINTS[domain].get(obj_name, {})
+        kw       = kw_map.get(lang_key) or obj_name
+        guidance = (
+            f'The user wants to handle the {kw}. Explicitly mention this object '
+            f'in the command. Vary the surrounding phrasing.'
+        )
+    else:
+        coll = (COLLECTIVE_HINTS.get(domain, {}) or {}).get(lang_key, '')
+        guidance = (
+            'Use a generic/collective phrase that does NOT name any specific '
+            f'object class. {coll}'
+        )
+
     messages = [
         {'role': 'system', 'content': USER_CMD_SYSTEM_PROMPT},
         {'role': 'user',
          'content': (
              f'Domain: {domain_desc}\n'
              f'Language: {lang_hint}.\n'
+             f'Guidance: {guidance}\n'
              f'Generate ONE user voice command for this domain.'
          )},
     ]
@@ -413,7 +476,7 @@ def main() -> None:
     with open(args.output, 'w', encoding='utf-8') as f:
         for i in range(args.num_samples):
             try:
-                user_cmd = synthesize_user_command(args.domain, llm, rng)
+                user_cmd = synthesize_user_command(args.domain, vocab, llm, rng)
                 if not user_cmd:
                     raise ValueError('빈 user_command')
                 turns = synthesize_function_call_response(
