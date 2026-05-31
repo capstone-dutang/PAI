@@ -166,9 +166,76 @@ python training/lora_finetuning/convert_cat_b_to_vision_format.py \
 > 멱등 변환 — 이미 typed-array 인 입력은 그대로 통과. 신규 합성한 JSONL 은
 > 이미 vision 포맷이므로 본 단계 불필요.
 
-## 2-4. Cat-C 합성 (검증 시나리오) — Sim 자산 준비 필요
+## 2-4. Cat-C 합성 (검증 시나리오)
 
-(`generate_verify_qa.py` 본체 구현 후 작성)
+`generate_verify_qa.py` 가 status 가중 샘플 + 객체 균등 순회 + 템플릿 reasoning
+으로 시나리오를 결정론적으로 합성하고, 각 시나리오마다 LLM 1회 (original_command
+생성) + Sim 렌더링 1회 (PNG 저장) 를 수행합니다.
+
+> **freeze 결정의 캐노니컬 위치는 [`generate_verify_qa.py`](lora_finetuning/generate_verify_qa.py)
+> 모듈 docstring 의 매트릭스를 참조**합니다. 값(분포·템플릿·destination 등)을
+> 본 README 에 재기재하지 않으며, 변경 시 모듈의 해당 상수/함수만 수정하면
+> 됩니다.
+
+### 데이터 흐름
+
+```
+synthesize_scenario (LLM)         # status / target / target_phrase / cmd
+   → generate_reasoning (template) # status 별 5 템플릿 중 선택, target/dest substitute
+   → build_sample                  # vision typed-array messages
+   → write JSONL line              # image path 만 박힘 (실제 PNG 는 별도)
+   → render_scenario_image (Sim)   # Isaac Sim 으로 PNG 저장 — 미구현 stub
+```
+
+### 출력 디렉터리 구조
+
+```
+training/lora_finetuning/data/recycling/
+├── qa_cat_c.jsonl
+└── verify_images/
+    ├── recycling_00000.png
+    ├── recycling_00001.png
+    └── ...
+```
+
+### dry run (구조 검증, Sim 의존 없음)
+
+`--skip-render` 로 PNG 렌더링을 생략하고 JSONL 만 출력 — `original_command`
+합성 (LLM) + reasoning 템플릿 + JSONL 스키마 검증용. 10 샘플 기준 ≈ $0.001:
+
+```bash
+python training/lora_finetuning/generate_verify_qa.py \
+  --domain         recycling \
+  --output-jsonl   /tmp/catC_dry.jsonl \
+  --image-dir      /tmp/catC_dry_images \
+  --num-scenes     10 \
+  --skip-render
+
+head -n 1 /tmp/catC_dry.jsonl | python -m json.tool
+```
+
+### 본격 합성 (Sim 렌더링 본체 구현 후)
+
+```bash
+python training/lora_finetuning/generate_verify_qa.py \
+  --domain         recycling \
+  --output-jsonl   training/lora_finetuning/data/recycling/qa_cat_c.jsonl \
+  --image-dir      training/lora_finetuning/data/recycling/verify_images/ \
+  --num-scenes     500
+
+python training/lora_finetuning/generate_verify_qa.py \
+  --domain         tableware \
+  --output-jsonl   training/lora_finetuning/data/tableware/qa_cat_c.jsonl \
+  --image-dir      training/lora_finetuning/data/tableware/verify_images/ \
+  --num-scenes     500
+```
+
+> `render_scenario_image()` 가 미구현 (`NotImplementedError`) 상태이므로
+> `--skip-render` 없이 실행하면 JSONL 은 정상 출력되지만 PNG 가 만들어지지 않아
+> 학습 단계의 `PIL.Image.open(path)` 가 실패합니다. **본격 학습 직전에 Sim
+> 자산 (`sim/assets/objects/<domain>/`) 준비 + render 본체 구현 + 재실행
+> 필수**. Sim 의존부 명세는 `generate_verify_qa.py` 의 `render_scenario_image`
+> docstring 참조.
 
 ## 2-5. Q&A 병합 (70:30, oversample)
 

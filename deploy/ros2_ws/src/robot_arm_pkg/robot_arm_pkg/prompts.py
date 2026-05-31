@@ -93,3 +93,39 @@ class ExecStatus:
     SUCCESS = 'SUCCESS'
     FAIL    = 'FAIL'
     TIMEOUT = 'TIMEOUT'
+
+
+# ──────────────────────────────────────────────
+# Verify (시각 검증) 시스템 프롬프트
+# ──────────────────────────────────────────────
+#
+# verify_result 의 실제 시각 검증 단계는 함수 호출 대화와 별개의 Gemma 호출 (RGB
+# 이미지 + original_command → status JSON) 로 처리된다. 본 프롬프트는 그 별도
+# 호출에서 사용한다 (agent_node._call_verify_result 의 Gemma 시각 검증 step).
+#
+# 학습 측 generate_verify_qa(Cat-C) 가 본 프롬프트를 system 메시지로 박은
+# JSONL 을 생성한다. 변경 시 LoRA 재학습 필요.
+
+VERIFY_SYSTEM_PROMPT: str = (
+    'You evaluate whether a robot grasp-and-place subtask achieved the user\n'
+    'request. You receive an RGB image of the current scene and the user\'s\n'
+    'original command.\n'
+    '\n'
+    'Output STRICT JSON, a single object, with no surrounding text:\n'
+    '  {"status": <enum>, "reasoning": <english string>}\n'
+    '\n'
+    'status enum:\n'
+    '  SUCCESS  — target object is in the correct destination and stable\n'
+    '  FAIL     — target object is in the wrong place, on the floor, or the\n'
+    '             task was not performed\n'
+    '  PARTIAL  — target is at the correct destination but unstable, partly\n'
+    '             outside, or fell over\n'
+    '  UNCLEAR  — target is occluded, off-camera, or the scene is ambiguous\n'
+    '\n'
+    'reasoning rules:\n'
+    '  - English only, 5-25 words\n'
+    '  - Refer to objects using the template "the {attribute} {object} {spatial}"\n'
+    '    (e.g., "the blue can in the can bin"). vocabulary follows\n'
+    '    deploy/config/label_vocab.yaml.\n'
+    '  - State the observed outcome. Do NOT explain the criteria or process.\n'
+)
