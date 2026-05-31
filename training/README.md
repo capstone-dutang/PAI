@@ -261,16 +261,41 @@ python training/lora_finetuning/merge_qa_dataset.py \
 ```bash
 python training/lora_finetuning/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
-  --dataset training/lora_finetuning/data/recycling/qa_merged.jsonl \
+  --dataset    training/lora_finetuning/data/recycling/qa_merged.jsonl \
+  --image-dir  training/lora_finetuning/data/recycling/verify_images \
   --output-dir training/outputs/lora_recycling \
   --rank 16 --alpha 32 \
   --epochs 3
 ```
 
-> Cat-B(text-only) 와 Cat-C(image+text) 를 한 `FastVisionModel` 패스로 학습.
-> Cat-B 는 image 항목이 없는 typed-array text 만 포함되며, `UnslothVisionDataCollator`
-> 가 image=None 케이스를 처리하는지는 [unslothai/unsloth#1590](https://github.com/unslothai/unsloth/issues/1590)
-> 의 workaround 패턴을 작은 batch 로 사전 검증할 것.
+`train_gemma_qlora.py` 의 핵심 설계 (모듈 docstring 참조):
+- **FastVisionModel** + LoRA (rank/alpha 기본 16/32). `finetune_vision_layers=False`
+  로 language layers 만 학습 (Unsloth 권장).
+- **Custom data collator**: per_device_batch_size=1 강제 (Cat-B text-only 와
+  Cat-C image+text 가 같은 batch 에 섞이는 문제 회피, [unslothai/unsloth#1590](https://github.com/unslothai/unsloth/issues/1590)
+  패턴). effective batch 는 `--grad-accum` (기본 4) 로 확보.
+- **Image lazy load**: collator 가 sample 의 image string path 를
+  `PIL.Image.open(image_dir/path)` 로 변환 — 전체 dataset 를 메모리에 안 올림.
+- **선행 조건**: `pip install -r training/lora_finetuning/requirements.txt`
+  (Unsloth 는 CUDA/GPU 환경에 따라 [공식 설치 가이드](https://docs.unsloth.ai/)
+  를 우선 권장). VRAM ≥16 GB, HuggingFace `unsloth/gemma-4-E2B-it` 액세스.
+
+### 첫 학습 sanity check (Cat-B 만, ~10 step)
+
+text-only 샘플과 vision collator 호환성을 빠르게 검증할 수 있는 짧은 run:
+
+```bash
+python training/lora_finetuning/train_gemma_qlora.py \
+  --base-model unsloth/gemma-4-E2B-it \
+  --dataset    training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl \
+  --image-dir  training/lora_finetuning/data/recycling/verify_images \
+  --output-dir /tmp/lora_sanity \
+  --max-steps  10 \
+  --logging-steps 1
+```
+
+Cat-B 만 들어 있어 image 디렉터리는 비어 있어도 됨 (collator 가 image 없는
+sample 만 처리). 정상 loss 가 감소하면 본격 학습으로 진행.
 
 ## 2-7. GGUF 변환
 
