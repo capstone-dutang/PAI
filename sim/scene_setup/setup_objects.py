@@ -26,12 +26,10 @@ NVIDIA Omniverse 퍼블릭 버킷이라 인증 불필요(`--no-sign-request`). �
 제외(불필요·용량 절감).
 
 [SimReady · tableware — `SIMREADY_ROOT` 기준]
-    Script Editor 에서 omni.client.copy 로 SimReady prop 디렉터리를 로컬에
-    미러링한다 (의존성 트리 그대로 → 상대참조 보존).
-      디스커버리:  omni.simready.explorer.find_assets(search_words=[...])
-                   → 각 asset 의 main_url 획득
-      로컬화:      omni.client.list + omni.client.copy 로 그 URL 디렉터리를
-                   하위까지 통째로 복사
+    LOCALIZE_SIMREADY=True 로 두고 1회 실행하면, mapping 에서 실제 쓰는 prop
+    폴더 + 공용 materials(SimPBR.mdl 등) 만 omni.client 로 로컬 미러링한다
+    (원격과 동일 트리 → 상대참조 보존; common_assets 전체는 받지 않아 빠름).
+    이후 skip_existing 으로 재실행도 빠르다. 강제 재다운로드는 로컬 폴더 삭제 후 실행.
 ────────────────────────────────────────────────────────────────────────────
 """
 from pathlib import Path
@@ -98,19 +96,28 @@ DOMAINS = {
             "bowl":    {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},   # 유약 세라믹(그릇) — bowl 추가 시 사용
             "cutlery": {"static": 1.1, "dynamic": 0.9, "restitution": 0.05},  # 스테인리스, 미끄러움
         },
+        # 방법 B 로컬화 대상: 실제 쓰는 prop 폴더(mapping 기준) + 공용 materials.
+        # remote_props 는 asset_base(SIMREADY_ROOT)에 대응하는 원격 prop 루트.
+        "localize": {
+            "remote_props": "https://omniverse-content-staging.s3.us-west-2.amazonaws.com/Assets/simready_content/common_assets/props",
+            "shared": [
+                "https://omniverse-content-staging.s3.us-west-2.amazonaws.com/Assets/simready_content/materials",
+            ],
+        },
     },
 }
 # ─────────────────
 
 
-# ───── SimReady 의존성 로컬화 ─────
-# SimReady 머티리얼(SimPBR.mdl)·텍스처는 prop 폴더가 아니라 common_assets
-# 하위 공용 위치에 있어, props/ 폴더만 받으면 MDL/텍스처가 안 풀린다.
-# common_assets 트리를 원격과 '동일 구조' 로 통째 미러링해 상대참조를 보존.
-# 사용: LOCALIZE_SIMREADY=True 로 두고 1회 실행(다운로드) → 완료 후 다시 False.
-#       용량이 부담되면 SIMREADY_REMOTE 를 materials/textures 등 하위 폴더로 좁힌다.
+# ───── SimReady 의존성 로컬화 (방법 B — 사용 에셋만) ─────
+# prop 머티리얼이 SimPBR.mdl 을 ../../../materials/SimPBR.mdl 로 참조하는데
+# 그 공용 materials 폴더가 로컬에 없어 셰이더(SdrShaderNode)를 못 만든다.
+# (1) mapping 에서 실제 쓰는 prop 폴더만 + (2) 공용 materials 폴더를
+# 원격과 '동일 구조' 로 로컬 미러링해 상대참조를 보존. common_assets 전체를
+# 받지 않으므로 빠르다.
+# 사용: LOCALIZE_SIMREADY=True 로 1회 실행 → 이후 skip_existing 으로 재실행도 빠름.
+#       (강제 재다운로드는 해당 로컬 폴더를 지우고 다시 실행)
 LOCALIZE_SIMREADY = False
-SIMREADY_REMOTE   = "https://omniverse-content-staging.s3.us-west-2.amazonaws.com/Assets/simready_content/common_assets"
 LOCAL_ROOT        = "/home/ubuntu/isaacsim_assets"   # 원격 'Assets/...' 구조를 이 아래로 미러링
 
 
@@ -120,39 +127,70 @@ def _to_local(url):
     return os.path.join(LOCAL_ROOT, urlparse(url).path.lstrip("/"))
 
 
-def _copy_tree(remote_dir):
-    """omni.client 로 remote_dir 하위를 로컬에 트리 구조 그대로 재귀 복사."""
+def _copy_tree(remote_dir, skip_existing=True):
+    """omni.client 로 remote_dir 하위를 로컬에 트리 구조 그대로 재귀 복사.
+    skip_existing=True 면 이미 있는 파일은 건너뛴다(재실행 속도 향상)."""
     import os
     import omni.client
     remote_dir = remote_dir.rstrip("/")
     res, entries = omni.client.list(remote_dir + "/")
     if res != omni.client.Result.OK:
-        print("  LIST FAIL", res, remote_dir)
-        return 0, 1
-    ok = fail = 0
+        print("    LIST FAIL", res, remote_dir)
+        return 0, 1, 0
+    ok = fail = skip = 0
     for e in entries:
         child = remote_dir + "/" + e.relative_path
         if e.flags & omni.client.ItemFlags.CAN_HAVE_CHILDREN:   # 폴더 → 재귀
-            o, f = _copy_tree(child)
+            o, f, s = _copy_tree(child, skip_existing)
             ok += o
             fail += f
+            skip += s
         else:
             local = _to_local(child)
+            if skip_existing and os.path.exists(local):
+                skip += 1
+                continue
             os.makedirs(os.path.dirname(local), exist_ok=True)
             r = omni.client.copy(child, local, omni.client.CopyBehavior.OVERWRITE)
             if r == omni.client.Result.OK:
                 ok += 1
             else:
                 fail += 1
-                print("  COPY FAIL", r, child)
-    return ok, fail
+                print("    COPY FAIL", r, child)
+    return ok, fail, skip
 
 
-def localize_simready():
-    """common_assets 공용 머티리얼·텍스처·MDL 을 로컬로 미러링(방법 B)."""
-    print(f"\n── SimReady 의존성 미러링: {SIMREADY_REMOTE}")
-    ok, fail = _copy_tree(SIMREADY_REMOTE)
-    print(f"  → 복사 {ok}개 / 실패 {fail}개  (루트: {LOCAL_ROOT})")
+def localize_domain_assets(domain_name, cfg):
+    """cfg['localize'] 가 있으면, mapping 에서 실제 쓰는 prop 폴더 + 공용
+    의존성(materials 등) 만 로컬로 미러링한다(방법 B). 안 쓰는 에셋은 받지 않음."""
+    import posixpath
+    lz = cfg.get("localize")
+    if not lz:
+        return
+    print(f"── {domain_name} 의존성 로컬화")
+    ok = fail = skip = 0
+
+    # (1) mapping 에 등장하는 prop 폴더만 (중복 제거)
+    folders = sorted({posixpath.dirname(src_rel)
+                      for (_, src_rel, *_r) in cfg["mapping"]
+                      if posixpath.dirname(src_rel)})
+    for fld in folders:
+        url = f"{lz['remote_props'].rstrip('/')}/{fld}"
+        print(f"  prop  : {fld}")
+        o, f, s = _copy_tree(url)
+        ok += o
+        fail += f
+        skip += s
+
+    # (2) prop 들이 공유하는 의존성(SimPBR.mdl 등) — 1회만
+    for shared in lz.get("shared", []):
+        print(f"  shared: {shared.rstrip('/').rsplit('/', 1)[-1]}")
+        o, f, s = _copy_tree(shared)
+        ok += o
+        fail += f
+        skip += s
+
+    print(f"  → 복사 {ok} / 건너뜀 {skip} / 실패 {fail}")
 
 
 def is_url(s: str) -> bool:
@@ -272,7 +310,11 @@ def process_domain(domain_name, cfg):
 
 # 메인 — ENABLED_DOMAINS 만 처리
 if LOCALIZE_SIMREADY:
-    localize_simready()
+    print("\n=== SimReady 의존성 로컬화 (사용 에셋만) ===")
+    for domain_name in ENABLED_DOMAINS:
+        cfg = DOMAINS.get(domain_name)
+        if cfg:
+            localize_domain_assets(domain_name, cfg)
 
 all_created, all_skipped = [], []
 for domain_name in ENABLED_DOMAINS:
