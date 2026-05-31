@@ -63,7 +63,7 @@ PAI/
 │   ├── scene_setup/                            # Isaac Sim Script Editor 씬 저작 스크립트
 │   │   ├── setup_sim_camera.py                 # RGB 카메라 셋업 (캘리브레이션→USD)
 │   │   ├── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
-│   │   ├── setup_recycling_objects.py          # YCB 분리수거 객체 래퍼 USD 생성
+│   │   ├── setup_objects.py                    # YCB 도메인 객체 래퍼 USD 생성 (recycling + tableware 통합)
 │   │   ├── measure_placement.py                # placement 실측 (table_top_z·bin_exclusion)
 │   │   └── probe_reach.py                      # 로봇 가동범위(reach) 실측
 │   └── teleop/                                 # Isaac Sim teleop 인프라

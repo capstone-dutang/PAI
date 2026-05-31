@@ -9,5 +9,6 @@ __pycache__/
 deploy/ros2_ws/src/aruco_ros/
 deploy/ros2_ws/src/easy_handeye2/
 
-# Sim 객체 래퍼 — setup_recycling_objects.py 가 환경별로 재생성 (절대경로 baked)
-sim/assets/objects/recycling/*.usd
+# Sim 객체 래퍼 — setup_objects.py 가 환경별로 재생성 (절대경로 baked).
+# 모든 도메인 하위 디렉터리(recycling, tableware, …) 의 .usd 를 제외.
+sim/assets/objects/*/*.usd

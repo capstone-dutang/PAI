@@ -469,7 +469,7 @@ class TargetSelector:
         if not lib.is_dir():
             raise FileNotFoundError(
                 f'object_library 디렉터리 없음: {lib} — '
-                'sim/scene_setup/setup_recycling_objects.py 를 먼저 실행할 것.'
+                'sim/scene_setup/setup_objects.py 를 먼저 실행할 것.'
             )
         self._by_category: Dict[str, List[str]] = {}
         for f in sorted(lib.glob('*.usd')):
@@ -511,7 +511,7 @@ class TargetSelector:
             if c not in self._by_category:
                 raise RuntimeError(
                     f"scene 카테고리 '{c}' 의 래퍼가 object_library 에 없음 — "
-                    'setup_recycling_objects.py 의 MAPPING 과 파일명 prefix 확인.'
+                    'setup_objects.py 의 DOMAINS 매핑 과 파일명 prefix 확인.'
                 )
             if c not in vocab.objects:
                 raise RuntimeError(
@@ -960,7 +960,7 @@ class SceneManager:
         if not wrapper.exists():
             raise FileNotFoundError(
                 f'객체 래퍼 없음: {wrapper} — '
-                'sim/scene_setup/setup_recycling_objects.py 를 먼저 실행할 것.'
+                'sim/scene_setup/setup_objects.py 를 먼저 실행할 것.'
             )
         prim_path = (f'{self.OBJECTS_ROOT}/ep{episode_idx}'
                      f'_{slot}_{Path(wrapper_name).stem}')
@@ -971,7 +971,11 @@ class SceneManager:
         rot = Gf.Rotation(Gf.Vec3d(0.0, 0.0, 1.0),
                           float(self.rng.uniform(0.0, 360.0)))   # yaw 무작위
         xform = UsdGeom.Xformable(prim)
-        xform.ClearXformOpOrder()
+        # ClearXformOpOrder 호출 안 함 — 래퍼 USD 가 baked 한 ScaleOp
+        # (setup_objects.py 의 DOMAINS[domain]['scale']) 이 보존돼야 한다.
+        # AddTransformOp 은 기존
+        # xformOpOrder 에 append 되어 [scale, transform] 순으로 적용된다 (scale 먼저
+        # 객체 축소 → 그 위에 회전·이동). bbox 도 두 op 합성 후로 계산된다.
         xop = xform.AddTransformOp(UsdGeom.XformOp.PrecisionDouble)
 
         # 임시로 table_top_z 에 두고 → world bbox 로 객체 바닥을 테이블에 정렬

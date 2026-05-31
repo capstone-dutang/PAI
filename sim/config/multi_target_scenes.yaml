@@ -7,7 +7,7 @@
 # ACT shortcut learning 방지 — 한 장면에 후보 객체를 여럿 두고, 같은 시각
 # 입력에 다른 언어 명령으로 다른 행동을 하는 에피소드를 의도적으로 만든다.
 
-# 객체 라이브러리 — setup_recycling_objects.py 가 생성한 래퍼 USD 디렉터리.
+# 객체 라이브러리 — setup_objects.py 가 생성한 래퍼 USD 디렉터리.
 # 카테고리는 래퍼 파일명 prefix (can_* / plastic_* / paper_*) 로 식별.
 object_library: sim/assets/objects/recycling
 
