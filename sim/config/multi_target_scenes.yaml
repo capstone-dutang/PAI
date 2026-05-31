@@ -1,86 +1,131 @@
 # multi_target_scenes.yaml
 #
 # Sim teleop 데이터 수집(record_sim_teleop.py)의 multi-target 장면 구성.
-#   - placement : SceneManager 가 매 에피소드 객체를 배치하는 영역·규칙
-#   - scenes    : TargetSelector([D5])가 고르는 객체 카테고리 조합
+# 도메인별 namespace (domains.<name>) 로 object_library / placement / scenes 를
+# 분리한다 — record_sim_teleop 가 --domain 값으로 해당 블록을 선택.
+#
+# 블록 구조 (각 도메인 공통):
+#   - object_library    : setup_objects.py 가 생성한 도메인별 래퍼 USD 디렉터리.
+#                         카테고리는 래퍼 파일명 prefix (e.g., can_*, plate_*) 로 식별.
+#   - placement         : SceneManager 가 매 에피소드 초기 객체 배치에 사용
+#       - spawn_region        : 테이블 윗면 사각형 (world frame, m)
+#       - reach               : 로봇 가동범위 (annular sector) — 선택, 없으면 spawn 전체
+#       - table_top_z         : 객체 안착 z (world, m)
+#       - min_separation      : 객체 간 최소 중심 간격 (m)
+#       - exclusion_zones     : 초기 배치 금지 영역 (target/bin 위치 등) — 각 zone 에
+#                                 optional 'destination' 키 = Cat-C render 가 해당
+#                                 카테고리의 SUCCESS 배치 좌표로 재사용
+#                                 ('_shared' 는 모든 카테고리 공용)
+#       - max_sample_attempts : rejection sampling 최대 시도 수
+#   - scenes            : 한 에피소드에 배치할 카테고리 조합 ([D5] TargetSelector)
+#   - multi_target_ratio: multi-target(후보 2+) 장면 비율
 #
 # ACT shortcut learning 방지 — 한 장면에 후보 객체를 여럿 두고, 같은 시각
 # 입력에 다른 언어 명령으로 다른 행동을 하는 에피소드를 의도적으로 만든다.
 
-# 객체 라이브러리 — setup_objects.py 가 생성한 래퍼 USD 디렉터리.
-# 카테고리는 래퍼 파일명 prefix (can_* / plastic_* / paper_*) 로 식별.
-object_library: sim/assets/objects/recycling
+domains:
 
-# ── 객체 배치 규칙 (base_scene.usd 의 테이블·로봇 배치에 종속) ───────────────
-placement:
-  # spawn_region — 테이블 윗면 사각형 (world frame, m).
-  # measure_placement.py 출력의 "테이블 footprint" 그대로 기입.
-  spawn_region:
-    x_range: [-1.5921, 1.5927]
-    y_range: [-0.8126, 0.8132]
+  # ── recycling ────────────────────────────────────────────────────────────
+  recycling:
+    object_library: sim/assets/objects/recycling
 
-  # reach — 로봇 가동범위 (annular sector, world frame). 선택적:
-  # 키가 없으면 spawn_region 사각형 전체에서 샘플(이전 동작). 있으면
-  # SceneManager 가 사각형 ∩ 환형섹터 안에서만 객체를 배치한다 — SO-101 처럼
-  # 가동범위가 반원/환형인 팔에 필요.
-  # 축 규약: x+ = 로봇 정면(forward), y+ = 로봇 기준 왼쪽.
-  # theta = atan2(dy, dx) [deg]. theta=0 → 정면, +90 → 왼쪽, -90 → 오른쪽.
-  # ⚠️ probe_reach.py 로 r_min/r_max/theta 실측 후 기입.
-  reach:
-    center:          [-0.5, 0.0]     # 로봇 base world (x,y)
-    r_range:         [0.115, 0.35]    # 최소·최대 도달 반경 (m)
-    theta_range_deg: [-90.0, 90.0]   # 로봇 정면 기준 ±각도
+    placement:
+      spawn_region:
+        x_range: [-1.5921, 1.5927]
+        y_range: [-0.8126, 0.8132]
+      reach:
+        center:          [-0.5, 0.0]
+        r_range:         [0.115, 0.35]
+        theta_range_deg: [-90.0, 90.0]
+      table_top_z: 0.0104
+      min_separation: 0.08
+      exclusion_zones:
+        # base_scene.usd 의 bin_* prim 위치 실측. destination = vocab 객체 카테고리.
+        - {x_range: [-0.4250, -0.2700], y_range: [-0.4050, -0.2050], destination: plastic}
+        - {x_range: [-0.3100, -0.1550], y_range: [-0.4050, -0.2050], destination: can}
+        - {x_range: [-0.1950, -0.0400], y_range: [-0.4050, -0.2050], destination: paper}
+      max_sample_attempts: 100
 
-  # 객체를 안착시킬 테이블 윗면 높이 (world z, m). ⚠️ base_scene 의 테이블 실측값.
-  table_top_z: 0.0104
+    # 세 카테고리(can/plastic/paper) 대칭 — TargetSelector 가 한 장면에 실제 놓인
+    # 카테고리 중에서만 타겟을 고르므로 multi·single 두 계층 모두 대칭이어야 함.
+    scenes:
+      # ── multi-target (후보 2+) ──
+      - name: recycling_3cat
+        objects:
+          - {category: can,     count: 1}
+          - {category: plastic, count: 1}
+          - {category: paper,   count: 1}
+      - name: recycling_2can
+        objects:
+          - {category: can, count: 2}
+      - name: recycling_2plastic
+        objects:
+          - {category: plastic, count: 2}
+      - name: recycling_2paper
+        objects:
+          - {category: paper, count: 2}
+      # ── single-target ──
+      - name: recycling_single_can
+        objects:
+          - {category: can, count: 1}
+      - name: recycling_single_plastic
+        objects:
+          - {category: plastic, count: 1}
+      - name: recycling_single_paper
+        objects:
+          - {category: paper, count: 1}
 
-  # 객체 간 최소 중심 간격 (m) — 겹침 방지 rejection sampling.
-  min_separation: 0.08
+    multi_target_ratio: 0.6
 
-  # 빈(bin) footprint — 이 사각형과 겹치면 객체를 재샘플 (world frame, m).
-  # ⚠️ base_scene.usd 의 bin_* prim 위치를 보고 실측값 기입.
-  bin_exclusion:
-    - {x_range: [-0.4250, -0.2700], y_range: [-0.4050, -0.2050]}   # bin_plastic
-    - {x_range: [-0.3100, -0.1550], y_range: [-0.4050, -0.2050]}   # bin_can
-    - {x_range: [-0.1950, -0.0400], y_range: [-0.4050, -0.2050]}  # bin_paper
+  # ── tableware ────────────────────────────────────────────────────────────
+  tableware:
+    object_library: sim/assets/objects/tableware
 
-  # rejection sampling 최대 시도 횟수.
-  max_sample_attempts: 100
+    placement:
+      # 같은 테이블·로봇이므로 spawn_region / reach / table_top_z 는 recycling 과 동일.
+      spawn_region:
+        x_range: [-1.5921, 1.5927]
+        y_range: [-0.8126, 0.8132]
+      reach:
+        center:          [-0.5, 0.0]
+        r_range:         [0.115, 0.35]
+        theta_range_deg: [-90.0, 90.0]
+      table_top_z: 0.0104
+      # 식기(접시 직경 ≈0.18 m) 가 큰 객체라 separation 을 크게 — recycling 의
+      # 캔/병보다 보수적으로 잡음. 포크/숟가락만 있는 장면에선 잉여여유.
+      min_separation: 0.20
+      exclusion_zones:
+        # base_scene.usd 의 tableware target_area 평면 prim. 중심 (-0.295, 0.29),
+        # 10cm × 10cm. 모든 식기 카테고리가 같은 destination 공유 ('_shared').
+        - {x_range: [-0.345, -0.245], y_range: [0.24, 0.34], destination: _shared}
+      max_sample_attempts: 100
 
-# ── 장면 정의 ── 각 장면 = 한 에피소드에 배치할 객체 카테고리 조합.
-# count 만큼 해당 카테고리 래퍼에서 TargetSelector 가 구체 객체를 고른다.
-#
-# 씬 셋은 세 카테고리(can/plastic/paper)에 대칭으로 구성한다. TargetSelector 는
-# 한 장면에 실제로 놓인 카테고리 중에서만 grasp 타겟을 고를 수 있으므로, 씬
-# 셋이 비대칭이면(예: 같은-범주·단일 장면이 can 만 존재) 타겟이 그 카테고리로
-# 쏠린다. multi(후보 2+) · single 두 계층 모두 카테고리 대칭이어야 타겟 분포가
-# 고르게 된다.
-scenes:
-  # ── multi-target (후보 2+) ──
-  - name: recycling_3cat            # 캔 + 플라스틱 + 종이
-    objects:
-      - {category: can,     count: 1}
-      - {category: plastic, count: 1}
-      - {category: paper,   count: 1}
-  - name: recycling_2can            # 같은 범주 변별 — 캔
-    objects:
-      - {category: can, count: 2}
-  - name: recycling_2plastic        # 같은 범주 변별 — 플라스틱
-    objects:
-      - {category: plastic, count: 2}
-  - name: recycling_2paper          # 같은 범주 변별 — 종이
-    objects:
-      - {category: paper, count: 2}
-  # ── single-target (후보 1) ──
-  - name: recycling_single_can      # 단일 객체 — 캔
-    objects:
-      - {category: can, count: 1}
-  - name: recycling_single_plastic  # 단일 객체 — 플라스틱
-    objects:
-      - {category: plastic, count: 1}
-  - name: recycling_single_paper    # 단일 객체 — 종이
-    objects:
-      - {category: paper, count: 1}
+    # 세 카테고리(plate/fork/spoon) 대칭. cup/bowl 은 vocab/Sim 모두에서 제외.
+    scenes:
+      # ── multi-target (후보 2+) ──
+      - name: tableware_3cat
+        objects:
+          - {category: plate, count: 1}
+          - {category: fork,  count: 1}
+          - {category: spoon, count: 1}
+      - name: tableware_2plate
+        objects:
+          - {category: plate, count: 2}
+      - name: tableware_2fork
+        objects:
+          - {category: fork, count: 2}
+      - name: tableware_2spoon
+        objects:
+          - {category: spoon, count: 2}
+      # ── single-target ──
+      - name: tableware_single_plate
+        objects:
+          - {category: plate, count: 1}
+      - name: tableware_single_fork
+        objects:
+          - {category: fork, count: 1}
+      - name: tableware_single_spoon
+        objects:
+          - {category: spoon, count: 1}
 
-# 전체 에피소드 중 multi-target(후보 2+) 장면 비율.
-multi_target_ratio: 0.6
+    multi_target_ratio: 0.6

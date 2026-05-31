@@ -160,8 +160,6 @@ OBJECT_KEYWORD_HINTS: Dict[str, Dict[str, Dict[str, str]]] = {
     },
     'tableware': {
         'plate': {'ko': '접시',  'en': 'plate'},
-        'bowl':  {'ko': '그릇',  'en': 'bowl'},
-        'cup':   {'ko': '컵',    'en': 'cup'},
         'fork':  {'ko': '포크',  'en': 'fork'},
         'spoon': {'ko': '숟가락', 'en': 'spoon'},
     },
@@ -214,10 +212,6 @@ KEYWORD_TO_OBJECT: Dict[str, Dict[str, str]] = {
     'tableware': {
         '접시':    'plate',
         'plate':   'plate',
-        '그릇':    'bowl',
-        'bowl':    'bowl',
-        '컵':      'cup',
-        'cup':     'cup',
         '포크':    'fork',
         'fork':    'fork',
         '숟가락':   'spoon',

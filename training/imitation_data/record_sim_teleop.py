@@ -271,28 +271,46 @@ class SceneConfig:
     raw:                dict = field(default_factory=dict)
 
 
-def load_scenes(path: str) -> SceneConfig:
-    """multi_target_scenes.yaml 로드 + placement 스키마 검증."""
+def load_scenes(path: str, domain: str) -> SceneConfig:
+    """multi_target_scenes.yaml 의 domains.<domain> 블록 로드 + placement 검증.
+
+    yaml 스키마 (2026-05-25):
+        domains:
+          <domain>:
+            object_library: ...
+            placement: {spawn_region, reach, table_top_z, min_separation,
+                        exclusion_zones, max_sample_attempts}
+            scenes: [...]
+            multi_target_ratio: ...
+    """
     with open(path, 'r', encoding='utf-8') as f:
         raw = yaml.safe_load(f) or {}
-    scenes = raw.get('scenes') or []
+    domains = raw.get('domains') or {}
+    if domain not in domains:
+        raise ValueError(
+            f"multi_target_scenes.yaml 에 도메인 '{domain}' 블록 없음. "
+            f"가능: {list(domains)} ({path}).")
+    dom = domains[domain] or {}
+    scenes = dom.get('scenes') or []
     if not scenes:
-        raise ValueError(f'multi_target_scenes.yaml 에 scenes 정의 없음 ({path}).')
-    placement = raw.get('placement')
+        raise ValueError(
+            f"도메인 '{domain}' 에 scenes 정의 없음 ({path}).")
+    placement = dom.get('placement')
     if not isinstance(placement, dict) or 'spawn_region' not in placement:
         raise ValueError(
-            f'multi_target_scenes.yaml 에 placement.spawn_region 없음 ({path}).')
+            f"도메인 '{domain}' 의 placement.spawn_region 없음 ({path}).")
     sr = placement['spawn_region']
     if 'x_range' not in sr or 'y_range' not in sr:
-        raise ValueError(f'placement.spawn_region 에 x_range/y_range 필요 ({path}).')
+        raise ValueError(
+            f"placement.spawn_region 에 x_range/y_range 필요 ({path}).")
     object_library = os.path.expanduser(
-        raw.get('object_library', 'sim/assets/objects/recycling'))
+        dom.get('object_library', f'sim/assets/objects/{domain}'))
     return SceneConfig(
         scenes=list(scenes),
-        multi_target_ratio=float(raw.get('multi_target_ratio', 0.0)),
+        multi_target_ratio=float(dom.get('multi_target_ratio', 0.0)),
         placement=placement,
         object_library=object_library,
-        raw=raw,
+        raw=dom,
     )
 
 
@@ -813,11 +831,11 @@ class SceneManager:
         self._placed: List[str] = []
 
         p = scene_cfg.placement
-        self._spawn         = p['spawn_region']
-        self._table_top_z   = float(p.get('table_top_z', 0.0))
-        self._min_sep       = float(p.get('min_separation', 0.08))
-        self._bin_exclusion = list(p.get('bin_exclusion') or [])
-        self._max_attempts  = int(p.get('max_sample_attempts', 100))
+        self._spawn           = p['spawn_region']
+        self._table_top_z     = float(p.get('table_top_z', 0.0))
+        self._min_sep         = float(p.get('min_separation', 0.08))
+        self._exclusion_zones = list(p.get('exclusion_zones') or [])
+        self._max_attempts    = int(p.get('max_sample_attempts', 100))
         self._lib = Path(scene_cfg.object_library)
 
         # reach (annular sector, 선택적) — 사각형 spawn_region ∩ 환형 가동범위.
@@ -919,7 +937,7 @@ class SceneManager:
             if any((x - ex) ** 2 + (y - ey) ** 2 < self._min_sep ** 2
                    for ex, ey in existing):
                 continue
-            if self._in_bin(x, y):
+            if self._in_excluded(x, y):
                 continue
             if not self._in_reach(x, y):
                 continue
@@ -929,8 +947,9 @@ class SceneManager:
             '가 너무 좁거나 객체 수 대비 min_separation 이 큼.'
         )
 
-    def _in_bin(self, x: float, y: float) -> bool:
-        for b in self._bin_exclusion:
+    def _in_excluded(self, x: float, y: float) -> bool:
+        """초기 배치 금지 영역(bin/target_area 등) 안인지 검사."""
+        for b in self._exclusion_zones:
             bx, by = b['x_range'], b['y_range']
             if bx[0] <= x <= bx[1] and by[0] <= y <= by[1]:
                 return True
@@ -1237,7 +1256,7 @@ def main() -> None:
 
     # 1) Config
     vocab     = load_vocab(args.label_vocab, args.domain)
-    scene_cfg = load_scenes(args.scenes)
+    scene_cfg = load_scenes(args.scenes, args.domain)
     dr_cfg    = load_dr_config(args.dr_config)
     initial_pose = load_initial_pose(args.home_pose_file)
     rng = np.random.default_rng(args.seed)

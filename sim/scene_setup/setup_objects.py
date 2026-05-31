@@ -83,18 +83,18 @@ DOMAINS = {
         "scale": 0.7,
         # SimReady 식기는 실물 크기(meters) — 0.7 이면 접시 ≈0.18 m, 포크 ≈0.14 m.
         # 품목별로 어긋나면 entry 에 per-item scale 을 추가해 분리하면 된다.
+        # 카테고리는 vocab object 명사(plate/fork/spoon)와 1:1 — wrapper 파일명
+        # prefix 도 카테고리와 같아야 한다(record_sim_teleop._category_of 가 split
+        # '_'[0]). cup/bowl 은 vocab 에서 제거 (자산 가용성 부족, 2026-05-25 scope).
         "mapping": [
-            ("plate_dinner.usd",  "plate_large/plate_large.usd", "plate",   0.250, "convexHull"),
-            ("cutlery_fork.usd",  "fork_big/fork_big.usd",       "cutlery", 0.050, "convexHull"),
-            ("cutlery_spoon.usd", "spoon_big/spoon_big.usd",     "cutlery", 0.050, "convexHull"),
-            # bowl  — SimReady 'bowl' 디스커버리·로컬화 후 추가:
-            #   ("bowl_round.usd", "<bowl_asset>/<bowl_asset>.usd", "bowl", 0.150, "convexDecomposition"),
-            # knife — SimReady 0건 (2026-05 기준). 다른 출처 또는 모델링 보충 필요.
+            ("plate_dinner.usd", "plate_large/plate_large.usd", "plate", 0.250, "convexHull"),
+            ("fork_big.usd",     "fork_big/fork_big.usd",       "fork",  0.050, "convexHull"),
+            ("spoon_big.usd",    "spoon_big/spoon_big.usd",     "spoon", 0.050, "convexHull"),
         ],
         "friction": {
-            "plate":   {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},   # 유약 세라믹(접시)
-            "bowl":    {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},   # 유약 세라믹(그릇) — bowl 추가 시 사용
-            "cutlery": {"static": 1.1, "dynamic": 0.9, "restitution": 0.05},  # 스테인리스, 미끄러움
+            "plate": {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},    # 유약 세라믹
+            "fork":  {"static": 1.1, "dynamic": 0.9, "restitution": 0.05},   # 스테인리스
+            "spoon": {"static": 1.1, "dynamic": 0.9, "restitution": 0.05},   # 스테인리스
         },
         # 방법 B 로컬화 대상: 실제 쓰는 prop 폴더(mapping 기준) + 공용 materials.
         # remote_props 는 asset_base(SIMREADY_ROOT)에 대응하는 원격 prop 루트.

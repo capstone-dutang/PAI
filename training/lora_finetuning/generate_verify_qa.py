@@ -124,8 +124,6 @@ DESTINATIONS: Dict[str, Dict[str, str]] = {
     },
     'tableware': {
         'plate': 'the target area on the table',
-        'bowl':  'the target area on the table',
-        'cup':   'the target area on the table',
         'fork':  'the target area on the table',
         'spoon': 'the target area on the table',
     },

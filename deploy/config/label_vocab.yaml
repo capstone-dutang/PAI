@@ -59,18 +59,14 @@ domains:
     objects:
       plate:
         attributes: [white, blue, ceramic, plastic]
-      bowl:
-        attributes: [white, blue, ceramic, wooden]
-      cup:
-        attributes: [white, transparent, ceramic, plastic]
       fork:
         attributes: [silver, plastic, wooden]
       spoon:
         attributes: [silver, plastic, wooden]
     spatial_qualifiers:
       - "next to the plate"
-      - "next to the bowl"
-      - "next to the cup"
+      - "next to the fork"
+      - "next to the spoon"
 
   # TODO: 도메인 추가 시 같은 형식으로 entry 추가.
   #       각 도메인은 sim/config/multi_target_scenes.yaml의 동일 도메인 entry와
