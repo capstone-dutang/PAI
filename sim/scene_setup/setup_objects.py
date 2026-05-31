@@ -1,19 +1,21 @@
 """
-Generate PAI wrapper USDs for YCB objects — 도메인 통합 버전.
+Generate PAI wrapper USDs for domain objects — recycling + tableware 통합.
 
-이전의 setup_recycling_objects.py · setup_tableware_objects.py 두 스크립트를
-하나로 합쳤다. 두 스크립트가 공유하던 골격(YCB reference → Physics →
-ScaleOp baked → PhysicsMaterial → Semantic)을 함수로 추출하고, 도메인별
-차이(SCALE · MAPPING · FRICTION)만 DOMAINS 딕셔너리에 모았다.
+도메인별 차이(asset_base · SCALE · MAPPING · FRICTION) 만 DOMAINS 딕셔너리에
+모았다. 공유 골격(원본 reference → Physics → ScaleOp baked → PhysicsMaterial
+→ Semantic) 은 make_wrapper / process_domain 으로 추출. 새 도메인을 추가하려면
+DOMAINS entry 한 줄 추가하면 된다.
 
-도메인을 추가하려면 DOMAINS 에 entry 만 추가하면 된다. 기본은 ENABLED_DOMAINS
-에 적힌 모든 도메인을 한 번에 처리한다 — 하나만 재생성하려면 그 도메인 하나로
-줄이면 된다.
+소스 에셋:
+  recycling — YCB (NVIDIA Omniverse 퍼블릭 버킷)
+  tableware — SimReady (omni.client 로 로컬화 후 reference)
 
 Run in Isaac Sim Script Editor (pxr is guaranteed available).
 
-사전 준비 — YCB 원본 에셋 다운로드 (`YCB_ROOT` 경로에 없으면 실행 전 1회 수행):
+────────────────────────────────────────────────────────────────────────────
+사전 준비 — 에셋이 로컬에 없으면 실행 전 1회:
 
+[YCB · recycling — `YCB_ROOT` 기준]
     pip install awscli
     aws s3 sync --no-sign-request \\
       --exclude "*.thumb.usd" --exclude ".thumbs/*" \\
@@ -21,31 +23,41 @@ Run in Isaac Sim Script Editor (pxr is guaranteed available).
       ~/isaacsim_assets/Assets/Isaac/5.1/Isaac/Props/YCB/Axis_Aligned/
 
 NVIDIA Omniverse 퍼블릭 버킷이라 인증 불필요(`--no-sign-request`). 썸네일은
-제외(불필요·용량 절감). 모든 도메인이 같은 YCB 폴더를 공유한다.
+제외(불필요·용량 절감).
+
+[SimReady · tableware — `SIMREADY_ROOT` 기준]
+    Script Editor 에서 omni.client.copy 로 SimReady prop 디렉터리를 로컬에
+    미러링한다 (의존성 트리 그대로 → 상대참조 보존).
+      디스커버리:  omni.simready.explorer.find_assets(search_words=[...])
+                   → 각 asset 의 main_url 획득
+      로컬화:      omni.client.list + omni.client.copy 로 그 URL 디렉터리를
+                   하위까지 통째로 복사
+────────────────────────────────────────────────────────────────────────────
 """
 from pathlib import Path
-from pxr import Gf, Usd, UsdGeom, UsdPhysics, UsdShade, Sdf
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 # ───── 공통 설정 ─────
 # 경로는 실행 환경에 맞게 수정 (EC2 / 로컬 Isaac Sim 설치 위치에 따라 다름).
-YCB_ROOT    = "/home/ubuntu/isaacsim_assets/Assets/Isaac/5.1/Isaac/Props/YCB/Axis_Aligned"
-OUTPUT_BASE = "/home/ubuntu/PAI/sim/assets/objects"   # 도메인별 하위 디렉터리 자동 생성
+YCB_ROOT      = "/home/ubuntu/isaacsim_assets/Assets/Isaac/5.1/Isaac/Props/YCB/Axis_Aligned"
+SIMREADY_ROOT = "/home/ubuntu/isaacsim_assets/Assets/simready_content/common_assets/props"
+OUTPUT_BASE   = "/home/ubuntu/PAI/sim/assets/objects"   # 도메인별 하위 디렉터리 자동 생성
 
 # 처리할 도메인 — 둘 다 / 하나만 / 새 도메인 추가 가능.
 ENABLED_DOMAINS = ["recycling", "tableware"]
 
 # ───── 도메인별 설정 ─────
-# scale    : 객체 크기 배율. SO-101 가동범위(반경 ~0.35 m) 에 맞춰 축소.
-#            래퍼 USD 의 /Object Xform 에 ScaleOp 로 baked, 질량도 부피
-#            비례(scale**3) 로 같이 축소. record_sim_teleop.py 의
-#            _place_object 가 ClearXformOpOrder 를 호출하지 않아 래퍼의
-#            scale op 이 보존된 채 placement transform 이 [scale, transform]
-#            순으로 쌓인다.
-# mapping  : (래퍼파일, YCB원본, 카테고리, 질량[kg], 콜라이더타입)
-# friction : 카테고리 → {static, dynamic, restitution} (소재 차이 반영)
+# asset_base : 원본 USD 가 모여 있는 디렉터리 (로컬 절대경로 또는 URL).
+#              mapping 의 source 는 asset_base 기준 상대경로.
+# scale      : 객체 크기 배율. SO-101 가동범위(반경 ~0.35 m) 에 맞춰 축소.
+#              래퍼 USD 의 /Object Xform 에 ScaleOp 로 baked, 질량도 부피
+#              비례(scale**3) 로 같이 축소. 보존 메커니즘은 make_wrapper 주석 참조.
+# mapping    : (래퍼파일, asset_base 기준 상대경로, 카테고리, 질량[kg], 콜라이더타입)
+# friction   : 카테고리 → {static, dynamic, restitution} (소재 차이 반영)
 
 DOMAINS = {
     "recycling": {
+        "asset_base": YCB_ROOT,
         "scale": 0.5,
         "mapping": [
             # cans
@@ -69,20 +81,21 @@ DOMAINS = {
         },
     },
     "tableware": {
+        "asset_base": SIMREADY_ROOT,
         "scale": 0.7,
+        # SimReady 식기는 실물 크기(meters) — 0.7 이면 접시 ≈0.18 m, 포크 ≈0.14 m.
+        # 품목별로 어긋나면 entry 에 per-item scale 을 추가해 분리하면 된다.
         "mapping": [
-            # 접시류 (세라믹, 평평) — 접시 포개기(nesting) 필요하면 convexDecomposition 으로 교체.
-            ("plate_dinner.usd",  "029_plate.usd",  "plate",   0.250, "convexHull"),
-            # 그릇류 (세라믹, 오목 → 내부 형상 보존 위해 분해 콜라이더)
-            ("bowl_round.usd",    "024_bowl.usd",   "bowl",    0.147, "convexDecomposition"),
-            # 수저류 (스테인리스, 얇음 → convexHull 이 그래스핑에 더 안정적)
-            ("cutlery_fork.usd",  "030_fork.usd",   "cutlery", 0.040, "convexHull"),
-            ("cutlery_spoon.usd", "031_spoon.usd",  "cutlery", 0.035, "convexHull"),
-            ("cutlery_knife.usd", "032_knife.usd",  "cutlery", 0.035, "convexHull"),
+            ("plate_dinner.usd",  "plate_large/plate_large.usd", "plate",   0.250, "convexHull"),
+            ("cutlery_fork.usd",  "fork_big/fork_big.usd",       "cutlery", 0.050, "convexHull"),
+            ("cutlery_spoon.usd", "spoon_big/spoon_big.usd",     "cutlery", 0.050, "convexHull"),
+            # bowl  — SimReady 'bowl' 디스커버리·로컬화 후 추가:
+            #   ("bowl_round.usd", "<bowl_asset>/<bowl_asset>.usd", "bowl", 0.150, "convexDecomposition"),
+            # knife — SimReady 0건 (2026-05 기준). 다른 출처 또는 모델링 보충 필요.
         ],
         "friction": {
             "plate":   {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},   # 유약 세라믹(접시)
-            "bowl":    {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},   # 유약 세라믹(그릇)
+            "bowl":    {"static": 1.4, "dynamic": 1.2, "restitution": 0.1},   # 유약 세라믹(그릇) — bowl 추가 시 사용
             "cutlery": {"static": 1.1, "dynamic": 0.9, "restitution": 0.05},  # 스테인리스, 미끄러움
         },
     },
@@ -90,26 +103,101 @@ DOMAINS = {
 # ─────────────────
 
 
-def make_wrapper(stage, prim_path, ycb_path, category, mass_kg, collider_type,
+# ───── SimReady 의존성 로컬화 ─────
+# SimReady 머티리얼(SimPBR.mdl)·텍스처는 prop 폴더가 아니라 common_assets
+# 하위 공용 위치에 있어, props/ 폴더만 받으면 MDL/텍스처가 안 풀린다.
+# common_assets 트리를 원격과 '동일 구조' 로 통째 미러링해 상대참조를 보존.
+# 사용: LOCALIZE_SIMREADY=True 로 두고 1회 실행(다운로드) → 완료 후 다시 False.
+#       용량이 부담되면 SIMREADY_REMOTE 를 materials/textures 등 하위 폴더로 좁힌다.
+LOCALIZE_SIMREADY = False
+SIMREADY_REMOTE   = "https://omniverse-content-staging.s3.us-west-2.amazonaws.com/Assets/simready_content/common_assets"
+LOCAL_ROOT        = "/home/ubuntu/isaacsim_assets"   # 원격 'Assets/...' 구조를 이 아래로 미러링
+
+
+def _to_local(url):
+    import os
+    from urllib.parse import urlparse
+    return os.path.join(LOCAL_ROOT, urlparse(url).path.lstrip("/"))
+
+
+def _copy_tree(remote_dir):
+    """omni.client 로 remote_dir 하위를 로컬에 트리 구조 그대로 재귀 복사."""
+    import os
+    import omni.client
+    remote_dir = remote_dir.rstrip("/")
+    res, entries = omni.client.list(remote_dir + "/")
+    if res != omni.client.Result.OK:
+        print("  LIST FAIL", res, remote_dir)
+        return 0, 1
+    ok = fail = 0
+    for e in entries:
+        child = remote_dir + "/" + e.relative_path
+        if e.flags & omni.client.ItemFlags.CAN_HAVE_CHILDREN:   # 폴더 → 재귀
+            o, f = _copy_tree(child)
+            ok += o
+            fail += f
+        else:
+            local = _to_local(child)
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            r = omni.client.copy(child, local, omni.client.CopyBehavior.OVERWRITE)
+            if r == omni.client.Result.OK:
+                ok += 1
+            else:
+                fail += 1
+                print("  COPY FAIL", r, child)
+    return ok, fail
+
+
+def localize_simready():
+    """common_assets 공용 머티리얼·텍스처·MDL 을 로컬로 미러링(방법 B)."""
+    print(f"\n── SimReady 의존성 미러링: {SIMREADY_REMOTE}")
+    ok, fail = _copy_tree(SIMREADY_REMOTE)
+    print(f"  → 복사 {ok}개 / 실패 {fail}개  (루트: {LOCAL_ROOT})")
+
+
+def is_url(s: str) -> bool:
+    return s.startswith(("omniverse://", "http://", "https://"))
+
+
+def make_wrapper(stage, prim_path, source, category, mass_kg, collider_type,
                  scale, friction):
-    """단일 래퍼 USD 의 /Object prim 작성 — stage 생성/저장은 호출자가 담당."""
+    """단일 래퍼 USD 의 /Object prim 작성 — stage 생성/저장은 호출자 책임.
+
+    source: 원본 USD 의 절대경로 또는 URL. AddReference 에 그대로 전달.
+    """
     obj = UsdGeom.Xform.Define(stage, prim_path)
     stage.SetDefaultPrim(obj.GetPrim())
     prim = obj.GetPrim()
 
-    # ① YCB 원본 reference
-    prim.GetReferences().AddReference(str(ycb_path))
+    # ① 원본 reference
+    prim.GetReferences().AddReference(source)
 
-    # ② Physics APIs (collider + baked mass = 원본 mass · scale**3)
+    # SimReady 에셋이 PhysicsVariant 를 가지면 None 으로 고정 — 래퍼가 직접
+    # RigidBodyAPI 를 적용하므로 이중 적용 방지. YCB 등 없으면 no-op.
+    vset = prim.GetVariantSets().GetVariantSet("PhysicsVariant")
+    if "None" in vset.GetVariantNames():
+        vset.SetVariantSelection("None")
+
+    # ② Physics APIs (collider + baked mass = 원본 mass × scale**3)
     UsdPhysics.RigidBodyAPI.Apply(prim)
     UsdPhysics.CollisionAPI.Apply(prim)
     UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr().Set(collider_type)
     UsdPhysics.MassAPI.Apply(prim).CreateMassAttr().Set(mass_kg * scale ** 3)
 
     # ScaleOp baked — record_sim_teleop._place_object 가 ClearXformOpOrder 를
-    # 호출하지 않아 이 op 이 placement transform 앞에 보존된다.
-    UsdGeom.Xformable(prim).AddScaleOp(UsdGeom.XformOp.PrecisionFloat).Set(
-        Gf.Vec3f(scale, scale, scale))
+    # 호출하지 않아 이 op 이 placement transform 앞에 보존된다 ([scale, transform]
+    # 순으로 적용). SimReady 에셋은 reference 시 자체 xformOp(translate/rotate
+    # /scale) 을 /Object 에 합성하므로 scale op 이 이미 있으면 기존 값에 곱해
+    # override, 없으면(YCB 등) 새로 추가. translate/rotate 는 그대로 둔다.
+    xf = UsdGeom.Xformable(prim)
+    scale_op = next((op for op in xf.GetOrderedXformOps()
+                     if op.GetOpType() == UsdGeom.XformOp.TypeScale), None)
+    if scale_op is not None:
+        v = scale_op.Get() or Gf.Vec3f(1.0, 1.0, 1.0)
+        scale_op.Set(type(v)(v[0] * scale, v[1] * scale, v[2] * scale))
+    else:
+        xf.AddScaleOp(UsdGeom.XformOp.PrecisionFloat).Set(
+            Gf.Vec3f(scale, scale, scale))
 
     # ③ PhysicsMaterial 생성·바인딩 (카테고리별 마찰)
     mat_path = f"{prim_path}/PhysicsMaterial"
@@ -137,32 +225,43 @@ def process_domain(domain_name, cfg):
     """한 도메인의 모든 매핑을 돌며 래퍼 USD 를 생성한다."""
     out_dir = Path(OUTPUT_BASE) / domain_name
     out_dir.mkdir(parents=True, exist_ok=True)
+    asset_base = cfg["asset_base"]
     scale = cfg["scale"]
     friction_table = cfg["friction"]
     created, skipped = [], []
 
     print(f"\n── 도메인 '{domain_name}' (scale={scale}) → {out_dir}")
-    for wrapper_name, ycb_name, category, mass_kg, collider_type in cfg["mapping"]:
-        ycb_path = Path(YCB_ROOT) / ycb_name
-        if not ycb_path.exists():
-            print(f"  SKIP {wrapper_name}: {ycb_path} 없음")
+    for wrapper_name, src_rel, category, mass_kg, collider_type in cfg["mapping"]:
+        source = f"{asset_base}/{src_rel}"
+
+        # 로컬 절대경로 만 존재 검사 (원격 URL 은 건너뜀 — reference 시점에 해결)
+        if not is_url(source) and not Path(source).exists():
+            print(f"  SKIP {wrapper_name}: {source} 없음")
             skipped.append(wrapper_name)
             continue
 
-        out_path = out_dir / wrapper_name
-        if out_path.exists():
-            out_path.unlink()   # 재실행 시 덮어쓰기
+        out_path = str(out_dir / wrapper_name)
 
-        stage = Usd.Stage.CreateNew(str(out_path))
+        # 같은 Script Editor 세션에서 재실행 시 USD 가 layer 를 identifier 로
+        # 캐시하고 있어 CreateNew 가 'A layer already exists' 로 실패한다
+        # (파일을 unlink 해도 캐시는 남음). FindOrOpen 으로 캐시·디스크 모두
+        # 회수 후 Clear() 하여 재사용; 없으면 새로 만든다.
+        layer = Sdf.Layer.FindOrOpen(out_path)
+        if layer:
+            layer.Clear()
+        else:
+            layer = Sdf.Layer.CreateNew(out_path)
+        stage = Usd.Stage.Open(layer)
+
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
         UsdGeom.SetStageMetersPerUnit(stage, 1.0)
 
         fric = friction_table[category]
-        make_wrapper(stage, "/Object", ycb_path, category, mass_kg, collider_type,
+        make_wrapper(stage, "/Object", source, category, mass_kg, collider_type,
                      scale, fric)
         stage.GetRootLayer().Save()
 
-        print(f"  OK  {wrapper_name:28s} <- {ycb_name:30s} [{category:7s}] "
+        print(f"  OK  {wrapper_name:28s} <- {src_rel:30s} [{category:7s}] "
               f"scale={scale} mass={mass_kg * scale ** 3:.4f}kg (orig {mass_kg}) "
               f"col={collider_type} fric=({fric['static']},{fric['dynamic']})")
         created.append(wrapper_name)
@@ -172,6 +271,9 @@ def process_domain(domain_name, cfg):
 
 
 # 메인 — ENABLED_DOMAINS 만 처리
+if LOCALIZE_SIMREADY:
+    localize_simready()
+
 all_created, all_skipped = [], []
 for domain_name in ENABLED_DOMAINS:
     if domain_name not in DOMAINS:
