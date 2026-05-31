@@ -111,7 +111,11 @@ STATUS_WEIGHTS: List[Tuple[str, float]] = [
 ]
 
 # 도메인 × 객체 → reasoning 에 박힐 destination 문구.
-# 변경 시 Sim 자산 (sim/assets/objects/<domain>/) 의 bin/holder 이름과 일치 시킬 것.
+# 변경 시 Sim 자산의 시각 표식 이름과 일치 시킬 것.
+#   - recycling: 객체별 분리 bin (3개 USD)
+#   - tableware: 모든 식기 → 테이블 위 단일 고정 영역 (별도 객체 자산 없음,
+#                Sim 상에서는 테이블 표면의 평면 prim / 매트로 시각 표시)
+#                (2026-05-25 freeze)
 DESTINATIONS: Dict[str, Dict[str, str]] = {
     'recycling': {
         'can':     'the can bin',
@@ -119,36 +123,38 @@ DESTINATIONS: Dict[str, Dict[str, str]] = {
         'paper':   'the paper bin',
     },
     'tableware': {
-        'plate': 'the dish rack',
-        'bowl':  'the dish rack',
-        'cup':   'the cup holder',
-        'fork':  'the utensil holder',
-        'spoon': 'the utensil holder',
+        'plate': 'the target area on the table',
+        'bowl':  'the target area on the table',
+        'cup':   'the target area on the table',
+        'fork':  'the target area on the table',
+        'spoon': 'the target area on the table',
     },
 }
 
 # status × 5 템플릿. {target} = target_phrase, {dest} = destination.
 # 변동성은 target_phrase (attribute × spatial) 가 주로 담당 — 템플릿 수가 적어도
 # 동일 status 내 표면 다양성은 충분. 추가 시 dict 항목만 늘리면 된다.
+# 표현은 recycling(bin) / tableware(평면 영역) 양쪽에 자연스럽도록 일반화:
+# "bin"·"rim" 같은 도메인 특정 어휘를 피하고 "inside / outside / edge" 위주 사용.
 REASONING_TEMPLATES: Dict[str, List[str]] = {
     VerifyStatus.SUCCESS: [
         '{target} is now inside {dest}',
         '{target} has been placed in {dest}',
         '{target} sits stably in {dest}',
-        '{target} is correctly stored in {dest}',
+        '{target} is correctly placed in {dest}',
         'the task is done — {target} is in {dest}',
     ],
     VerifyStatus.FAIL: [
         '{target} is still on the table, not in {dest}',
         '{target} is on the floor next to {dest}',
         '{target} ended up outside {dest}',
-        '{target} was placed in the wrong bin, not {dest}',
+        '{target} was left in the wrong place, not {dest}',
         '{target} fell off before reaching {dest}',
     ],
     VerifyStatus.PARTIAL: [
         '{target} is balancing on the edge of {dest}',
         '{target} is half inside {dest} and half outside',
-        '{target} fell partly over the rim of {dest}',
+        '{target} is tipped at the edge of {dest}',
         '{target} is tilted on top of {dest} and may slip',
         '{target} touched {dest} but is not fully inside',
     ],
@@ -327,14 +333,26 @@ def build_sample(scenario: VerifyScenario, reasoning: str) -> dict:
 def render_scenario_image(scenario: VerifyScenario) -> None:
     """Isaac Sim 으로 시나리오의 RGB 이미지를 scenario.image_abspath 에 저장.
 
+    팔 자세 / gripper (2026-05-25 freeze):
+      모든 렌더는 home_pose 단일 자세로 한다. 배포 시 agent_node 가
+      verify_result 호출 직전 /go_home 을 호출해 같은 자세를 보장하기 때문
+      (agent_node._run_function_loop 의 verify 직전 /go_home 강제 참조).
+      gripper 는 빈 상태 (객체를 놓고 release 한 직후).
+
+    Domain 별 destination (DESTINATIONS 상수 참조):
+      - recycling: 객체별 분리 bin (can / plastic / paper) USD
+      - tableware: 테이블 위 단일 고정 영역 (별도 객체 자산 없음 — 평면 prim
+                   /매트 같은 시각 표식으로 in/out 변별)
+
     구현 시 외부 의존 / 결정 필요:
       - Isaac Sim standalone app 컨텍스트 (record_sim_teleop 의 SimInterface 재사용 가능)
-      - Sim 자산: sim/assets/objects/<domain>/ USD + base scene
+      - Sim 자산: sim/assets/objects/<domain>/ USD + base scene + destination 시각 표식
       - 카메라 셋업: deploy/calibration 의 intrinsics/extrinsics 적용
         (setup_sim_camera.py 와 같은 로직)
       - 객체 배치 정책 (scenario.status 별):
-          SUCCESS  → target_object 를 correct destination 내부에 안정 배치
-          FAIL     → target_object 를 wrong bin / 바닥 / 테이블 잔존 위치에 배치
+          SUCCESS  → target_object 를 correct destination 내부 / 위에 안정 배치
+          FAIL     → target_object 를 다른 위치 / 바닥 / 테이블 잔존 (recycling 은
+                     wrong bin 가능, tableware 는 target area 바깥)
           PARTIAL  → target_object 를 destination 가장자리, 기울임/걸침 자세
           UNCLEAR  → target_object 를 다른 객체로 가림 / 시야 가장자리 / 흐림
       - distractor: 같은 도메인의 다른 객체 1-2 개 무작위 배치 (다중 객체 변별 학습)

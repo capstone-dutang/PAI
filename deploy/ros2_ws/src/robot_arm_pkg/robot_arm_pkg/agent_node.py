@@ -70,7 +70,9 @@ from robot_arm_msgs.srv import EmbedText
 
 # 시스템 프롬프트 / 상태 enum SSoT — robot_arm_pkg.prompts
 # (학습 측 generate_function_call_qa 도 같은 모듈을 import 한다)
-from robot_arm_pkg.prompts import SYSTEM_PROMPT, VerifyStatus, ExecStatus  # noqa: F401
+from robot_arm_pkg.prompts import (  # noqa: F401
+    SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT, VerifyStatus, ExecStatus,
+)
 
 
 class AgentNode(Node):
@@ -286,8 +288,16 @@ class AgentNode(Node):
     def _run_function_loop(self) -> None:
         """
         Gemma 함수 호출 루프 본체.
-          look_scene → execute_subtask → verify_result
+          look_scene → execute_subtask → (/go_home) → verify_result
           → SUCCESS면 종료, 그 외는 max_verify_iterations까지 재시도.
+
+        verify 직전 /go_home 강제 (2026-05-25 freeze):
+          execute_subtask 의 ExecutionStatus 수신 후 verify_result 호출 전에
+          /go_home 서비스를 1회 호출한다. 이로써 카메라 시야 안의 팔 자세가
+          매번 home_pose 로 고정되어 Cat-C 학습 분포 (모두 home_pose 로 렌더)
+          와 일치한다. /go_home 은 약 ~2초 차단성 호출이며, 그 동안 카메라
+          프레임은 latest-only 캐시이므로 verify_result 가 받는 RGB 는 복귀
+          완료 후의 한 프레임.
 
         TODO: 구현 시 추가 결정 필요
           1) 동기/비동기 실행 모델
@@ -361,13 +371,24 @@ class AgentNode(Node):
           는 self._user_command 캐시 대신 인자를 우선 사용한다 (Cat-B 학습 분포
           및 robot_arm_pkg.prompts.SYSTEM_PROMPT 와 일치).
 
+        전제 (2026-05-25 freeze):
+          호출 시점에 팔이 home_pose 에 있다 — _run_function_loop 가 verify
+          호출 직전에 /go_home 을 보장한다. Cat-C 학습 분포가 home_pose 단일로
+          렌더되므로 본 함수가 캡처하는 RGB 도 같은 자세여야 함.
+
+        시각 검증 호출 (Gemma):
+          별도 chat completion (Cat-B 함수 호출 대화와 분리) 로 다음을 보낸다:
+            system : robot_arm_pkg.prompts.VERIFY_SYSTEM_PROMPT
+            user   : [image (현재 RGB), text "original_command: \\"...\\""]
+          응답: {"status": <enum>, "reasoning": <english string>}
+
         입력:
           - original_command (인자): Gemma 가 전달하는 원본 사용자 명령 문자열
           - 현재 RGB / depth (latest-only 캐시)
           - 직전 subtask 정보 (subtask_id / target_description) — 노드 상태
 
         처리:
-          1) Gemma 시각 검증
+          1) Gemma 시각 검증 (위 별도 호출)
           2) depth grasp 보조 검증 — _depth_grasp_check()
           3) 종합 판정 — README 미확정 #1 (depth 우선 / Gemma 우선 / 가중평균)
 
