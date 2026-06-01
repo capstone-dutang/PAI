@@ -992,9 +992,24 @@ class SceneManager:
         xform = UsdGeom.Xformable(prim)
         # ClearXformOpOrder 호출 안 함 — 래퍼 USD 가 baked 한 ScaleOp
         # (setup_objects.py 의 DOMAINS[domain]['scale']) 이 보존돼야 한다.
-        # AddTransformOp 은 기존
-        # xformOpOrder 에 append 되어 [scale, transform] 순으로 적용된다 (scale 먼저
-        # 객체 축소 → 그 위에 회전·이동). bbox 도 두 op 합성 후로 계산된다.
+        # AddTransformOp 은 기존 xformOpOrder 에 append 되어 [..., transform]
+        # 순으로 적용된다.
+        #
+        # SimReady 래퍼는 referenced asset 에서 [translate, rotateXYZ, scale]
+        # 을 inherit 받는다. inherit 된 translate/rotateXYZ 가 non-zero 이면
+        # 새 transform 과 합성되어 placement 가 의도와 어긋남. defensive 하게
+        # identity 로 reset (ScaleOp 는 보존 — 래퍼의 baked domain scale 유지).
+        # YCB 래퍼는 translate/rotateXYZ 가 없어 본 분기 no-op.
+        existing_ops = {op.GetOpType(): op for op in xform.GetOrderedXformOps()}
+        for op_type in (UsdGeom.XformOp.TypeTranslate,
+                        UsdGeom.XformOp.TypeRotateXYZ):
+            op = existing_ops.get(op_type)
+            if op is None:
+                continue
+            curr = op.Get()
+            if curr is not None:
+                op.Set(type(curr)(0, 0, 0))
+
         xop = xform.AddTransformOp(UsdGeom.XformOp.PrecisionDouble)
 
         # 임시로 table_top_z 에 두고 → world bbox 로 객체 바닥을 테이블에 정렬
