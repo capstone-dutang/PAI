@@ -292,6 +292,8 @@ class SimVerifyRenderer:
     def render(self, scenario: dict) -> None:
         """1 시나리오 → PNG 저장. scenario 는 sidecar 한 줄의 dict."""
         self._clear_scenario_root()
+        sid    = scenario.get('scenario_id', '?')
+        status = scenario['status']
 
         # 1) target 위치 결정 + 배치 (kinematic)
         tx, ty, t_rot = self._target_position(scenario)
@@ -306,22 +308,39 @@ class SimVerifyRenderer:
         if KINEMATIC_TARGET:
             self._set_kinematic(target_path)
 
+        # 검증용 로그 — placement 좌표 / 자산 / status 의미
+        dest = _destination_for(self._destinations, scenario['target_object'])
+        print(
+            f'[place] {sid} status={status} '
+            f'target={scenario["target_object"]} ({target_wrapper.name}) '
+            f'pos=({tx:+.3f},{ty:+.3f}) rot={t_rot:+.0f}° '
+            f'dest_center=({dest["cx"]:+.3f},{dest["cy"]:+.3f})',
+            file=sys.stderr,
+        )
+
         # 2) distractor 배치 (dynamic — settle 시 자연 안착)
         for i in range(DISTRACTOR_COUNT):
             dcat = self._pick_distractor_category(scenario['target_object'])
             if dcat is None:
                 break
             dwrap = self._pick_wrapper(dcat)
-            if scenario['status'] == 'UNCLEAR':
+            if status == 'UNCLEAR':
                 dx, dy = self._unclear_occluder_xy(tx, ty)
                 # UNCLEAR 의 occluder 도 kinematic — 가림 위치 보장
                 dpath = self._place(f'distractor_{i}', dwrap, dx, dy, 0.0,
                                     z=self._table_top_z + TARGET_Z_OFFSET)
                 self._set_kinematic(dpath)
+                d_kind = 'occluder(kinematic)'
             else:
                 dx, dy = self._sample_free_xy()
                 self._place(f'distractor_{i}', dwrap, dx, dy, 0.0,
                             z=self._table_top_z + DISTRACTOR_DROP_Z)
+                d_kind = 'free(dynamic)'
+            print(
+                f'[place] {sid}   distractor={dcat} ({dwrap.name}) '
+                f'pos=({dx:+.3f},{dy:+.3f}) kind={d_kind}',
+                file=sys.stderr,
+            )
 
         # 3) 물리 settle (target kinematic 은 영향 받지 않음)
         for _ in range(SETTLE_STEPS):
