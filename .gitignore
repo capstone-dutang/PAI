@@ -12,3 +12,9 @@ deploy/ros2_ws/src/easy_handeye2/
 # Sim 객체 래퍼 — setup_objects.py 가 환경별로 재생성 (절대경로 baked).
 # 모든 도메인 하위 디렉터리(recycling, tableware, …) 의 .usd 를 제외.
 sim/assets/objects/*/*.usd
+
+# Cat-C verify 렌더링 PNG — render_verify_images.py 로 재생성 가능
+# (입력: scenarios sidecar + base_scene + 래퍼 USD). 도메인별 ~500개 × 280KB.
+# 시드/scenario 동일 시 거의 같게 재현되므로 추적 불필요. EC2 와 로컬 양쪽에
+# 보관됨.
+training/lora_finetuning/data/*/verify_images/
