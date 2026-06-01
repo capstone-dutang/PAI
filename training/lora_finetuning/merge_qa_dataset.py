@@ -5,7 +5,7 @@ Q&A 데이터 생성 마지막 단계 — function_call(함수 호출)와 verify
 고정 비율 70 : 30 으로 병합하여 단일 학습용 JSONL 을 만든다.
 
 freeze 결정 (2026-05-25):
-  도메인이 분리수거(3종)와 식기 정리로 좁아 Cat-A(도메인 지식 QA)는
+  도메인이 분리수거(3종)와 식기 정리로 좁아 domain_knowledge (도메인 지식 QA)는
   파인튜닝 효용이 거의 없어 제거. LoRA 의 실제 작업 표면인 함수 호출(function_call)과
   시각 검증(verify)만 학습한다. 비율은 70 : 30 단일 옵션으로 freeze.
 
