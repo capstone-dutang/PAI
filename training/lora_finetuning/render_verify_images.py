@@ -444,10 +444,15 @@ class SimVerifyRenderer:
         rot_deg: float,
         z:       float,
     ) -> str:
-        """wrapper USD 를 reference 로 추가 + translate/rotateZ 만 부여.
+        """wrapper USD 를 reference 로 추가 + translate/rotate 부여.
 
-        래퍼 의 ScaleOp 는 그대로 두기 위해 ClearXformOpOrder 호출 안 함
-        (record_sim_teleop._place_object 와 동일 패턴).
+        Wrapper 의 ScaleOp 는 그대로 두기 위해 ClearXformOpOrder 호출 안 함.
+        Wrapper 종류에 따라 xformOp 보유 상태가 다름:
+          - YCB (recycling): scale 만 — translate/rotateZ 를 새로 Add
+          - SimReady (tableware): [translate, rotateXYZ, scale] 가 inherit 되어
+            이미 존재 — AddTranslateOp 가 'already exists' 로 실패.
+        해결: 기존 op 가 있으면 Set, 없으면 Add. rotateZ 가 없고 rotateXYZ 가
+        있으면 (SimReady 케이스) (0, 0, rot_deg) 로 Set.
         """
         UsdGeom = self._UsdGeom
         Gf      = self._Gf
@@ -461,8 +466,24 @@ class SimVerifyRenderer:
         xf.GetPrim().GetReferences().AddReference(str(wrapper))
 
         xform = UsdGeom.Xformable(xf.GetPrim())
-        xform.AddTranslateOp().Set(Gf.Vec3f(x, y, z))
-        xform.AddRotateZOp().Set(rot_deg)
+        existing_ops = {op.GetOpType(): op for op in xform.GetOrderedXformOps()}
+
+        # translate — 있으면 set, 없으면 add
+        if UsdGeom.XformOp.TypeTranslate in existing_ops:
+            existing_ops[UsdGeom.XformOp.TypeTranslate].Set(Gf.Vec3f(x, y, z))
+        else:
+            xform.AddTranslateOp().Set(Gf.Vec3f(x, y, z))
+
+        # rotation — rotateXYZ 가 있으면 (0,0,rot_deg) set,
+        # 없고 rotateZ 가 있으면 set, 둘 다 없으면 rotateZ add
+        if UsdGeom.XformOp.TypeRotateXYZ in existing_ops:
+            existing_ops[UsdGeom.XformOp.TypeRotateXYZ].Set(
+                Gf.Vec3f(0.0, 0.0, rot_deg))
+        elif UsdGeom.XformOp.TypeRotateZ in existing_ops:
+            existing_ops[UsdGeom.XformOp.TypeRotateZ].Set(rot_deg)
+        else:
+            xform.AddRotateZOp().Set(rot_deg)
+
         return prim_path
 
     def _set_kinematic(self, prim_path: str) -> None:
