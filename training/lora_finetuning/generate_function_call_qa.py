@@ -351,20 +351,27 @@ def build_system_prompt() -> str:
 # ──────────────────────────────────────────────
 
 def synthesize_user_command(
-    domain: str,
-    vocab:  dict,
-    llm:    LLMClient,
-    rng:    random.Random,
+    domain:          str,
+    vocab:           dict,
+    llm:             LLMClient,
+    rng:             random.Random,
+    target_obj_hint: Optional[str] = None,
 ) -> str:
     """도메인 맥락에 맞는 사용자 명령 1건 합성.
 
     rng 로 per-sample 결정:
       - 언어: 영어 ~LANGUAGE_ENGLISH_RATIO 확률
-      - 타겟: OBJECT_SPECIFIC_RATIO 확률로 도메인 객체 1개 균등 순회,
-              나머지는 collective term (도메인 vocab 어느 객체에도 직접 매칭
-              안 되는 일반적 표현) hint.
+      - 타겟: OBJECT_SPECIFIC_RATIO 확률로 도메인 객체 1개 (균등 순회 또는
+              target_obj_hint), 나머지는 collective term hint.
 
-    이로써 객체 분포 skew 와 표현 중복을 동시에 완화한다.
+    target_obj_hint (2026-05-25 추가):
+      - None  (default, Cat-B 용): 객체를 본 함수가 random 선택 — 기존 동작 보존
+      - <obj> (Cat-C 용): 호출자가 미리 결정한 target 객체를 hint 로 강제.
+        Cat-C 의 synthesize_scenario 는 target_obj 를 먼저 정하므로 user_command
+        도 같은 객체를 명시해야 verify 의 (target, command) 의미 정합이 유지됨.
+        collective(10%) 케이스는 target 과 무관하므로 hint 무시.
+
+    이로써 객체 분포 skew, 표현 중복, target-command 정합을 모두 처리한다.
     """
     domain_desc = DOMAIN_DESCRIPTIONS.get(domain, domain)
     use_english = rng.random() < LANGUAGE_ENGLISH_RATIO
@@ -373,7 +380,8 @@ def synthesize_user_command(
 
     use_specific = rng.random() < OBJECT_SPECIFIC_RATIO
     if use_specific and domain in OBJECT_KEYWORD_HINTS:
-        obj_name = rng.choice(list(vocab['objects'].keys()))
+        # hint 가 주어지면 그대로 사용 (Cat-C), 없으면 균등 random (Cat-B)
+        obj_name = target_obj_hint or rng.choice(list(vocab['objects'].keys()))
         kw_map   = OBJECT_KEYWORD_HINTS[domain].get(obj_name, {})
         kw       = kw_map.get(lang_key) or obj_name
         guidance = (

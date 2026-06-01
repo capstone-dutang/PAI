@@ -282,7 +282,9 @@ def synthesize_scenario(
     - target_object: vocab.objects 중 균등 샘플 (per-call 1개)
     - target_phrase: sample_description_for_object (자기-참조 spatial 제외)
     - destination: _destination_of (DESTINATIONS 매핑)
-    - original_command: function_call 합성기(synthesize_user_command) 재사용 (LLM 1회 호출)
+    - original_command: function_call 합성기(synthesize_user_command) 재사용
+      target_obj_hint=target_obj 로 강제 — verify 의 (target, command) 의미
+      정합 유지 (Cat-C 만의 요구; Cat-B 는 hint=None 기본값 유지).
     - image path: image_dir 기준 '{scenario_id}.png'
     """
     status        = _weighted_choice(STATUS_WEIGHTS, rng)
@@ -290,7 +292,10 @@ def synthesize_scenario(
     target_phrase = sample_description_for_object(vocab, target_obj, rng)
     destination   = _destination_of(args.domain, target_obj)
 
-    original_command = synthesize_user_command(args.domain, vocab, llm, rng)
+    original_command = synthesize_user_command(
+        args.domain, vocab, llm, rng,
+        target_obj_hint=target_obj,
+    )
     if not original_command:
         raise ValueError('빈 original_command')
 
