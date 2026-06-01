@@ -206,7 +206,10 @@ class SimVerifyRenderer:
         rng:            Optional[random.Random] = None,
     ) -> None:
         self._scene_cfg   = scene_cfg
-        self._object_lib  = object_lib
+        # 절대경로 강제 — _place() 가 USD reference 에 박는 path 가 상대이면
+        # base_scene 의 디렉터리(sim/scenes/) 기준으로 잘못 resolve 된다
+        # (예: 'sim/assets/...' → 'sim/scenes/sim/assets/...' → Could not open).
+        self._object_lib  = Path(object_lib).resolve()
         self._img_w       = img_w
         self._img_h       = img_h
         self._robot_prim  = robot_prim
