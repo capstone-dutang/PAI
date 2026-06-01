@@ -223,55 +223,127 @@ def build_model_and_processor(args: TrainArgs):
     return model, processor
 
 
-def _find_assistant_token_spans(input_ids: List[int], tokenizer
-                                ) -> List[tuple]:
+def _find_subseq(haystack: List[int], needle: List[int], start: int = 0) -> int:
+    """haystack 안에서 needle 토큰 시퀀스의 첫 인덱스 (없으면 -1)."""
+    n, m = len(haystack), len(needle)
+    if m == 0 or n - start < m:
+        return -1
+    for i in range(start, n - m + 1):
+        ok = True
+        for k in range(m):
+            if haystack[i + k] != needle[k]:
+                ok = False
+                break
+        if ok:
+            return i
+    return -1
+
+
+def _probe_assistant_delimiters(processor) -> tuple:
+    """chat template 을 실측해 assistant turn 의 (prefix_ids, suffix_ids) 추출.
+
+    Gemma 4 E2B 처럼 모델별로 chat template 마커가 다르므로 (
+    `<|turn>role\\n ... <|end|>` vs `<start_of_turn>role\\n ... <end_of_turn>`
+    등) probe 대화 1개를 렌더해 user/assistant 마커 사이/직후의 토큰을
+    실제로 잘라온다.
+
+    반환:
+      prefix_ids: assistant content 직전 토큰 시퀀스 (role tag + 개행 등 포함)
+      suffix_ids: assistant content 직후 토큰 시퀀스 (turn 종료 토큰 등, 5개 cap)
+                  loss masking 시 suffix 도 포함해 종료 토큰 생성 학습 보장.
+    """
+    USER_M = 'PROBEUSERMARKERXYZ'
+    ASST_M = 'PROBEASSTMARKERXYZ'
+    probe_plain = [
+        {'role': 'user',      'content': USER_M},
+        {'role': 'assistant', 'content': ASST_M},
+    ]
+    probe_typed = [
+        {'role': 'user',      'content': [{'type': 'text', 'text': USER_M}]},
+        {'role': 'assistant', 'content': [{'type': 'text', 'text': ASST_M}]},
+    ]
+    text = None
+    for probe in (probe_plain, probe_typed):
+        try:
+            text = processor.apply_chat_template(
+                probe, tokenize=False, add_generation_prompt=False)
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    if text is None:
+        raise RuntimeError('probe 대화 chat template 렌더 실패 (plain/typed 둘 다)')
+
+    u_char = text.find(USER_M)
+    a_char = text.find(ASST_M)
+    if u_char < 0 or a_char < 0 or a_char <= u_char:
+        raise RuntimeError(
+            f'probe 마커 미발견 — chat template 렌더 결과:\n{text[:500]!r}')
+
+    tok = processor.tokenizer
+    enc = tok(text, add_special_tokens=False, return_offsets_mapping=True)
+    input_ids = list(enc['input_ids'])
+    offsets = list(enc['offset_mapping'])
+
+    def first_tok_at_or_after(char_pos: int) -> int:
+        for i, (s, _e) in enumerate(offsets):
+            if s >= char_pos:
+                return i
+        return len(offsets)
+
+    def first_tok_starting_after(char_pos: int) -> int:
+        for i, (s, _e) in enumerate(offsets):
+            if s >= char_pos:
+                return i
+        return len(offsets)
+
+    u_end_char = u_char + len(USER_M)
+    a_start_char = a_char
+    a_end_char = a_char + len(ASST_M)
+
+    prefix_start_tok = first_tok_at_or_after(u_end_char)
+    prefix_end_tok   = first_tok_at_or_after(a_start_char)
+    suffix_start_tok = first_tok_starting_after(a_end_char)
+
+    prefix_ids = input_ids[prefix_start_tok:prefix_end_tok]
+    suffix_ids = input_ids[suffix_start_tok:suffix_start_tok + 5]
+
+    if not prefix_ids:
+        raise RuntimeError(
+            f'prefix 토큰 비어 있음 — chat template head:\n{text[:300]!r}')
+
+    if _find_subseq(input_ids, prefix_ids) < 0:
+        raise RuntimeError(
+            f'prefix 자가 검증 실패. prefix_ids={prefix_ids}, '
+            f'text head:\n{text[:300]!r}')
+    print(f'[probe] prefix_ids = {prefix_ids}  ({tok.decode(prefix_ids)!r})')
+    print(f'[probe] suffix_ids = {suffix_ids}  ({tok.decode(suffix_ids)!r})')
+    return prefix_ids, suffix_ids
+
+
+def _find_assistant_token_spans(input_ids: List[int],
+                                prefix_ids: List[int],
+                                suffix_ids: List[int]) -> List[tuple]:
     """input_ids 안에서 assistant turn 의 (start, end) 토큰 인덱스를 찾는다.
 
-    Gemma instruction chat template 구조:
-      <start_of_turn>user\\n ... <end_of_turn>
-      <start_of_turn>model\\n ... <end_of_turn>
-
-    반환 span 은 'model' 직후의 content 시작 인덱스부터 <end_of_turn> 토큰을
-    포함한 인덱스+1 까지 (exclusive). <end_of_turn> 도 loss 에 포함시켜
-    종료 토큰 생성 학습을 보장한다.
-
-    role token 'model' 의 토큰화는 컨텍스트(특수 토큰 직후)에 의존하지 않도록
-    가정 — Gemma tokenizer 에서 <start_of_turn> 가 단일 special token 이므로
-    그 직후의 "model" 은 standalone 인코딩과 동일하다.
+    탐색 방식: prefix_ids 시퀀스 위치를 찾아 그 직후를 content_start 로,
+    이어 suffix_ids 시퀀스를 찾아 그 끝을 content_end (exclusive) 로 둔다.
+    suffix 가 안 나오면 시퀀스 끝까지 사용.
     """
-    sot = tokenizer.convert_tokens_to_ids('<start_of_turn>')
-    eot = tokenizer.convert_tokens_to_ids('<end_of_turn>')
-    if sot is None or eot is None or sot < 0 or eot < 0:
-        raise RuntimeError(
-            "tokenizer 에 <start_of_turn>/<end_of_turn> 특수 토큰 없음 — "
-            "Gemma chat template 가정의 loss masking 만 지원함."
-        )
-    model_ids = tokenizer.encode('model', add_special_tokens=False)
-    if not model_ids:
-        raise RuntimeError("'model' role token 인코딩 실패")
-
     spans: List[tuple] = []
     n = len(input_ids)
-    i = 0
-    while i < n:
-        if input_ids[i] != sot:
-            i += 1
-            continue
-        j = i + 1
-        if j + len(model_ids) > n:
+    pos = 0
+    while True:
+        p = _find_subseq(input_ids, prefix_ids, pos)
+        if p < 0:
             break
-        if not all(input_ids[j + k] == model_ids[k]
-                   for k in range(len(model_ids))):
-            i = j
-            continue
-        content_start = j + len(model_ids)
-        k = content_start
-        while k < n and input_ids[k] != eot:
-            k += 1
-        if k >= n:
-            break
-        spans.append((content_start, k + 1))
-        i = k + 1
+        content_start = p + len(prefix_ids)
+        if suffix_ids:
+            s = _find_subseq(input_ids, suffix_ids, content_start)
+            content_end = (s + len(suffix_ids)) if s >= 0 else n
+        else:
+            content_end = n
+        spans.append((content_start, content_end))
+        pos = content_end
     return spans
 
 
@@ -286,9 +358,12 @@ def make_data_collator(processor, image_dir: str):
       Causal LM SFT 의 labels 를 assistant turn 영역만 유효(=input_ids),
       나머지는 -100 으로 설정. 1차 학습에서 모델이 [tool_result] 직후
       'SUCCESS' 같은 user 컨텐츠 자체를 모방하던 회귀를 차단.
-      _find_assistant_token_spans 가 Gemma <start_of_turn>model\\n ...
-      <end_of_turn> 패턴을 토큰 ID 로 검출.
+      _probe_assistant_delimiters 가 실측 chat template 으로 assistant
+      turn 의 prefix/suffix 토큰 시퀀스를 추출 (모델별 마커 차이 대응),
+      _find_assistant_token_spans 가 input_ids 안에서 해당 시퀀스로 span 검출.
     """
+    prefix_ids, suffix_ids = _probe_assistant_delimiters(processor)
+
     def collate(batch: List[dict]) -> dict:
         if len(batch) != 1:
             raise RuntimeError(
@@ -317,12 +392,13 @@ def make_data_collator(processor, image_dir: str):
         labels = torch.full_like(ids_2d, fill_value=-100)
         for b in range(ids_2d.shape[0]):
             id_list = ids_2d[b].tolist()
-            spans = _find_assistant_token_spans(id_list, processor.tokenizer)
+            spans = _find_assistant_token_spans(
+                id_list, prefix_ids, suffix_ids)
             if not spans:
                 raise RuntimeError(
-                    'assistant turn span 미검출 — chat template 또는 토큰화 '
-                    '결과가 예상 (<start_of_turn>model ... <end_of_turn>) 과 '
-                    f'다름. text head=\n{text[:300]!r}'
+                    'assistant turn span 미검출 — probe prefix_ids 가 '
+                    'collate 시점 input_ids 에 없음. '
+                    f'prefix_ids={prefix_ids}, text head=\n{text[:300]!r}'
                 )
             for (s, e) in spans:
                 labels[b, s:e] = ids_2d[b, s:e]
