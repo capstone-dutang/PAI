@@ -1,14 +1,14 @@
 """
 generate_verify_qa.py
 
-Cat-C — verify_result 시각 검증 시나리오 JSONL 합성 (2-pass 구조 중 1단계).
+verify — verify_result 시각 검증 시나리오 JSONL 합성 (2-pass 구조 중 1단계).
 
 배포 시 agent_node._call_verify_result 는 Gemma 를 한 번 더 호출하여
 RGB + original_command → status JSON 매핑을 얻는다. 본 스크립트는 그 호출의
-training 분포를 만든다. Cat-B(함수 호출)와 같은 LoRA 어댑터를 공유하며,
+training 분포를 만든다. function_call (함수 호출)과 같은 LoRA 어댑터를 공유하며,
 Unsloth FastVisionModel typed-array content 형식으로 출력한다.
 
-2-pass 구조 (Cat-C 합성):
+2-pass 구조 (verify 합성):
   본 스크립트(Step 1)는 LLM(gpt-4o-mini) 으로 시나리오 메타데이터 + JSONL 을
   만들고, [`render_verify_images.py`](render_verify_images.py)(Step 2) 가
   Isaac Sim 으로 PNG 를 렌더한다. 두 환경(openai vs Isaac Sim) 의존성을
@@ -44,7 +44,7 @@ freeze 결정 (2026-05-25, C2 통합 vision 포맷 결정 후):
   한다 — 다른 곳에서 값을 재기재하지 말 것 (drift 방지).
 
   · system prompt            : robot_arm_pkg.prompts.VERIFY_SYSTEM_PROMPT
-                                Cat-B 의 SYSTEM_PROMPT 와 별개. agent_node 의
+                                function_call 의 SYSTEM_PROMPT 와 별개. agent_node 의
                                 verify Gemma 별도 호출과 일치하는 단일 출처.
   · 메시지 구조 / image-first : build_sample()
                                 3-msg single-turn (system + user + assistant),
@@ -71,14 +71,14 @@ CLI (Step 1):
   python training/lora_finetuning/generate_verify_qa.py \\
     --domain         recycling \\
     --label-vocab    deploy/config/label_vocab.yaml \\
-    --output-jsonl   training/lora_finetuning/data/recycling/qa_cat_c.jsonl \\
+    --output-jsonl   training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \\
     --image-dir      training/lora_finetuning/data/recycling/verify_images/ \\
     --num-scenes     500 \\
     --external-llm   gpt-4o-mini
 
 CLI (Step 2 — Sim 환경):
   ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\
-    --scenarios       training/lora_finetuning/data/recycling/qa_cat_c.jsonl.scenarios.jsonl \\
+    --scenarios       training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl.scenarios.jsonl \\
     --scene-usd       sim/scenes/base_scene.usd \\
     --domain          recycling \\
     --image-dir       training/lora_finetuning/data/recycling/verify_images/
@@ -221,7 +221,7 @@ class VerifyArgs:
 
 
 def parse_args() -> VerifyArgs:
-    p = argparse.ArgumentParser(description='Cat-C — 시각 검증 시나리오 JSONL 합성')
+    p = argparse.ArgumentParser(description='verify — 시각 검증 시나리오 JSONL 합성')
     p.add_argument('--domain',        required=True, help='대상 도메인 (recycling/tableware/...)')
     p.add_argument('--label-vocab',   default='deploy/config/label_vocab.yaml')
     p.add_argument('--output-jsonl',  required=True, help='JSONL 출력 경로')
@@ -282,7 +282,7 @@ def synthesize_scenario(
     - target_object: vocab.objects 중 균등 샘플 (per-call 1개)
     - target_phrase: sample_description_for_object (자기-참조 spatial 제외)
     - destination: _destination_of (DESTINATIONS 매핑)
-    - original_command: Cat-B 합성기(synthesize_user_command) 재사용 (LLM 1회 호출)
+    - original_command: function_call 합성기(synthesize_user_command) 재사용 (LLM 1회 호출)
     - image path: image_dir 기준 '{scenario_id}.png'
     """
     status        = _weighted_choice(STATUS_WEIGHTS, rng)
@@ -339,7 +339,7 @@ def _scenario_to_dict(s: VerifyScenario) -> dict:
 
 
 def build_sample(scenario: VerifyScenario, reasoning: str) -> dict:
-    """Cat-C 형식 messages dict 1건 생성 (3-msg single-turn).
+    """verify 형식 messages dict 1건 생성 (3-msg single-turn).
 
     user content 항목 순서 = image → text (Gemma 4 vision 요구).
     """
@@ -370,7 +370,7 @@ def build_sample(scenario: VerifyScenario, reasoning: str) -> dict:
 # Sim 렌더링 — 본 스크립트는 수행하지 않음 (Step 2 로 분리)
 # ──────────────────────────────────────────────
 #
-# Cat-C 의 PNG 렌더링은 본 스크립트가 직접 수행하지 않는다.
+# verify 의 PNG 렌더링은 본 스크립트가 직접 수행하지 않는다.
 # 본 스크립트는 학습용 JSONL 과 scenarios sidecar 만 출력하며, PNG 생성은
 # render_verify_images.py 가 Isaac Sim standalone 환경에서 처리한다.
 # 두 환경(openai vs Isaac Sim) 의존성을 분리하기 위해서 2-pass 구조.

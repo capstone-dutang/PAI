@@ -107,34 +107,34 @@ python sim/generate_language_labels.py \
 
 # 2. Gemma 도메인 LoRA 파인튜닝 (`lora_finetuning/`)
 
-Q&A 데이터 생성(`generate_function_call_qa.py` 의 Cat-B, `generate_verify_qa.py`
-의 Cat-C)과 70:30 비율 혼합(`merge_qa_dataset.py`)을 거쳐 단일 JSONL 을 만든
+Q&A 데이터 생성(`generate_function_call_qa.py` 의 function_call, `generate_verify_qa.py`
+의 verify)과 70:30 비율 혼합(`merge_qa_dataset.py`)을 거쳐 단일 JSONL 을 만든
 후, 아래 두 단계로 학습·변환합니다.
 
 > **데이터 포맷 — Unsloth FastVisionModel typed-array content (2026-05-25 freeze)**:
-> Cat-B 와 Cat-C 가 같은 FastVisionModel 학습 패스에 들어가도록 모든 샘플의
+> function_call 와 verify 가 같은 FastVisionModel 학습 패스에 들어가도록 모든 샘플의
 > `content` 는 `[{"type":"text","text":...}]` (이미지 케이스에서는
 > `{"type":"image","image":...}` 가 text 앞에 추가) 형식. tool role 은
 > FastVisionModel 미지원이라 `user` role + `"[tool_result] "` prefix 로 변환됨.
 > `generate_function_call_qa.py` 는 이미 신 형식으로 직접 생성하며,
-> 기존 string-content 데이터는 [`convert_cat_b_to_vision_format.py`](lora_finetuning/convert_cat_b_to_vision_format.py)
+> 기존 string-content 데이터는 [`convert_function_call_to_vision_format.py`](lora_finetuning/convert_function_call_to_vision_format.py)
 > 로 1회 변환 가능.
 
 ## 2-1. 학습 환경 준비 (외부 PC)
 
 ```bash
 pip install -r training/lora_finetuning/requirements.txt
-export OPENAI_API_KEY=sk-...   # gpt-4o-mini 호출용 (Cat-B/C 합성기 공통)
+export OPENAI_API_KEY=sk-...   # gpt-4o-mini 호출용 (function_call / verify 합성기 공통)
 ```
 
-## 2-2. Cat-B 합성 (함수 호출 시나리오)
+## 2-2. function_call 합성 (함수 호출 시나리오)
 
 ```bash
 # 도메인별로 1회씩 (recycling, tableware)
 python training/lora_finetuning/generate_function_call_qa.py \
   --domain         recycling \
   --label-vocab    deploy/config/label_vocab.yaml \
-  --output         training/lora_finetuning/data/recycling/qa_cat_b.jsonl \
+  --output         training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
   --external-llm   gpt-4o-mini \
   --num-samples    500
 ```
@@ -145,20 +145,20 @@ python training/lora_finetuning/generate_function_call_qa.py \
 **먼저 dry run (10샘플)** 으로 출력 JSONL 한두 줄 직접 검사 권장:
 ```bash
 python training/lora_finetuning/generate_function_call_qa.py \
-  --domain recycling --output /tmp/catB_dry.jsonl --num-samples 10
-head -n 2 /tmp/catB_dry.jsonl | python -m json.tool
+  --domain recycling --output /tmp/function_call_dry.jsonl --num-samples 10
+head -n 2 /tmp/function_call_dry.jsonl | python -m json.tool
 ```
 
-## 2-3. 기존 Cat-B JSONL 을 vision 포맷으로 변환 (1회용)
+## 2-3. 기존 function_call JSONL 을 vision 포맷으로 변환 (1회용)
 
 이전 string-content + tool role 형식으로 생성된 JSONL 이 있다면 다음으로 변환:
 
 ```bash
-python training/lora_finetuning/convert_cat_b_to_vision_format.py \
+python training/lora_finetuning/convert_function_call_to_vision_format.py \
   --input  training/lora_finetuning/data/recycling/function_call_qa_recycling.jsonl \
   --output training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl
 
-python training/lora_finetuning/convert_cat_b_to_vision_format.py \
+python training/lora_finetuning/convert_function_call_to_vision_format.py \
   --input  training/lora_finetuning/data/tableware/function_call_qa_tableware.jsonl \
   --output training/lora_finetuning/data/tableware/function_call_qa_tableware.vision.jsonl
 ```
@@ -166,7 +166,7 @@ python training/lora_finetuning/convert_cat_b_to_vision_format.py \
 > 멱등 변환 — 이미 typed-array 인 입력은 그대로 통과. 신규 합성한 JSONL 은
 > 이미 vision 포맷이므로 본 단계 불필요.
 
-## 2-4. Cat-C 합성 (검증 시나리오) — 2-pass 구조
+## 2-4. verify 합성 (검증 시나리오) — 2-pass 구조
 
 LLM 환경(openai) 와 Isaac Sim 환경의 의존성을 분리하기 위해 두 단계로 나뉩니다.
 
@@ -199,9 +199,9 @@ load scenarios sidecar
 
 ```
 training/lora_finetuning/data/recycling/
-├── qa_cat_c.jsonl                    # 학습용 JSONL (Step 1)
-├── qa_cat_c.jsonl.scenarios.jsonl    # 시나리오 메타 sidecar (Step 1 → Step 2)
-└── verify_images/                    # Step 2 결과
+├── recycling_verify_qa.jsonl                    # 학습용 JSONL (Step 1)
+├── recycling_verify_qa.jsonl.scenarios.jsonl    # 시나리오 메타 sidecar (Step 1 → Step 2)
+└── verify_images/                               # Step 2 결과
     ├── recycling_00000.png
     ├── recycling_00001.png
     └── ...
@@ -213,12 +213,12 @@ dry run (10 샘플, ≈ $0.001):
 ```bash
 python training/lora_finetuning/generate_verify_qa.py \
   --domain         recycling \
-  --output-jsonl   /tmp/catC_dry.jsonl \
-  --image-dir      /tmp/catC_dry_images \
+  --output-jsonl   /tmp/verify_dry.jsonl \
+  --image-dir      /tmp/verify_dry_images \
   --num-scenes     10
 
-head -n 1 /tmp/catC_dry.jsonl              | python -m json.tool
-head -n 1 /tmp/catC_dry.jsonl.scenarios.jsonl | python -m json.tool
+head -n 1 /tmp/verify_dry.jsonl              | python -m json.tool
+head -n 1 /tmp/verify_dry.jsonl.scenarios.jsonl | python -m json.tool
 ```
 
 본격 합성 (양 도메인, ≈ $0.05):
@@ -226,7 +226,7 @@ head -n 1 /tmp/catC_dry.jsonl.scenarios.jsonl | python -m json.tool
 for D in recycling tableware; do
   python training/lora_finetuning/generate_verify_qa.py \
     --domain         $D \
-    --output-jsonl   training/lora_finetuning/data/$D/qa_cat_c.jsonl \
+    --output-jsonl   training/lora_finetuning/data/$D/${D}_verify_qa.jsonl \
     --image-dir      training/lora_finetuning/data/$D/verify_images/ \
     --num-scenes     500
 done
@@ -244,7 +244,7 @@ Sim 환경 사전 준비:
 ```bash
 for D in recycling tableware; do
   ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \
-    --scenarios  training/lora_finetuning/data/$D/qa_cat_c.jsonl.scenarios.jsonl \
+    --scenarios  training/lora_finetuning/data/$D/${D}_verify_qa.jsonl.scenarios.jsonl \
     --scene-usd  sim/scenes/base_scene.usd \
     --domain     $D \
     --image-dir  training/lora_finetuning/data/$D/verify_images/ \
@@ -265,19 +265,19 @@ done
 
 ```bash
 python training/lora_finetuning/merge_qa_dataset.py \
-  --cat-b   training/lora_finetuning/data/recycling/qa_cat_b.jsonl \
-  --cat-c   training/lora_finetuning/data/recycling/qa_cat_c.jsonl \
-  --output  training/lora_finetuning/data/recycling/qa_merged.jsonl
+  --function_call   training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
+  --verify          training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \
+  --output          training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
 ```
 
-Cat-C 가 비어 있어도 동작 (Cat-B 만 사용 + 경고). 1차 학습 시 Cat-B 만으로
-시험하려면 빈 파일을 `--cat-c` 로 넘기면 됩니다:
+verify 가 비어 있어도 동작 (function_call 만 사용 + 경고). 1차 학습 시 function_call 만으로
+시험하려면 빈 파일을 `--verify` 로 넘기면 됩니다:
 ```bash
-: > /tmp/catC_empty.jsonl
+: > /tmp/verify_empty.jsonl
 python training/lora_finetuning/merge_qa_dataset.py \
-  --cat-b training/lora_finetuning/data/recycling/qa_cat_b.jsonl \
-  --cat-c /tmp/catC_empty.jsonl \
-  --output training/lora_finetuning/data/recycling/qa_merged.jsonl
+  --function_call training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
+  --verify        /tmp/verify_empty.jsonl \
+  --output        training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
 ```
 
 ## 2-6. Unsloth QLoRA 파인튜닝 (FastVisionModel)
@@ -285,7 +285,7 @@ python training/lora_finetuning/merge_qa_dataset.py \
 ```bash
 python training/lora_finetuning/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
-  --dataset    training/lora_finetuning/data/recycling/qa_merged.jsonl \
+  --dataset    training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl \
   --image-dir  training/lora_finetuning/data/recycling/verify_images \
   --output-dir training/outputs/lora_recycling \
   --rank 16 --alpha 32 \
@@ -295,8 +295,8 @@ python training/lora_finetuning/train_gemma_qlora.py \
 `train_gemma_qlora.py` 의 핵심 설계 (모듈 docstring 참조):
 - **FastVisionModel** + LoRA (rank/alpha 기본 16/32). `finetune_vision_layers=False`
   로 language layers 만 학습 (Unsloth 권장).
-- **Custom data collator**: per_device_batch_size=1 강제 (Cat-B text-only 와
-  Cat-C image+text 가 같은 batch 에 섞이는 문제 회피, [unslothai/unsloth#1590](https://github.com/unslothai/unsloth/issues/1590)
+- **Custom data collator**: per_device_batch_size=1 강제 (function_call text-only 와
+  verify image+text 가 같은 batch 에 섞이는 문제 회피, [unslothai/unsloth#1590](https://github.com/unslothai/unsloth/issues/1590)
   패턴). effective batch 는 `--grad-accum` (기본 4) 로 확보.
 - **Image lazy load**: collator 가 sample 의 image string path 를
   `PIL.Image.open(image_dir/path)` 로 변환 — 전체 dataset 를 메모리에 안 올림.
@@ -304,7 +304,7 @@ python training/lora_finetuning/train_gemma_qlora.py \
   (Unsloth 는 CUDA/GPU 환경에 따라 [공식 설치 가이드](https://docs.unsloth.ai/)
   를 우선 권장). VRAM ≥16 GB, HuggingFace `unsloth/gemma-4-E2B-it` 액세스.
 
-### 첫 학습 sanity check (Cat-B 만, ~10 step)
+### 첫 학습 sanity check (function_call 만, ~10 step)
 
 text-only 샘플과 vision collator 호환성을 빠르게 검증할 수 있는 짧은 run:
 
@@ -318,7 +318,7 @@ python training/lora_finetuning/train_gemma_qlora.py \
   --logging-steps 1
 ```
 
-Cat-B 만 들어 있어 image 디렉터리는 비어 있어도 됨 (collator 가 image 없는
+function_call 만 들어 있어 image 디렉터리는 비어 있어도 됨 (collator 가 image 없는
 sample 만 처리). 정상 loss 가 감소하면 본격 학습으로 진행.
 
 ## 2-7. GGUF 변환
@@ -331,18 +331,24 @@ bash training/lora_finetuning/convert_lora_to_gguf.sh \
 
 ## 2-8. 데이터 보관 위치
 
-Cat-B/C/merged JSONL 은 **도메인별 하위 폴더**로 관리합니다 (git 추적):
+function_call / verify/merged JSONL 은 **도메인별 하위 폴더**로 관리합니다 (git 추적):
 
 ```
 training/lora_finetuning/data/
 ├── recycling/
-│   ├── qa_cat_b.jsonl
-│   ├── qa_cat_c.jsonl
-│   └── qa_merged.jsonl
+│   ├── recycling_function_call_qa.jsonl
+│   ├── recycling_function_call_qa.vision.jsonl
+│   ├── recycling_verify_qa.jsonl
+│   ├── recycling_verify_qa.jsonl.scenarios.jsonl
+│   ├── recycling_qa_merged.jsonl
+│   └── verify_images/
 └── tableware/
-    ├── qa_cat_b.jsonl
-    ├── qa_cat_c.jsonl
-    └── qa_merged.jsonl
+    ├── tableware_function_call_qa.jsonl
+    ├── tableware_function_call_qa.vision.jsonl
+    ├── tableware_verify_qa.jsonl
+    ├── tableware_verify_qa.jsonl.scenarios.jsonl
+    ├── tableware_qa_merged.jsonl
+    └── verify_images/
 ```
 
 학습 산출물(LoRA 체크포인트, GGUF) 은 별도 `training/outputs/` 또는 `models/`

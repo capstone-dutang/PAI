@@ -1,28 +1,28 @@
 """
 merge_qa_dataset.py
 
-Q&A 데이터 생성 마지막 단계 — Cat-B(함수 호출)와 Cat-C(검증) 두 JSONL 을
+Q&A 데이터 생성 마지막 단계 — function_call(함수 호출)와 verify(검증) 두 JSONL 을
 고정 비율 70 : 30 으로 병합하여 단일 학습용 JSONL 을 만든다.
 
 freeze 결정 (2026-05-25):
   도메인이 분리수거(3종)와 식기 정리로 좁아 Cat-A(도메인 지식 QA)는
-  파인튜닝 효용이 거의 없어 제거. LoRA 의 실제 작업 표면인 함수 호출(Cat-B)과
-  시각 검증(Cat-C)만 학습한다. 비율은 70 : 30 단일 옵션으로 freeze.
+  파인튜닝 효용이 거의 없어 제거. LoRA 의 실제 작업 표면인 함수 호출(function_call)과
+  시각 검증(verify)만 학습한다. 비율은 70 : 30 단일 옵션으로 freeze.
 
 부족분 처리 정책 (oversample):
   비율 대비 더 큰 쪽을 전부 사용하고, 더 작은 쪽을 중복 허용으로 oversample
-  하여 70:30 을 맞춘다. 예: Cat-B=500, Cat-C=100 → Cat-B 전부 사용,
-  Cat-C 를 약 214 개로 oversample (≈2.14x 중복). 데이터 손실 없이 비율 보장.
+  하여 70:30 을 맞춘다. 예: function_call=500, verify=100 → function_call 전부 사용,
+  verify 를 약 214 개로 oversample (≈2.14x 중복). 데이터 손실 없이 비율 보장.
 
 CLI 사용 예:
   python training/lora_finetuning/merge_qa_dataset.py \\
-    --cat-b   training/lora_finetuning/data/recycling/qa_cat_b.jsonl \\
-    --cat-c   training/lora_finetuning/data/recycling/qa_cat_c.jsonl \\
-    --output  training/lora_finetuning/data/recycling/qa_merged.jsonl
+    --function_call   training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \\
+    --verify          training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \\
+    --output          training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
 
 엣지 케이스:
-  - Cat-B 또는 Cat-C 한 쪽이 비어 있으면 다른 쪽만 셔플해서 반환 + 경고.
-    1차 학습(Cat-C 미준비) 시 Cat-C 자리에 빈 파일 전달 가능.
+  - function_call 또는 verify 한 쪽이 비어 있으면 다른 쪽만 셔플해서 반환 + 경고.
+    1차 학습(verify 미준비) 시 verify 자리에 빈 파일 전달 가능.
 """
 
 from __future__ import annotations
@@ -41,9 +41,9 @@ RATIO_C = 0.30
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description='Cat-B / Cat-C JSONL 70:30 병합')
-    p.add_argument('--cat-b',  required=True, help='Cat-B 함수 호출 JSONL')
-    p.add_argument('--cat-c',  required=True, help='Cat-C 검증 시나리오 JSONL')
+    p = argparse.ArgumentParser(description='function_call / verify JSONL 70:30 병합')
+    p.add_argument('--function_call',  required=True, help='function_call 함수 호출 JSONL')
+    p.add_argument('--verify',  required=True, help='verify 검증 시나리오 JSONL')
     p.add_argument('--output', required=True, help='병합 JSONL 출력 경로')
     p.add_argument('--seed',   type=int, default=0, help='셔플 시드')
     return p.parse_args()
@@ -103,15 +103,15 @@ def merge_with_ratio(b: list, c: list, seed: int) -> list:
     if not b and not c:
         return []
     if not c:
-        print('[merge_qa_dataset] 경고 — Cat-C 가 비어 있음. '
-              'Cat-B 만 사용 (70:30 비율 깨짐, 1차 학습 등 일시 허용).',
+        print('[merge_qa_dataset] 경고 — verify 가 비어 있음. '
+              'function_call 만 사용 (70:30 비율 깨짐, 1차 학습 등 일시 허용).',
               file=sys.stderr)
         out = list(b)
         rng.shuffle(out)
         return out
     if not b:
-        print('[merge_qa_dataset] 경고 — Cat-B 가 비어 있음. '
-              'Cat-C 만 사용 (70:30 비율 깨짐).',
+        print('[merge_qa_dataset] 경고 — function_call 가 비어 있음. '
+              'verify 만 사용 (70:30 비율 깨짐).',
               file=sys.stderr)
         out = list(c)
         rng.shuffle(out)
@@ -156,8 +156,8 @@ def save_jsonl(items: list, path: str) -> None:
 
 def main():
     args = parse_args()
-    b = load_jsonl(os.path.expanduser(args.cat_b))
-    c = load_jsonl(os.path.expanduser(args.cat_c))
+    b = load_jsonl(os.path.expanduser(args.function_call))
+    c = load_jsonl(os.path.expanduser(args.verify))
     merged = merge_with_ratio(b, c, args.seed)
     save_jsonl(merged, os.path.expanduser(args.output))
     print(

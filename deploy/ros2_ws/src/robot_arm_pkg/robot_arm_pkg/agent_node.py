@@ -294,7 +294,7 @@ class AgentNode(Node):
         verify 직전 /go_home 강제 (2026-05-25 freeze):
           execute_subtask 의 ExecutionStatus 수신 후 verify_result 호출 전에
           /go_home 서비스를 1회 호출한다. 이로써 카메라 시야 안의 팔 자세가
-          매번 home_pose 로 고정되어 Cat-C 학습 분포 (모두 home_pose 로 렌더)
+          매번 home_pose 로 고정되어 verify 학습 분포 (모두 home_pose 로 렌더)
           와 일치한다. /go_home 은 약 ~2초 차단성 호출이며, 그 동안 카메라
           프레임은 latest-only 캐시이므로 verify_result 가 받는 RGB 는 복귀
           완료 후의 한 프레임.
@@ -313,7 +313,7 @@ class AgentNode(Node):
              - 시스템 프롬프트에 look_scene/execute_subtask/verify_result 시그니처
                선언 → 모델이 JSON으로 함수 호출 응답
              - 본 메서드는 응답 파싱 후 매칭되는 _call_*() 디스패치
-               (Cat-B 학습 데이터의 형식과 일치해야 함 — README Q&A 데이터 생성)
+               (function_call 학습 데이터의 형식과 일치해야 함 — README Q&A 데이터 생성)
 
           3) 종료 처리
              - SUCCESS: self._user_command = None, _active_domain 유지(다음 명령 시 재평가)
@@ -345,7 +345,7 @@ class AgentNode(Node):
         TODO: 구현 시 결정
           - llama-server /v1/chat/completions 페이로드 (이미지 base64 임베드)
           - 시스템 프롬프트는 robot_arm_pkg.prompts.SYSTEM_PROMPT 를 그대로 사용
-            (LoRA 학습 분포와 일치 보장 — Cat-B 합성기도 같은 상수를 import)
+            (LoRA 학습 분포와 일치 보장 — function_call 합성기도 같은 상수를 import)
           - 응답 파싱(JSON 함수 호출) 또는 그냥 본문 텍스트
           - 최신 RGB 미수신 시 처리 정책 (대기 / 즉시 실패)
         """
@@ -368,16 +368,16 @@ class AgentNode(Node):
 
         Stateless 인터페이스로 freeze (2026-05-25):
           Gemma 가 함수 호출 시 original_command 를 args 로 전달하며, agent_node
-          는 self._user_command 캐시 대신 인자를 우선 사용한다 (Cat-B 학습 분포
+          는 self._user_command 캐시 대신 인자를 우선 사용한다 (function_call 학습 분포
           및 robot_arm_pkg.prompts.SYSTEM_PROMPT 와 일치).
 
         전제 (2026-05-25 freeze):
           호출 시점에 팔이 home_pose 에 있다 — _run_function_loop 가 verify
-          호출 직전에 /go_home 을 보장한다. Cat-C 학습 분포가 home_pose 단일로
+          호출 직전에 /go_home 을 보장한다. verify 학습 분포가 home_pose 단일로
           렌더되므로 본 함수가 캡처하는 RGB 도 같은 자세여야 함.
 
         시각 검증 호출 (Gemma):
-          별도 chat completion (Cat-B 함수 호출 대화와 분리) 로 다음을 보낸다:
+          별도 chat completion (function_call 함수 호출 대화와 분리) 로 다음을 보낸다:
             system : robot_arm_pkg.prompts.VERIFY_SYSTEM_PROMPT
             user   : [image (현재 RGB), text "original_command: \\"...\\""]
           응답: {"status": <enum>, "reasoning": <english string>}

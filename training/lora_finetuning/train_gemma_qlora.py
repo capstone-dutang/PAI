@@ -4,15 +4,15 @@ train_gemma_qlora.py
 Gemma 4 E2B 비전 모델에 도메인 LoRA 를 Unsloth FastVisionModel + QLoRA 로 학습.
 
 데이터:
-  merge_qa_dataset.py 출력 단일 JSONL (Cat-B text-only + Cat-C image+text 통합,
+  merge_qa_dataset.py 출력 단일 JSONL (function_call text-only + verify image+text 통합,
   Unsloth typed-array content 형식). 각 행 {"messages": [...]}.
 
 이미지 처리 (lazy):
-  Cat-C user content 의 image 필드는 image_dir 기준 상대 path. 학습 시점에
+  verify user content 의 image 필드는 image_dir 기준 상대 path. 학습 시점에
   custom collator 가 PIL.Image.open(image_dir/path) 로 변환 — 데이터를 메모리에
   전부 올리지 않음.
 
-text-only Cat-B 호환성 (per_device_batch_size=1 가정):
+text-only function_call 호환성 (per_device_batch_size=1 가정):
   Custom collator 가 sample 의 image 유무를 판단해 processor 에
   images=None / PIL_list 로 호출 (unslothai/unsloth#1590 패턴).
   batch 안에 image 있는/없는 sample 이 섞이지 않도록 batch_size=1 강제.
@@ -84,7 +84,7 @@ def parse_args() -> TrainArgs:
     p.add_argument('--dataset', required=True,
                    help='merge_qa_dataset.py 출력 JSONL')
     p.add_argument('--image-dir', required=True,
-                   help='Cat-C sample 의 image path 베이스 (image 필드와 join)')
+                   help='verify sample 의 image path 베이스 (image 필드와 join)')
     p.add_argument('--output-dir', required=True,
                    help='LoRA adapter 저장 디렉터리')
     p.add_argument('--rank', type=int, default=16, help='LoRA rank')
@@ -224,7 +224,7 @@ def build_model_and_processor(args: TrainArgs):
 
 
 def make_data_collator(processor, image_dir: str):
-    """Cat-B(text-only) + Cat-C(image+text) 혼합 collator (batch_size=1 가정).
+    """function_call (text-only) + verify (image+text) 혼합 collator (batch_size=1 가정).
 
     각 sample 마다 image 유무 판단:
       - image 있음: processor(text=..., images=PIL_list, ...)

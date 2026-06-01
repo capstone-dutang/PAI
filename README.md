@@ -17,7 +17,7 @@ PAI/
 │   │   └── setup_calibration.sh                # 캘리브레이션 환경 설치
 │   ├── config/                                 # Jetson 런타임 설정
 │   │   ├── domain_map.yaml                     # 사용자 명령 → 도메인 매핑
-│   │   ├── label_vocab.yaml                    # 데이터 수집 / Cat-B / Sim 공유 vocabulary
+│   │   ├── label_vocab.yaml                    # 데이터 수집 / function_call / Sim 공유 vocabulary
 │   │   └── grasp_roi.yaml                      # verify_result용 엔드이펙터 ROI
 │   ├── calibration/                            # 실기 캘리브레이션 결과
 │   └── ros2_ws/
@@ -79,9 +79,9 @@ PAI/
 │   │   ├── record_sim_teleop.py                # Isaac Sim teleop 수집 (직접 API)
 │   │   └── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
 │   ├── lora_finetuning/                        # Gemma 도메인 LoRA 파인튜닝
-│   │   ├── generate_function_call_qa.py        # Cat-B 함수 호출 시나리오 합성
-│   │   ├── generate_verify_qa.py               # Cat-C 검증 시나리오 합성
-│   │   ├── merge_qa_dataset.py                 # Cat-B/C 70:30 혼합
+│   │   ├── generate_function_call_qa.py        # function_call (함수 호출) 시나리오 합성
+│   │   ├── generate_verify_qa.py               # verify (검증) 시나리오 합성
+│   │   ├── merge_qa_dataset.py                 # function_call / verify 70:30 혼합
 │   │   ├── llm_client.py                       # OpenAI API 공통 wrapper
 │   │   ├── train_gemma_qlora.py                # Unsloth QLoRA 학습
 │   │   ├── convert_lora_to_gguf.sh             # GGUF 변환
@@ -126,7 +126,7 @@ PAI/
 | 예시 | `"the blue can on the right side of the table"`, `"the transparent plastic next to the paper"` |
 | 금지 패턴 | 변별 없는 묘사(`"the can"`), 행동 동사 포함(`"pick up ..."`), 1인칭/감정 표현 |
 
-이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA Cat-B/Cat-C 학습 데이터가 이 분포로 만들어지고, `record_real_teleop.py`는 vocabulary 외 입력을 거부한다.
+이 형식은 **Sim 라벨 / Real 라벨 / 배포 시 Gemma 출력** 셋 모두 동일하게 강제된다. LoRA function_call / verify 학습 데이터가 이 분포로 만들어지고, `record_real_teleop.py`는 vocabulary 외 입력을 거부한다.
 
 ### 임베딩 모델 — 확정
 
@@ -453,7 +453,7 @@ llama-server (Gemma base GGUF, `--jinja`) 를 systemd 로 상시 구동하고, R
   │
   ├─▶ Gemma 도메인 LoRA 학습 (외부 PC)
   │     ├─ 도메인별 LLM 합성 Q&A 데이터 생성
-  │        2종 혼합 (70:30): 함수 호출(Cat-B) / 검증 시나리오(Cat-C)
+  │        2종 혼합 (70:30): 함수 호출 (function_call) / 검증 시나리오 (verify)
   │     ├─ Unsloth QLoRA 파인튜닝 (예: RTX 5070급)
   │     └─ GGUF 변환 → adapter_<domain>.gguf (각 수십 MB)
   │        adapter_recycling.gguf, adapter_tableware.gguf, ...
@@ -597,16 +597,16 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 
 | 카테고리 | 목적 | 형식 | 생성 방법 |
 |---|---|---|---|
-| **Cat-B: 함수 호출 시나리오** | `look_scene`/`execute_subtask` 정확도 | 사용자 명령 → JSON 함수 호출 | 외부 LLM으로 합성 (`generate_function_call_qa.py`) |
-| **Cat-C: 검증 시나리오** | `verify_result` 정확도 | 이미지 + 명령 → enum + reasoning | Sim 렌더링 + 자동 라벨링 (`generate_verify_qa.py`) |
+| **function_call: 함수 호출 시나리오** | `look_scene`/`execute_subtask` 정확도 | 사용자 명령 → JSON 함수 호출 | 외부 LLM으로 합성 (`generate_function_call_qa.py`) |
+| **verify: 검증 시나리오** | `verify_result` 정확도 | 이미지 + 명령 → enum + reasoning | Sim 렌더링 + 자동 라벨링 (`generate_verify_qa.py`) |
 
 #### 비율 (freeze)
 
-| Cat-B | Cat-C | 근거 |
+| function_call | verify | 근거 |
 |-------|-------|------|
 | **70%** | **30%** | 한 태스크에 `look_scene` → `execute_subtask` → `verify_result` 가 다단계로 발생 → 함수 호출 표본이 더 자주 필요. `verify_result`는 단일 호출이고 출력이 4-way enum 이라 적은 표본으로도 학습 가능. |
 
-#### Cat-B 예시 (함수 호출)
+#### function_call 예시 (함수 호출)
 
 ```json
 {
@@ -618,7 +618,7 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 }
 ```
 
-#### Cat-C 예시 (검증)
+#### verify 예시 (검증)
 
 ```json
 {
@@ -631,7 +631,7 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 
 ### 학습 단계 개요
 
-1. **Q&A 혼합** — `merge_qa_dataset.py` 로 Cat-B/C 를 70:30 으로 병합해 단일 JSONL 생성.
+1. **Q&A 혼합** — `merge_qa_dataset.py` 로 function_call / verify 를 70:30 으로 병합해 단일 JSONL 생성.
 2. **Unsloth QLoRA 파인튜닝** — `train_gemma_qlora.py` (RTX 5070급 GPU, base = `google/gemma-4-e2b`).
 3. **GGUF 변환** — `convert_lora_to_gguf.sh` 로 llama.cpp 적재용 `adapter_<domain>.gguf` 산출.
 
@@ -811,7 +811,7 @@ datasets = [
 > - `setup.py` entry_points 갱신 (`agent_node`, `embedding_node`, `llama_server_manager` 추가 / 구 노드 제거)
 > - `training/imitation_data/record_real_teleop.py` (`open_dataset` / `connect_so101` / `record_episode` 본 구현 완료 — 운영 결정 6개는 파일 상단 블록에 명시)
 > - `deploy/config/domain_map.yaml` 템플릿
-> - `deploy/config/label_vocab.yaml` (데이터 수집 / Cat-B / Sim 공유 vocabulary)
+> - `deploy/config/label_vocab.yaml` (데이터 수집 / function_call / Sim 공유 vocabulary)
 > - `camera_node.py`
 > - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
 

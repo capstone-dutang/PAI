@@ -13,7 +13,7 @@
 #       - table_top_z         : 객체 안착 z (world, m)
 #       - min_separation      : 객체 간 최소 중심 간격 (m)
 #       - exclusion_zones     : 초기 배치 금지 영역 (target/bin 위치 등) — 각 zone 에
-#                                 optional 'destination' 키 = Cat-C render 가 해당
+#                                 optional 'destination' 키 = verify render 가 해당
 #                                 카테고리의 SUCCESS 배치 좌표로 재사용
 #                                 ('_shared' 는 모든 카테고리 공용)
 #       - max_sample_attempts : rejection sampling 최대 시도 수

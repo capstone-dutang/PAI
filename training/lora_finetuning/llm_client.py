@@ -2,7 +2,7 @@
 llm_client.py
 
 OpenAI Chat Completions API 의 얇은 wrapper.
-Cat-B(generate_function_call_qa) / Cat-C(generate_verify_qa) /
+function_call (generate_function_call_qa) / verify (generate_verify_qa) /
 sim/generate_language_labels 의 paraphrase 가 공유.
 
 freeze (2026-05-25):

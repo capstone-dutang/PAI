@@ -1,6 +1,6 @@
 # Gemma 도메인 LoRA 학습 파이프라인 (외부 PC) 의존성.
 
-# ── 데이터 합성 (Cat-B/C, merge) ──────────────────────────
+# ── 데이터 합성 (function_call / verify / merge) ──────────────
 PyYAML>=6.0
 openai>=1.0
 

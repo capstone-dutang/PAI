@@ -1,7 +1,7 @@
 """
 generate_function_call_qa.py
 
-Cat-B — agent_node가 사용하는 3개 함수
+function_call — agent_node가 사용하는 3개 함수
 (look_scene / execute_subtask / verify_result)에 대한 함수 호출 시나리오 Q&A를
 외부 LLM으로 합성한다. Gemma 도메인 LoRA가 배포 시 함수 호출 응답을
 정확히 산출하도록 학습시키는 데이터.
@@ -52,7 +52,7 @@ CLI 사용 예:
   python training/lora_finetuning/generate_function_call_qa.py \\
     --domain         recycling \\
     --label-vocab    deploy/config/label_vocab.yaml \\
-    --output         training/lora_finetuning/data/recycling/qa_cat_b.jsonl \\
+    --output         training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \\
     --external-llm   gpt-4o-mini \\
     --num-samples    500
 
@@ -242,7 +242,7 @@ class QAArgs:
 
 
 def parse_args() -> QAArgs:
-    p = argparse.ArgumentParser(description='Cat-B — 함수 호출 시나리오 Q&A 합성')
+    p = argparse.ArgumentParser(description='function_call — 함수 호출 시나리오 Q&A 합성')
     p.add_argument('--domain',       required=True, help='대상 도메인 (recycling/tableware/...)')
     p.add_argument('--label-vocab',  default='deploy/config/label_vocab.yaml',
                    help='target_description 어휘 사전')
@@ -406,9 +406,9 @@ def _weighted_choice(choices, rng: random.Random):
     return rng.choices(items, weights=weights, k=1)[0]
 
 
-# Cat-C(이미지) 통합 학습을 위해 Unsloth FastVisionModel 의 typed-array content
+# verify (이미지) 통합 학습을 위해 Unsloth FastVisionModel 의 typed-array content
 # 포맷을 사용한다. tool role 미지원이라 user role + '[tool_result] ' prefix 로
-# 치환 (convert_cat_b_to_vision_format.py 와 동일 규약).
+# 치환 (convert_function_call_to_vision_format.py 와 동일 규약).
 TOOL_RESULT_PREFIX = '[tool_result] '
 
 

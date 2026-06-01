@@ -3,8 +3,8 @@ prompts.py
 
 Gemma agent 의 시스템 프롬프트와 상태 enum 의 단일 출처(SSoT).
 
-배포 측 agent_node 와 학습 측 generate_function_call_qa(Cat-B 합성)·
-generate_verify_qa(Cat-C) 가 모두 본 모듈을 import 한다. 본 모듈을 수정하면
+배포 측 agent_node 와 학습 측 generate_function_call_qa (function_call 합성) ·
+generate_verify_qa (verify) 가 모두 본 모듈을 import 한다. 본 모듈을 수정하면
 LoRA 학습 데이터와 배포 함수 호출 분포가 동시에 영향을 받으므로 변경 시
 LoRA 재학습이 필요하다.
 
@@ -35,7 +35,7 @@ from __future__ import annotations
 # ──────────────────────────────────────────────
 #
 # Gemma agent 는 다음 세 함수만 호출하며, 응답은 JSON 한 객체로만 제한된다.
-# Cat-B 학습 데이터의 assistant 응답 분포가 본 프롬프트와 정확히 일치해야 한다.
+# function_call 학습 데이터의 assistant 응답 분포가 본 프롬프트와 정확히 일치해야 한다.
 # target_description 의 vocabulary 는 deploy/config/label_vocab.yaml 참조.
 
 SYSTEM_PROMPT: str = (
@@ -103,7 +103,7 @@ class ExecStatus:
 # 이미지 + original_command → status JSON) 로 처리된다. 본 프롬프트는 그 별도
 # 호출에서 사용한다 (agent_node._call_verify_result 의 Gemma 시각 검증 step).
 #
-# 학습 측 generate_verify_qa(Cat-C) 가 본 프롬프트를 system 메시지로 박은
+# 학습 측 generate_verify_qa (verify) 가 본 프롬프트를 system 메시지로 박은
 # JSONL 을 생성한다. 변경 시 LoRA 재학습 필요.
 
 VERIFY_SYSTEM_PROMPT: str = (

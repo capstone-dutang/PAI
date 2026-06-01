@@ -1,10 +1,10 @@
 """
-convert_cat_b_to_vision_format.py
+convert_function_call_to_vision_format.py
 
-기존 Cat-B JSONL (string content + tool role) 을 Unsloth FastVisionModel
+기존 function_call JSONL (string content + tool role) 을 Unsloth FastVisionModel
 학습용 typed-array content + tool→user 형식으로 변환한다.
 
-freeze (2026-05-25): Cat-B / Cat-C 통합 학습 (FastVisionModel) 결정에 따른
+freeze (2026-05-25): function_call / verify 통합 학습 (FastVisionModel) 결정에 따른
 1회용 변환기. 신규 합성은 generate_function_call_qa.py 가 이미 신 형식으로
 직접 생성하므로 추후 변환 불필요.
 
@@ -17,9 +17,9 @@ freeze (2026-05-25): Cat-B / Cat-C 통합 학습 (FastVisionModel) 결정에 따
   4) 이미 typed-array 인 content 는 그대로 유지 (멱등 변환)
 
 CLI:
-  python training/lora_finetuning/convert_cat_b_to_vision_format.py \\
-    --input  training/lora_finetuning/data/recycling/function_call_qa_recycling.jsonl \\
-    --output training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl
+  python training/lora_finetuning/convert_function_call_to_vision_format.py \\
+    --input  training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \\
+    --output training/lora_finetuning/data/recycling/recycling_function_call_qa.vision.jsonl
 """
 
 from __future__ import annotations
@@ -74,9 +74,9 @@ def convert_sample(sample: dict) -> dict:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description='Cat-B JSONL string→typed-array + tool→user 변환 (1회용)'
+        description='function_call JSONL string→typed-array + tool→user 변환 (1회용)'
     )
-    p.add_argument('--input',  required=True, help='원본 Cat-B JSONL')
+    p.add_argument('--input',  required=True, help='원본 function_call JSONL')
     p.add_argument('--output', required=True, help='변환 결과 JSONL')
     return p.parse_args()
 
@@ -107,7 +107,7 @@ def main() -> None:
             n_out += 1
 
     print(
-        f'[convert_cat_b_to_vision_format] '
+        f'[convert_function_call_to_vision_format] '
         f'{in_path} → {out_path}: samples={n_in} (tool→user 변환={n_tool_to_user})',
         file=sys.stderr,
     )

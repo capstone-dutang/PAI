@@ -1,7 +1,7 @@
 """
 render_verify_images.py
 
-Cat-C verify 시나리오 sidecar (`*.scenarios.jsonl`) 를 입력으로 Isaac Sim 에서
+verify 시나리오 sidecar (`*.scenarios.jsonl`) 를 입력으로 Isaac Sim 에서
 RGB PNG 를 생성한다 — generate_verify_qa.py(LLM 환경) 의 2-pass 짝.
 
 실행 환경 (필수):
@@ -18,7 +18,7 @@ freeze 결정 (2026-05-25, C2 → Sim 렌더 분리 후 본 파일에 박힘):
   · 팔 자세        : home_pose 단일 (deploy/calibration/home_pose.yaml).
                      agent_node 의 verify 직전 /go_home freeze 와 정합.
   · gripper        : home_pose 그대로 (운영 시 verify 시점에 빈 gripper 라는
-                     전제) — Cat-C 렌더도 동일.
+                     전제) — verify 렌더도 동일.
   · distractor 개수 : 시나리오 당 1개, target 과 다른 카테고리 (multi-target
                      shortcut 방지). DISTRACTOR_COUNT 상수.
   · target 동역학   : kinematic — 정확한 위치/자세 유지 (status 별 의미 보존).
@@ -38,7 +38,7 @@ freeze 결정 (2026-05-25, C2 → Sim 렌더 분리 후 본 파일에 박힘):
 
 CLI:
   ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\
-    --scenarios       training/lora_finetuning/data/recycling/qa_cat_c.jsonl.scenarios.jsonl \\
+    --scenarios       training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl.scenarios.jsonl \\
     --scene-usd       sim/scenes/base_scene.usd \\
     --domain          recycling \\
     --image-dir       training/lora_finetuning/data/recycling/verify_images/
@@ -509,7 +509,7 @@ class RenderArgs:
 
 def parse_args() -> RenderArgs:
     p = argparse.ArgumentParser(
-        description='Cat-C verify 시나리오 → Isaac Sim 렌더링')
+        description='verify 시나리오 → Isaac Sim 렌더링')
     p.add_argument('--scenarios',    required=True,
                    help='generate_verify_qa.py 가 만든 *.scenarios.jsonl')
     p.add_argument('--scene-usd',    required=True, help='base scene USD')
