@@ -646,9 +646,13 @@ def main() -> None:
                 n_done += 1
             except Exception as e:  # noqa: BLE001
                 n_fail += 1
+                import traceback  # noqa: PLC0415
+                # 처음 3건만 traceback — 대량 batch 시 로그 폭주 방지.
+                # 메시지 없는 ErrorException 등 generic 예외의 실제 발생 지점 노출.
+                tb = traceback.format_exc() if n_fail <= 3 else ''
                 print(
                     f'[render_verify_images] {s.get("scenario_id", i)} '
-                    f'fail: {type(e).__name__}: {e}',
+                    f'fail: {type(e).__name__}: {e}\n{tb}',
                     file=sys.stderr,
                 )
             if (i + 1) % 50 == 0 or (i + 1) == len(scenarios):
