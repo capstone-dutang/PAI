@@ -282,6 +282,11 @@ class SimVerifyRenderer:
         # 시나리오 컨테이너 root
         UsdGeom.Xform.Define(self._stage, SCENARIO_ROOT)
 
+        # 카메라 warm-up — 첫 시나리오 호출 시 camera.get_rgba() 가 무효 프레임
+        # (float32 또는 None) 을 반환하는 케이스 회피. 빈 씬 상태에서 3 step.
+        for _ in range(3):
+            self._world.step(render=True)
+
     # ── 공개 API ─────────────────────────────────────────────
 
     def render(self, scenario: dict) -> None:
@@ -461,12 +466,19 @@ class SimVerifyRenderer:
 
     def _save_png(self, rgba, out_path: str) -> None:
         from PIL import Image  # noqa: PLC0415
-        # rgba: (H, W, 4) uint8 numpy.  RGB 채널만 저장.
-        if rgba.ndim == 3 and rgba.shape[2] >= 3:
-            img = Image.fromarray(rgba[..., :3])
-        else:
-            img = Image.fromarray(rgba)
-        img.save(out_path)
+        import numpy as np     # noqa: PLC0415
+        # Isaac Sim 카메라는 호출 시점/렌더링 상태에 따라 uint8 [0,255] 또는
+        # float32 normalized [0,1] 을 반환할 수 있다. PIL PNG 저장은 uint8 RGB
+        # 만 받으므로 항상 변환한다 (mode 'F' 에러 회피).
+        arr = np.asarray(rgba)
+        if arr.ndim == 3 and arr.shape[2] >= 3:
+            arr = arr[..., :3]
+        if arr.dtype != np.uint8:
+            if np.issubdtype(arr.dtype, np.floating):
+                arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+            else:
+                arr = arr.astype(np.uint8)
+        Image.fromarray(arr).save(out_path)
 
     def _load_home_pose(self, path: str) -> List[float]:
         """home_pose.yaml positions (SDK .pos: arm=deg, gripper=0~100%) → rad.
