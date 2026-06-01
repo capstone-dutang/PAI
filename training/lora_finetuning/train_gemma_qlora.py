@@ -223,6 +223,58 @@ def build_model_and_processor(args: TrainArgs):
     return model, processor
 
 
+def _find_assistant_token_spans(input_ids: List[int], tokenizer
+                                ) -> List[tuple]:
+    """input_ids 안에서 assistant turn 의 (start, end) 토큰 인덱스를 찾는다.
+
+    Gemma instruction chat template 구조:
+      <start_of_turn>user\\n ... <end_of_turn>
+      <start_of_turn>model\\n ... <end_of_turn>
+
+    반환 span 은 'model' 직후의 content 시작 인덱스부터 <end_of_turn> 토큰을
+    포함한 인덱스+1 까지 (exclusive). <end_of_turn> 도 loss 에 포함시켜
+    종료 토큰 생성 학습을 보장한다.
+
+    role token 'model' 의 토큰화는 컨텍스트(특수 토큰 직후)에 의존하지 않도록
+    가정 — Gemma tokenizer 에서 <start_of_turn> 가 단일 special token 이므로
+    그 직후의 "model" 은 standalone 인코딩과 동일하다.
+    """
+    sot = tokenizer.convert_tokens_to_ids('<start_of_turn>')
+    eot = tokenizer.convert_tokens_to_ids('<end_of_turn>')
+    if sot is None or eot is None or sot < 0 or eot < 0:
+        raise RuntimeError(
+            "tokenizer 에 <start_of_turn>/<end_of_turn> 특수 토큰 없음 — "
+            "Gemma chat template 가정의 loss masking 만 지원함."
+        )
+    model_ids = tokenizer.encode('model', add_special_tokens=False)
+    if not model_ids:
+        raise RuntimeError("'model' role token 인코딩 실패")
+
+    spans: List[tuple] = []
+    n = len(input_ids)
+    i = 0
+    while i < n:
+        if input_ids[i] != sot:
+            i += 1
+            continue
+        j = i + 1
+        if j + len(model_ids) > n:
+            break
+        if not all(input_ids[j + k] == model_ids[k]
+                   for k in range(len(model_ids))):
+            i = j
+            continue
+        content_start = j + len(model_ids)
+        k = content_start
+        while k < n and input_ids[k] != eot:
+            k += 1
+        if k >= n:
+            break
+        spans.append((content_start, k + 1))
+        i = k + 1
+    return spans
+
+
 def make_data_collator(processor, image_dir: str):
     """function_call (text-only) + verify (image+text) 혼합 collator (batch_size=1 가정).
 
@@ -230,9 +282,12 @@ def make_data_collator(processor, image_dir: str):
       - image 있음: processor(text=..., images=PIL_list, ...)
       - image 없음: processor(text=..., images=None, ...)
 
-    labels = input_ids 복사 (causal LM SFT). pad / image token / system+user
-    masking 등 추가 처리는 trl SFTTrainer 와 processor 의 기본 동작에 위임.
-    더 정교한 loss masking (answer-only) 은 후속 튜닝 단계에서 결정.
+    Loss masking (2026-06-02 추가):
+      Causal LM SFT 의 labels 를 assistant turn 영역만 유효(=input_ids),
+      나머지는 -100 으로 설정. 1차 학습에서 모델이 [tool_result] 직후
+      'SUCCESS' 같은 user 컨텐츠 자체를 모방하던 회귀를 차단.
+      _find_assistant_token_spans 가 Gemma <start_of_turn>model\\n ...
+      <end_of_turn> 패턴을 토큰 ID 로 검출.
     """
     def collate(batch: List[dict]) -> dict:
         if len(batch) != 1:
@@ -256,7 +311,22 @@ def make_data_collator(processor, image_dir: str):
         if images:
             kwargs['images'] = images
         inputs = processor(**kwargs)
-        inputs['labels'] = inputs['input_ids'].clone()
+
+        import torch  # noqa: PLC0415
+        ids_2d = inputs['input_ids']
+        labels = torch.full_like(ids_2d, fill_value=-100)
+        for b in range(ids_2d.shape[0]):
+            id_list = ids_2d[b].tolist()
+            spans = _find_assistant_token_spans(id_list, processor.tokenizer)
+            if not spans:
+                raise RuntimeError(
+                    'assistant turn span 미검출 — chat template 또는 토큰화 '
+                    '결과가 예상 (<start_of_turn>model ... <end_of_turn>) 과 '
+                    f'다름. text head=\n{text[:300]!r}'
+                )
+            for (s, e) in spans:
+                labels[b, s:e] = ids_2d[b, s:e]
+        inputs['labels'] = labels
         return inputs
     return collate
 
