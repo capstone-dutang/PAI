@@ -1,14 +1,26 @@
 """
 generate_verify_qa.py
 
-Cat-C — verify_result 시각 검증 시나리오 JSONL 합성.
+Cat-C — verify_result 시각 검증 시나리오 JSONL 합성 (2-pass 구조 중 1단계).
 
 배포 시 agent_node._call_verify_result 는 Gemma 를 한 번 더 호출하여
 RGB + original_command → status JSON 매핑을 얻는다. 본 스크립트는 그 호출의
 training 분포를 만든다. Cat-B(함수 호출)와 같은 LoRA 어댑터를 공유하며,
 Unsloth FastVisionModel typed-array content 형식으로 출력한다.
 
-출력 포맷 (JSONL — 한 줄 = 한 샘플):
+2-pass 구조 (Cat-C 합성):
+  본 스크립트(Step 1)는 LLM(gpt-4o-mini) 으로 시나리오 메타데이터 + JSONL 을
+  만들고, [`render_verify_images.py`](render_verify_images.py)(Step 2) 가
+  Isaac Sim 으로 PNG 를 렌더한다. 두 환경(openai vs Isaac Sim) 의존성을
+  깨끗이 분리하기 위해서. 본 스크립트는 그 인터페이스로 scenarios sidecar
+  (`{output}.scenarios.jsonl`) 도 함께 출력한다.
+
+출력 (한 도메인 1회 실행 시):
+  --output-jsonl 가 가리키는 파일               : 학습용 JSONL (vision typed-array)
+  --output-jsonl 가 가리키는 파일 + '.scenarios.jsonl' : 시나리오 메타데이터 sidecar
+                                                       (render_verify_images.py 의 입력)
+
+JSONL 한 줄 (학습용):
   {
     "messages": [
       {"role": "system",
@@ -22,6 +34,10 @@ Unsloth FastVisionModel typed-array content 형식으로 출력한다.
                     "text": "{\\"status\\":\\"SUCCESS\\",\\"reasoning\\":\\"...\\"}"}]}
     ]
   }
+
+scenarios sidecar 한 줄 (메타데이터):
+  {scenario_id, domain, status, target_object, target_phrase, destination,
+   original_command, image_relpath, image_abspath}
 
 freeze 결정 (2026-05-25, C2 통합 vision 포맷 결정 후):
   값과 구현은 아래 캐노니컬 위치에만 박혀 있다. 본 docstring 은 navigation 만
@@ -46,11 +62,12 @@ freeze 결정 (2026-05-25, C2 통합 vision 포맷 결정 후):
   · image path 스키마         : synthesize_scenario / build_sample
                                 image_dir 기준 상대 path. 학습 시
                                 PIL.Image.open(image_dir/path) 로 로드.
-  · Sim 렌더링 (미구현 stub)  : render_scenario_image() docstring
-                                --skip-render 로 우회 가능. 학습 직전 본체
-                                구현 + 재실행 필수.
+  · Sim 렌더링 (Step 2)       : render_verify_images.py
+                                (별도 스크립트, ~/isaacsim/python.sh 로 실행).
+                                본 파일은 PNG 를 만들지 않는다 — scenarios
+                                sidecar 만 제공.
 
-CLI:
+CLI (Step 1):
   python training/lora_finetuning/generate_verify_qa.py \\
     --domain         recycling \\
     --label-vocab    deploy/config/label_vocab.yaml \\
@@ -58,6 +75,13 @@ CLI:
     --image-dir      training/lora_finetuning/data/recycling/verify_images/ \\
     --num-scenes     500 \\
     --external-llm   gpt-4o-mini
+
+CLI (Step 2 — Sim 환경):
+  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\
+    --scenarios       training/lora_finetuning/data/recycling/qa_cat_c.jsonl.scenarios.jsonl \\
+    --scene-usd       sim/scenes/base_scene.usd \\
+    --domain          recycling \\
+    --image-dir       training/lora_finetuning/data/recycling/verify_images/
 """
 
 from __future__ import annotations
@@ -296,6 +320,24 @@ def generate_reasoning(scenario: VerifyScenario, rng: random.Random) -> str:
     return tmpl.format(target=scenario.target_phrase, dest=scenario.destination)
 
 
+def _scenario_to_dict(s: VerifyScenario) -> dict:
+    """VerifyScenario → sidecar JSONL 한 줄용 dict.
+
+    render_verify_images.py 가 본 dict 를 직접 읽어 시나리오를 복원한다.
+    """
+    return {
+        'scenario_id':      s.scenario_id,
+        'domain':           s.domain,
+        'status':           s.status,
+        'target_object':    s.target_object,
+        'target_phrase':    s.target_phrase,
+        'destination':      s.destination,
+        'original_command': s.original_command,
+        'image_relpath':    s.image_relpath,
+        'image_abspath':    s.image_abspath,
+    }
+
+
 def build_sample(scenario: VerifyScenario, reasoning: str) -> dict:
     """Cat-C 형식 messages dict 1건 생성 (3-msg single-turn).
 
@@ -325,44 +367,15 @@ def build_sample(scenario: VerifyScenario, reasoning: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-# Sim 렌더링 (NotImplementedError 스텁)
+# Sim 렌더링 — 본 스크립트는 수행하지 않음 (Step 2 로 분리)
 # ──────────────────────────────────────────────
-
-def render_scenario_image(scenario: VerifyScenario) -> None:
-    """Isaac Sim 으로 시나리오의 RGB 이미지를 scenario.image_abspath 에 저장.
-
-    팔 자세 / gripper (2026-05-25 freeze):
-      모든 렌더는 home_pose 단일 자세로 한다. 배포 시 agent_node 가
-      verify_result 호출 직전 /go_home 을 호출해 같은 자세를 보장하기 때문
-      (agent_node._run_function_loop 의 verify 직전 /go_home 강제 참조).
-      gripper 는 빈 상태 (객체를 놓고 release 한 직후).
-
-    Domain 별 destination (DESTINATIONS 상수 참조):
-      - recycling: 객체별 분리 bin (can / plastic / paper) USD
-      - tableware: 테이블 위 단일 고정 영역 (별도 객체 자산 없음 — 평면 prim
-                   /매트 같은 시각 표식으로 in/out 변별)
-
-    구현 시 외부 의존 / 결정 필요:
-      - Isaac Sim standalone app 컨텍스트 (record_sim_teleop 의 SimInterface 재사용 가능)
-      - Sim 자산: sim/assets/objects/<domain>/ USD + base scene + destination 시각 표식
-      - 카메라 셋업: deploy/calibration 의 intrinsics/extrinsics 적용
-        (setup_sim_camera.py 와 같은 로직)
-      - 객체 배치 정책 (scenario.status 별):
-          SUCCESS  → target_object 를 correct destination 내부 / 위에 안정 배치
-          FAIL     → target_object 를 다른 위치 / 바닥 / 테이블 잔존 (recycling 은
-                     wrong bin 가능, tableware 는 target area 바깥)
-          PARTIAL  → target_object 를 destination 가장자리, 기울임/걸침 자세
-          UNCLEAR  → target_object 를 다른 객체로 가림 / 시야 가장자리 / 흐림
-      - distractor: 같은 도메인의 다른 객체 1-2 개 무작위 배치 (다중 객체 변별 학습)
-      - 카메라 capture → PNG (RGB) 로 scenario.image_abspath 저장 (mkdir 포함)
-
-    Sim 자산 준비 (사용자 측 작업) 완료 후 본 함수 구현. 그 전까지는
-    NotImplementedError — main 루프가 catch 하여 경고 후 다음 시나리오로 진행.
-    """
-    raise NotImplementedError(
-        '[generate_verify_qa] render_scenario_image() 미구현 — Sim 자산 준비 후 작성. '
-        '구조 검증 시에는 --skip-render 사용.'
-    )
+#
+# Cat-C 의 PNG 렌더링은 본 스크립트가 직접 수행하지 않는다.
+# 본 스크립트는 학습용 JSONL 과 scenarios sidecar 만 출력하며, PNG 생성은
+# render_verify_images.py 가 Isaac Sim standalone 환경에서 처리한다.
+# 두 환경(openai vs Isaac Sim) 의존성을 분리하기 위해서 2-pass 구조.
+#
+# scenarios sidecar 한 줄의 dict 스키마는 _scenario_to_dict() 참조.
 
 
 # ──────────────────────────────────────────────
@@ -381,21 +394,23 @@ def main() -> None:
         os.makedirs(out_dir, exist_ok=True)
     os.makedirs(args.image_dir, exist_ok=True)
 
+    scenarios_path = args.output_jsonl + '.scenarios.jsonl'
+
     print(
         f'[generate_verify_qa] start — domain={args.domain} '
         f'objects={list(vocab["objects"].keys())} '
-        f'num_scenes={args.num_scenes} skip_render={args.skip_render} '
-        f'image_dir={args.image_dir} output={args.output_jsonl}',
+        f'num_scenes={args.num_scenes} image_dir={args.image_dir} '
+        f'output={args.output_jsonl} scenarios={scenarios_path}',
         file=sys.stderr,
     )
 
-    n_written         = 0
-    n_failed          = 0
-    n_render_failed   = 0
-    status_counter:   Dict[str, int] = {}
-    target_counter:   Dict[str, int] = {}
+    n_written = 0
+    n_failed  = 0
+    status_counter: Dict[str, int] = {}
+    target_counter: Dict[str, int] = {}
 
-    with open(args.output_jsonl, 'w', encoding='utf-8') as f:
+    with open(args.output_jsonl, 'w', encoding='utf-8') as f_jsonl, \
+         open(scenarios_path,    'w', encoding='utf-8') as f_scen:
         for i in range(args.num_scenes):
             try:
                 scenario  = synthesize_scenario(args, vocab, llm, rng, i)
@@ -410,52 +425,48 @@ def main() -> None:
                 )
                 continue
 
-            # JSONL 먼저 기록 — 렌더 실패해도 구조는 보존
-            f.write(json.dumps(sample, ensure_ascii=False) + '\n')
+            # 학습 JSONL + scenarios sidecar 둘 다 기록 (render_verify_images.py 의 입력)
+            f_jsonl.write(json.dumps(sample, ensure_ascii=False) + '\n')
+            f_scen.write(json.dumps(_scenario_to_dict(scenario),
+                                    ensure_ascii=False) + '\n')
             n_written += 1
-            status_counter[scenario.status]      = status_counter.get(scenario.status, 0) + 1
-            target_counter[scenario.target_object] = target_counter.get(scenario.target_object, 0) + 1
-
-            # Sim 렌더링
-            if not args.skip_render:
-                try:
-                    render_scenario_image(scenario)
-                except NotImplementedError as e:
-                    n_render_failed += 1
-                    if n_render_failed == 1:
-                        print(
-                            f'[generate_verify_qa] 경고: render_scenario_image '
-                            f'미구현 — JSONL 만 출력. {e}',
-                            file=sys.stderr,
-                        )
-                except Exception as e:  # noqa: BLE001
-                    n_render_failed += 1
-                    print(
-                        f'[generate_verify_qa] render 실패 '
-                        f'({scenario.scenario_id}): {type(e).__name__}: {e}',
-                        file=sys.stderr,
-                    )
+            status_counter[scenario.status] = \
+                status_counter.get(scenario.status, 0) + 1
+            target_counter[scenario.target_object] = \
+                target_counter.get(scenario.target_object, 0) + 1
 
             if (i + 1) % 50 == 0 or (i + 1) == args.num_scenes:
                 print(
                     f'[generate_verify_qa] progress {i+1}/{args.num_scenes} '
-                    f'written={n_written} failed={n_failed} '
-                    f'render_failed={n_render_failed} | {llm.format_usage()}',
+                    f'written={n_written} failed={n_failed} | '
+                    f'{llm.format_usage()}',
                     file=sys.stderr,
                 )
 
     print(
         f'[generate_verify_qa] done — written={n_written}/{args.num_scenes} '
-        f'failed={n_failed} render_failed={n_render_failed}\n'
+        f'failed={n_failed}\n'
         f'  status_dist = {status_counter}\n'
         f'  target_dist = {target_counter}\n'
-        f'  {llm.format_usage()} | output={args.output_jsonl}',
+        f'  {llm.format_usage()}\n'
+        f'  jsonl       = {args.output_jsonl}\n'
+        f'  scenarios   = {scenarios_path}',
         file=sys.stderr,
     )
-    if args.skip_render or n_render_failed > 0:
+    print(
+        '[generate_verify_qa] 다음 단계 (PNG 렌더링):\n'
+        '  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\\n'
+        f'    --scenarios {scenarios_path} \\\n'
+        '    --scene-usd sim/scenes/base_scene.usd \\\n'
+        f'    --domain    {args.domain} \\\n'
+        f'    --image-dir {args.image_dir}',
+        file=sys.stderr,
+    )
+    if args.skip_render:
         print(
-            '[generate_verify_qa] 주의: PNG 가 없거나 미완성 — 본격 학습 전 '
-            'Sim 렌더링 본체 구현 후 재실행 필수.',
+            '[generate_verify_qa] note: --skip-render 는 deprecated — 본 스크립트는 '
+            '이제 항상 JSONL+sidecar 만 출력하고 PNG 는 render_verify_images.py '
+            '가 담당. 플래그 무시됨.',
             file=sys.stderr,
         )
 

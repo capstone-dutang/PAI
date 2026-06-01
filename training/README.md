@@ -166,76 +166,100 @@ python training/lora_finetuning/convert_cat_b_to_vision_format.py \
 > 멱등 변환 — 이미 typed-array 인 입력은 그대로 통과. 신규 합성한 JSONL 은
 > 이미 vision 포맷이므로 본 단계 불필요.
 
-## 2-4. Cat-C 합성 (검증 시나리오)
+## 2-4. Cat-C 합성 (검증 시나리오) — 2-pass 구조
 
-`generate_verify_qa.py` 가 status 가중 샘플 + 객체 균등 순회 + 템플릿 reasoning
-으로 시나리오를 결정론적으로 합성하고, 각 시나리오마다 LLM 1회 (original_command
-생성) + Sim 렌더링 1회 (PNG 저장) 를 수행합니다.
+LLM 환경(openai) 와 Isaac Sim 환경의 의존성을 분리하기 위해 두 단계로 나뉩니다.
 
-> **freeze 결정의 캐노니컬 위치는 [`generate_verify_qa.py`](lora_finetuning/generate_verify_qa.py)
-> 모듈 docstring 의 매트릭스를 참조**합니다. 값(분포·템플릿·destination 등)을
-> 본 README 에 재기재하지 않으며, 변경 시 모듈의 해당 상수/함수만 수정하면
-> 됩니다.
+| 단계 | 스크립트 | 환경 | 입력 | 출력 |
+|---|---|---|---|---|
+| **Step 1** | [`generate_verify_qa.py`](lora_finetuning/generate_verify_qa.py) | 일반 Python (gpt-4o-mini) | vocab + multi_target_scenes | 학습용 JSONL + `*.scenarios.jsonl` sidecar |
+| **Step 2** | [`render_verify_images.py`](lora_finetuning/render_verify_images.py) | `~/isaacsim/python.sh` (Isaac Sim standalone) | sidecar + base_scene + 자산 | 시나리오별 PNG |
+
+> **freeze 결정의 캐노니컬 위치는 각 스크립트 모듈 docstring 의 매트릭스를
+> 참조**합니다 (값 / 분포 / 템플릿 / destination / 렌더 정책 등). 본 README 에
+> 재기재하지 않으며, 변경 시 해당 모듈만 수정하면 됩니다.
 
 ### 데이터 흐름
 
 ```
-synthesize_scenario (LLM)         # status / target / target_phrase / cmd
-   → generate_reasoning (template) # status 별 5 템플릿 중 선택, target/dest substitute
-   → build_sample                  # vision typed-array messages
-   → write JSONL line              # image path 만 박힘 (실제 PNG 는 별도)
-   → render_scenario_image (Sim)   # Isaac Sim 으로 PNG 저장 — 미구현 stub
+[Step 1 — LLM 환경]
+synthesize_scenario (LLM)            # status / target / target_phrase / cmd
+  → generate_reasoning (template)    # status × 5 템플릿, target/dest substitute
+  → build_sample                     # vision typed-array messages
+  → write JSONL + scenarios sidecar  # PNG 미생성
+
+[Step 2 — Isaac Sim standalone]
+load scenarios sidecar
+  → SimVerifyRenderer(base_scene, home_pose, camera)
+  → for each scenario:
+      place target (kinematic) + distractor → physics settle → capture → PNG
 ```
 
 ### 출력 디렉터리 구조
 
 ```
 training/lora_finetuning/data/recycling/
-├── qa_cat_c.jsonl
-└── verify_images/
+├── qa_cat_c.jsonl                    # 학습용 JSONL (Step 1)
+├── qa_cat_c.jsonl.scenarios.jsonl    # 시나리오 메타 sidecar (Step 1 → Step 2)
+└── verify_images/                    # Step 2 결과
     ├── recycling_00000.png
     ├── recycling_00001.png
     └── ...
 ```
 
-### dry run (구조 검증, Sim 의존 없음)
+### Step 1 — JSONL + sidecar 합성 (LLM 환경)
 
-`--skip-render` 로 PNG 렌더링을 생략하고 JSONL 만 출력 — `original_command`
-합성 (LLM) + reasoning 템플릿 + JSONL 스키마 검증용. 10 샘플 기준 ≈ $0.001:
-
+dry run (10 샘플, ≈ $0.001):
 ```bash
 python training/lora_finetuning/generate_verify_qa.py \
   --domain         recycling \
   --output-jsonl   /tmp/catC_dry.jsonl \
   --image-dir      /tmp/catC_dry_images \
-  --num-scenes     10 \
-  --skip-render
+  --num-scenes     10
 
-head -n 1 /tmp/catC_dry.jsonl | python -m json.tool
+head -n 1 /tmp/catC_dry.jsonl              | python -m json.tool
+head -n 1 /tmp/catC_dry.jsonl.scenarios.jsonl | python -m json.tool
 ```
 
-### 본격 합성 (Sim 렌더링 본체 구현 후)
-
+본격 합성 (양 도메인, ≈ $0.05):
 ```bash
-python training/lora_finetuning/generate_verify_qa.py \
-  --domain         recycling \
-  --output-jsonl   training/lora_finetuning/data/recycling/qa_cat_c.jsonl \
-  --image-dir      training/lora_finetuning/data/recycling/verify_images/ \
-  --num-scenes     500
-
-python training/lora_finetuning/generate_verify_qa.py \
-  --domain         tableware \
-  --output-jsonl   training/lora_finetuning/data/tableware/qa_cat_c.jsonl \
-  --image-dir      training/lora_finetuning/data/tableware/verify_images/ \
-  --num-scenes     500
+for D in recycling tableware; do
+  python training/lora_finetuning/generate_verify_qa.py \
+    --domain         $D \
+    --output-jsonl   training/lora_finetuning/data/$D/qa_cat_c.jsonl \
+    --image-dir      training/lora_finetuning/data/$D/verify_images/ \
+    --num-scenes     500
+done
 ```
 
-> `render_scenario_image()` 가 미구현 (`NotImplementedError`) 상태이므로
-> `--skip-render` 없이 실행하면 JSONL 은 정상 출력되지만 PNG 가 만들어지지 않아
-> 학습 단계의 `PIL.Image.open(path)` 가 실패합니다. **본격 학습 직전에 Sim
-> 자산 (`sim/assets/objects/<domain>/`) 준비 + render 본체 구현 + 재실행
-> 필수**. Sim 의존부 명세는 `generate_verify_qa.py` 의 `render_scenario_image`
-> docstring 참조.
+### Step 2 — PNG 렌더링 (Isaac Sim 환경)
+
+Sim 환경 사전 준비:
+```bash
+~/isaacsim/python.sh -m pip install pillow PyYAML
+# (numpy 는 Isaac Sim 기본 포함)
+```
+
+렌더 실행:
+```bash
+for D in recycling tableware; do
+  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \
+    --scenarios  training/lora_finetuning/data/$D/qa_cat_c.jsonl.scenarios.jsonl \
+    --scene-usd  sim/scenes/base_scene.usd \
+    --domain     $D \
+    --image-dir  training/lora_finetuning/data/$D/verify_images/ \
+    --headless
+done
+```
+
+> 첫 실행 시 디버깅 가능성:
+> - Sim 자산 경로(`sim/assets/objects/<domain>/`) 가 비어 있으면 즉시 종료.
+>   `setup_objects.py` 를 먼저 실행해 wrapper USD 생성.
+> - `home_pose.yaml` 위치/포맷 (record_real_teleop 가 만든 형식과 동일 규약).
+> - 객체 pivot 위치는 자산마다 달라 `TARGET_Z_OFFSET` 보정이 필요할 수 있음
+>   (render_verify_images.py 상단 상수).
+> - 카메라 prim 경로 (`/World/Camera_RGB`) — base_scene 에 따라 다르면
+>   `--camera-prim` 으로 override.
 
 ## 2-5. Q&A 병합 (70:30, oversample)
 
