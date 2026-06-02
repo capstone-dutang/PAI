@@ -636,6 +636,11 @@ LoRA는 학습 데이터의 분포를 그대로 모방하므로, 배포 시 `age
 3. **GGUF 변환** — `convert_lora_to_gguf.sh` 로 llama.cpp 적재용 `adapter_<domain>.gguf` 산출.
 
 > 자세한 실행 명령은 [`training/README.md`](training/README.md) "Gemma 도메인 LoRA 파인튜닝" 절 참조.
+> 양 도메인 학습/검증/GGUF 변환은 2026-06-02 기준 완료. smoke test 결과,
+> tableware function_call 마지막 turn cluster gap, verify reasoning 환각
+> 정책 등 알려진 이슈는 [`training/README.md`](training/README.md) "2-7. 학습
+> 결과 및 알려진 이슈" 와 [`deploy/README.md`](deploy/README.md) "에이전트 함수
+> 호출 루프 (agent_node)" 참조.
 
 ---
 
@@ -799,9 +804,6 @@ datasets = [
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
 | `sim/config/multi_target_scenes.yaml` | placement 의 spawn_region·table_top_z·bin_exclusion 실측값 (현재 placeholder — Isaac Sim 에서 측정) | base_scene.usd 실측 |
-| `training/lora_finetuning/generate_verify_qa.py` | `render_scenario_image()` Sim 렌더링 본체 (Sim 자산 준비 후). 시나리오/reasoning/JSONL 구조 + LLM 명령 합성은 완료, `--skip-render` 로 dry run 가능 | Sim 자산 (`sim/assets/objects/<domain>/`), Isaac Sim API 헬퍼 |
-| `training/lora_finetuning/train_gemma_qlora.py` | Unsloth 모델/데이터/학습 루프 | 혼합 Q&A 데이터셋, Unsloth 호환 확인 |
-| `training/lora_finetuning/convert_lora_to_gguf.sh` | llama.cpp 변환 호출 활성화 | llama.cpp 빌드, 변환 스크립트 경로 확인 |
 | `training/act_cotraining/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
 | `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 | 캘리브레이션 완료, 엔드이펙터 측정 |
 | `deploy/calibration/` | `camera_intrinsics.yaml`, `camera_robot_transform.yaml` 배치 | 캘리브레이션 수행 |
@@ -814,6 +816,17 @@ datasets = [
 > - `deploy/config/label_vocab.yaml` (데이터 수집 / function_call / Sim 공유 vocabulary)
 > - `camera_node.py`
 > - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
+>
+> **Gemma 도메인 LoRA 파이프라인 — 본체 구현 + 양 도메인 실행 완료 (2026-06-02)**:
+> - `training/lora_finetuning/generate_function_call_qa.py` (function_call 합성)
+> - `training/lora_finetuning/convert_function_call_to_vision_format.py` (1회 변환)
+> - `training/lora_finetuning/generate_verify_qa.py` (Cat-C JSONL + scenarios sidecar 출력)
+> - `training/lora_finetuning/render_verify_images.py` (Sim 렌더링 본체, Cat-C 2-pass 분리)
+> - `training/lora_finetuning/merge_qa_dataset.py` (function_call / verify 70:30 oversample)
+> - `training/lora_finetuning/train_gemma_qlora.py` (Unsloth FastVisionModel + chat-template aware loss masking)
+> - `training/lora_finetuning/smoke_test_lora.py` (학습 후 형식 sanity check)
+> - `training/lora_finetuning/convert_lora_to_gguf.sh` (BASE_MODEL HF repo id 자동 다운로드 + 변환 본체)
+> - 산출물: `models/gemma/adapters/adapter_{recycling,tableware}.gguf` 양 도메인 GGUF 생성 완료 (gitignore — Jetson 으로 scp 전송 대상)
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.
