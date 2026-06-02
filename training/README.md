@@ -7,7 +7,7 @@
 |---|---|---|
 | 모방데이터 수집 | [`imitation_data/`](imitation_data/) | LeRobotDataset (Real teleop + Sim teleop) |
 | Gemma 도메인 LoRA 파인튜닝 | [`lora_finetuning/`](lora_finetuning/) | LoRA adapter (.safetensors → GGUF) |
-| ACT Co-training | [`act_cotraining/`](act_cotraining/) | ACT policy 체크포인트 (`act.pth`) |
+| ACT Co-training | [`act/`](act/) | ACT policy 체크포인트 (`act.pth`) |
 
 ---
 
@@ -287,7 +287,7 @@ python training/lora_finetuning/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
   --dataset    training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl \
   --image-dir  training/lora_finetuning/data/recycling/verify_images \
-  --output-dir training/outputs/lora_recycling \
+  --output-dir training/lora_finetuning/outputs/lora_recycling \
   --rank 16 --alpha 32 \
   --epochs 3
 ```
@@ -334,7 +334,7 @@ held-out (실제로는 merged.jsonl 에서 random pick) sample 로 추론해 다
 
 ```bash
 python training/lora_finetuning/smoke_test_lora.py \
-  --adapter-dir training/outputs/lora_recycling \
+  --adapter-dir training/lora_finetuning/outputs/lora_recycling \
   --dataset     training/lora_finetuning/data/recycling/recycling_merged.jsonl \
   --image-dir   training/lora_finetuning/data/recycling/verify_images \
   --n-function-call 8 --n-verify 8
@@ -416,11 +416,11 @@ pip install huggingface_hub  # base 모델 자동 다운로드용
 
 ```bash
 bash training/lora_finetuning/convert_lora_to_gguf.sh \
-  training/outputs/lora_recycling \
+  training/lora_finetuning/outputs/lora_recycling \
   models/gemma/adapters/adapter_recycling.gguf
 
 bash training/lora_finetuning/convert_lora_to_gguf.sh \
-  training/outputs/lora_tableware \
+  training/lora_finetuning/outputs/lora_tableware \
   models/gemma/adapters/adapter_tableware.gguf
 ```
 
@@ -494,17 +494,17 @@ training/lora_finetuning/data/
     └── verify_images/
 ```
 
-학습 산출물(LoRA 체크포인트, GGUF) 은 별도 `training/outputs/` 또는 `models/`
+학습 산출물(LoRA 체크포인트, GGUF) 은 별도 `training/lora_finetuning/outputs/` 또는 `models/`
 로 분리하며, 용량이 커서 `.gitignore` 대상입니다.
 
 ---
 
-# 3. ACT Co-training (`act_cotraining/`)
+# 3. ACT Co-training (`act/`)
 
 LeRobot 0.4.4 멀티 데이터셋 가중치 학습으로 Sim + Real 혼합.
 
 ```bash
-bash training/act_cotraining/train_act_cotraining.sh
+bash training/act/train_act_cotraining.sh
 ```
 
 스크립트 내부의 가중치·하이퍼파라미터·환경 변수는 `train_act_cotraining.sh`

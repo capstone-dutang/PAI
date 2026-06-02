@@ -19,10 +19,16 @@ sim/assets/objects/*/*.usd
 # 보관됨.
 training/lora_finetuning/data/*/verify_images/
 
-# Gemma 도메인 LoRA 학습 산출물 (adapter_model.safetensors + checkpoint-* 등).
-# 도메인당 약 600 MB. 코드 + dataset 이 git 에 있어 재학습으로 재현 가능.
+# 학습 산출물 — 워크스트림별 outputs/ (전부 용량 큼, 코드+dataset 으로 재학습 재현 가능).
+#   - lora_finetuning/outputs/ : Gemma LoRA (adapter_model.safetensors + checkpoint-*, 도메인당 ~600MB)
+#   - act/outputs/             : ACT 학습 체크포인트 (LeRobot 출력 디렉터리 전체)
 # 추후 버전 관리 필요 시 GitHub Release / HF Hub private repo 고려.
-training/outputs/
+training/lora_finetuning/outputs/
+training/act/outputs/
+
+# 모방데이터 수집 원본 (LeRobotDataset: parquet + videos + meta + labels.jsonl).
+# record_real_teleop.py 산출물 — 재수집 불가한 비싼 원본이므로 로컬/외부 백업 필수.
+training/imitation_data/datasets/
 
 # Gemma LoRA GGUF 어댑터 (Jetson 배포용). models/gemma/adapters/adapter_*.gguf
 # 는 convert_lora_to_gguf.sh 로 LoRA 산출물에서 재생성. 파일당 ~97 MB 라

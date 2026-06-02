@@ -89,8 +89,8 @@ PAI/
 │   │   └── data/                               # Q&A JSONL (도메인별, git 추적)
 │   │       ├── recycling/
 │   │       └── tableware/
-│   └── act_cotraining/                         # ACT Co-training
-│       └── train_act_cotraining.sh             # Sim + Real 혼합 학습
+│   └── act/                                    # ACT 학습 (현재 real-only, co-training 유보)
+│       └── train_act_cotraining.sh             # Sim + Real 혼합 학습 (co-training 스켈레톤)
 │
 ├── shared/                                     # 3목적 공통 자산 (현재 비어 있음)
 ├── docs/
@@ -769,7 +769,7 @@ depth는 ACT 학습에 사용되지 않으므로 depth 노이즈 DR은 제거됨
 ## 학습 파이프라인 — ACT Co-training
 
 LeRobot 0.4.4의 멀티 데이터셋 가중치 기능을 사용하여 Sim + Real 혼합 학습.
-실행은 `bash training/act_cotraining/train_act_cotraining.sh` 한 줄.
+실행은 `bash training/act/train_act_cotraining.sh` 한 줄.
 
 > 자세한 실행 명령·하이퍼파라미터는 [`training/README.md`](training/README.md) "ACT Co-training" 절 및 스크립트 헤더 주석 참조.
 
@@ -811,7 +811,7 @@ datasets = [
 | `training/imitation_data/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
-| `training/act_cotraining/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
+| `training/act/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
 | `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 | 캘리브레이션 완료, 엔드이펙터 측정 |
 
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):

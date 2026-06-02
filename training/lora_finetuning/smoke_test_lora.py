@@ -22,7 +22,7 @@ sanity check 스크립트. GGUF 변환 / 배포 전에 외부 PC 에서 1회 실
 CLI 예:
   python training/lora_finetuning/smoke_test_lora.py \\
     --base-model   unsloth/gemma-4-E2B-it \\
-    --adapter-dir  training/outputs/lora_recycling \\
+    --adapter-dir  training/lora_finetuning/outputs/lora_recycling \\
     --dataset      training/lora_finetuning/data/recycling/recycling_merged.jsonl \\
     --image-dir    training/lora_finetuning/data/recycling/verify_images \\
     --n-function-call 8 \\

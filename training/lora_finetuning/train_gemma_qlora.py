@@ -28,7 +28,7 @@ CLI 예:
     --base-model    unsloth/gemma-4-E2B-it \\
     --dataset       training/lora_finetuning/data/recycling/qa_merged.jsonl \\
     --image-dir     training/lora_finetuning/data/recycling/verify_images \\
-    --output-dir    training/outputs/lora_recycling \\
+    --output-dir    training/lora_finetuning/outputs/lora_recycling \\
     --rank 16 --alpha 32 --epochs 3
 
 산출물:

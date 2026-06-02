@@ -14,10 +14,10 @@
 #
 #   # 도메인별 변환
 #   bash training/lora_finetuning/convert_lora_to_gguf.sh \
-#     training/outputs/lora_recycling \
+#     training/lora_finetuning/outputs/lora_recycling \
 #     models/gemma/adapters/adapter_recycling.gguf
 #   bash training/lora_finetuning/convert_lora_to_gguf.sh \
-#     training/outputs/lora_tableware \
+#     training/lora_finetuning/outputs/lora_tableware \
 #     models/gemma/adapters/adapter_tableware.gguf
 #
 # 인자:
