@@ -18,3 +18,13 @@ sim/assets/objects/*/*.usd
 # 시드/scenario 동일 시 거의 같게 재현되므로 추적 불필요. EC2 와 로컬 양쪽에
 # 보관됨.
 training/lora_finetuning/data/*/verify_images/
+
+# Gemma 도메인 LoRA 학습 산출물 (adapter_model.safetensors + checkpoint-* 등).
+# 도메인당 약 600 MB. 코드 + dataset 이 git 에 있어 재학습으로 재현 가능.
+# 추후 버전 관리 필요 시 GitHub Release / HF Hub private repo 고려.
+training/outputs/
+
+# Gemma LoRA GGUF 어댑터 (Jetson 배포용). models/gemma/adapters/adapter_*.gguf
+# 는 convert_lora_to_gguf.sh 로 LoRA 산출물에서 재생성. 파일당 ~97 MB 라
+# GitHub 100 MB 제한 바로 아래 — 안전을 위해 ignore.
+models/
