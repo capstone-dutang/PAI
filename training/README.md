@@ -386,11 +386,53 @@ vision encoder 가 base 그대로 유지됨. 결과:
 
 ## 2-8. GGUF 변환
 
+LoRA 어댑터 (safetensors) 를 llama.cpp 의 GGUF 어댑터로 변환해야 Jetson 의
+llama-server 가 `/lora-adapter` HTTP 로 hot-swap 적재할 수 있습니다.
+
+### 1회 환경 준비 (외부 학습 PC)
+
+```bash
+git clone https://github.com/ggerganov/llama.cpp.git ~/llama.cpp
+pip install -r ~/llama.cpp/requirements/requirements-convert_lora_to_gguf.txt
+export LLAMA_CPP_DIR=~/llama.cpp
+```
+
+`LLAMA_CPP_DIR` 환경 변수를 안 주면 스크립트가 기본값 `~/llama.cpp` 를 사용.
+변환 자체는 llama.cpp 의 `convert_lora_to_gguf.py` 가 담당하며 빌드 버전에 따라
+파일명이 underscore / hyphen 으로 다를 수 있어 스크립트가 양쪽을 자동 탐색.
+
+### 도메인별 변환 실행
+
 ```bash
 bash training/lora_finetuning/convert_lora_to_gguf.sh \
   training/outputs/lora_recycling \
   models/gemma/adapters/adapter_recycling.gguf
+
+bash training/lora_finetuning/convert_lora_to_gguf.sh \
+  training/outputs/lora_tableware \
+  models/gemma/adapters/adapter_tableware.gguf
 ```
+
+`BASE_MODEL` 환경 변수로 base 모델 override 가능 (기본 `unsloth/gemma-4-E2B-it`).
+
+### Jetson 배치
+
+생성된 GGUF 파일은 Jetson 의 `~/models/gemma/adapters/` 로 복사:
+
+```
+~/models/gemma/adapters/
+├── adapter_recycling.gguf
+└── adapter_tableware.gguf
+```
+
+파일명은 `adapter_<domain>.gguf` 규약 — [domain_map.yaml](../deploy/config/domain_map.yaml)
+의 domain 키와 일치해야 [llama_server_manager](../deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/llama_server_manager.py)
+가 경로를 build 해 hot-swap 호출.
+
+선행 조건: base 모델 GGUF (`unsloth/gemma-4-E2B-it` quantized) 가 Jetson 의
+llama-server 실행 경로에 이미 배치되어 동작 중이어야 합니다. base 모델 동작이
+오래 전이라면 어댑터 hot-swap 전에 단독 `llama-server --model <base_gguf>`
+실행으로 1회 sanity check 권장.
 
 ## 2-9. 데이터 보관 위치
 

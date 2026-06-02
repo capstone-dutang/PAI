@@ -2,45 +2,104 @@
 # =============================================================================
 # convert_lora_to_gguf.sh
 # -----------------------------------------------------------------------------
-# 목적: HuggingFace LoRA(safetensors)를 llama.cpp의 GGUF 어댑터로
-#       변환한다. 결과 GGUF는 Jetson의 llama-server가 /lora-adapter HTTP로
-#       hot-swap 적재한다.
+# train_gemma_qlora.py 가 저장한 LoRA 디렉터리 (HuggingFace safetensors) 를
+# llama.cpp 의 GGUF 어댑터 (.gguf) 로 변환한다. 결과 GGUF 는 Jetson 의
+# llama-server 가 /lora-adapter HTTP 로 hot-swap 적재한다.
 #
-# 사용 예 (README L657-661):
-#   bash convert_lora_to_gguf.sh \
+# 사용 예 (외부 학습 PC):
+#   # 1회 환경 준비 — llama.cpp clone + 변환에 필요한 파이썬 의존성 설치
+#   git clone https://github.com/ggerganov/llama.cpp.git ~/llama.cpp
+#   pip install -r ~/llama.cpp/requirements/requirements-convert_lora_to_gguf.txt
+#   export LLAMA_CPP_DIR=~/llama.cpp
+#
+#   # 도메인별 변환
+#   bash training/lora_finetuning/convert_lora_to_gguf.sh \
 #     training/outputs/lora_recycling \
 #     models/gemma/adapters/adapter_recycling.gguf
+#   bash training/lora_finetuning/convert_lora_to_gguf.sh \
+#     training/outputs/lora_tableware \
+#     models/gemma/adapters/adapter_tableware.gguf
 #
 # 인자:
-#   $1 : train_gemma_qlora.py가 저장한 LoRA 디렉터리
-#   $2 : 출력 GGUF 파일 경로
+#   $1 : train_gemma_qlora.py 가 저장한 LoRA 디렉터리 (adapter_config.json +
+#        adapter_model.safetensors 포함)
+#   $2 : 출력 GGUF 파일 경로 (없는 디렉터리는 자동 생성)
 #
-# 선행 조건:
-#   - llama.cpp 빌드 완료
-#   - llama.cpp/convert_lora_to_gguf.py 가용
-#   - base 모델의 GGUF가 이미 준비되어 있음 (어댑터-only 변환에 필요할 수 있음)
+# 환경 변수:
+#   LLAMA_CPP_DIR  : llama.cpp clone 경로 (기본 ~/llama.cpp)
 #
-# 미구현 / 결정 필요 항목:
-#   - llama.cpp 빌드 버전에 맞는 변환 스크립트 경로 확인
-#       (convert_lora_to_gguf.py 또는 convert-lora-to-gguf.py 등 명칭이 빌드 버전마다 다름)
-#   - base 모델 GGUF 경로 인자 필요 여부
-#   - 양자화 옵션 (변환 단계가 아닌 base 모델의 양자화에 종속)
+# llama.cpp 변환 스크립트 정책:
+#   llama.cpp 는 LoRA 변환용 스크립트 이름이 빌드 버전마다 다르다 (
+#   convert_lora_to_gguf.py / convert-lora-to-gguf.py). 본 스크립트는 양쪽
+#   파일명을 모두 탐색해 존재하는 것을 사용. 둘 다 없으면 에러.
+#
+#   --base 인자: HuggingFace base 모델 경로/repo id 를 받는다. LoRA adapter
+#   의 dim/quant 정보를 base 와 맞추기 위해 필요. 기본값은 train 시 사용한
+#   `unsloth/gemma-4-E2B-it` 으로 가정 (CLI 인자 BASE_MODEL 로 override).
+#
+# Jetson 배치:
+#   생성된 GGUF 를 Jetson 의 ~/models/gemma/adapters/ 로 복사. 파일명은
+#   adapter_<domain>.gguf 규약 (deploy/config/domain_map.yaml 의 domain 키와
+#   일치) — llama_server_manager 가 이 경로를 build 해서 hot-swap 호출.
 # =============================================================================
 
 set -euo pipefail
 
 LORA_DIR="${1:?usage: $0 <lora_dir> <output_gguf>}"
 OUTPUT_GGUF="${2:?usage: $0 <lora_dir> <output_gguf>}"
+LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
+BASE_MODEL="${BASE_MODEL:-unsloth/gemma-4-E2B-it}"
 
-# TODO: llama.cpp 변환 스크립트 경로 확정 후 활성화
-#
-# LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
-# python "$LLAMA_CPP_DIR/convert_lora_to_gguf.py" \
-#     --base   <base_model_path_or_gguf> \
-#     --outfile "$OUTPUT_GGUF" \
-#     "$LORA_DIR"
+# ── 인자/환경 검증 ────────────────────────────────────────────────
+if [[ ! -d "$LORA_DIR" ]]; then
+  echo "[convert_lora_to_gguf] ERROR: LoRA 디렉터리 없음: $LORA_DIR" >&2
+  exit 1
+fi
+for required in adapter_config.json adapter_model.safetensors; do
+  if [[ ! -f "$LORA_DIR/$required" ]]; then
+    echo "[convert_lora_to_gguf] ERROR: $LORA_DIR/$required 없음 " \
+         "(train_gemma_qlora.py 출력이 맞는지 확인)" >&2
+    exit 1
+  fi
+done
 
-echo "[convert_lora_to_gguf] 미구현 — llama.cpp 변환 스크립트 경로/인자 확정 후 활성화하세요."
+if [[ ! -d "$LLAMA_CPP_DIR" ]]; then
+  echo "[convert_lora_to_gguf] ERROR: llama.cpp 디렉터리 없음: $LLAMA_CPP_DIR" >&2
+  echo "  git clone https://github.com/ggerganov/llama.cpp.git $LLAMA_CPP_DIR" >&2
+  echo "  또는 LLAMA_CPP_DIR=<path> 환경 변수로 지정" >&2
+  exit 1
+fi
+
+# 변환 스크립트 탐색 (underscore / hyphen 양쪽)
+CONVERT_SCRIPT=""
+for cand in convert_lora_to_gguf.py convert-lora-to-gguf.py; do
+  if [[ -f "$LLAMA_CPP_DIR/$cand" ]]; then
+    CONVERT_SCRIPT="$LLAMA_CPP_DIR/$cand"
+    break
+  fi
+done
+if [[ -z "$CONVERT_SCRIPT" ]]; then
+  echo "[convert_lora_to_gguf] ERROR: llama.cpp 에 변환 스크립트 없음" >&2
+  echo "  탐색 위치: $LLAMA_CPP_DIR/{convert_lora_to_gguf.py,convert-lora-to-gguf.py}" >&2
+  echo "  llama.cpp 최신 버전으로 pull / 빌드 후 재시도." >&2
+  exit 1
+fi
+
+# 출력 디렉터리 자동 생성
+OUTPUT_DIR=$(dirname "$OUTPUT_GGUF")
+mkdir -p "$OUTPUT_DIR"
+
+echo "[convert_lora_to_gguf] start"
 echo "  LORA_DIR     = $LORA_DIR"
 echo "  OUTPUT_GGUF  = $OUTPUT_GGUF"
-exit 1
+echo "  LLAMA_CPP    = $LLAMA_CPP_DIR"
+echo "  BASE_MODEL   = $BASE_MODEL"
+echo "  CONVERT      = $CONVERT_SCRIPT"
+
+python "$CONVERT_SCRIPT" \
+  --base    "$BASE_MODEL" \
+  --outfile "$OUTPUT_GGUF" \
+  "$LORA_DIR"
+
+echo "[convert_lora_to_gguf] done → $OUTPUT_GGUF"
+ls -lh "$OUTPUT_GGUF"
