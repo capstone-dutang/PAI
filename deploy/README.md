@@ -82,3 +82,76 @@ ros2 run robot_arm_pkg robot_controller_node \
 # 사용자 명령 발행
 ros2 topic pub /user_command std_msgs/String "data: '쓰레기 좀 정리해줘'"
 ```
+
+## 에이전트 함수 호출 루프 (agent_node)
+
+### 시퀀스 (freeze)
+
+```
+look_scene → execute_subtask → /go_home → verify_result
+```
+
+- `_run_function_loop` 가 Gemma 함수 호출 응답을 파싱해 `_call_*()` 핸들러로
+  디스패치.
+- `execute_subtask` 결과 수신 후 `verify_result` 호출 **직전** 에 `/go_home`
+  서비스 1회 호출 — 카메라 시야 안의 팔 자세를 home_pose 로 고정해 verify
+  학습 분포 (모두 home_pose 로 렌더) 와 일치 보장.
+- 캐노니컬 위치: [agent_node._run_function_loop](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py),
+  [prompts.SYSTEM_PROMPT](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/prompts.py).
+
+### verify_result fallback (2026-06-02 추가)
+
+LoRA 학습된 모델의 마지막 turn 응답이 `{"function":"verify_result", ...}` JSON
+이 **아닌** 경우 (빈 응답 / 자연어 / 다른 함수) **agent_node 가 verify_result
+를 강제 호출** 한다. `args.original_command` 는 `self._user_command` 캐시에서
+가져온다 (학습 분포의 stateless 인터페이스와 호환).
+
+배경: tableware function_call 학습이 vocab cluster gap (plate/fork/spoon 3종)
+때문에 smoke test 32개 중 7개만 모델이 verify_result 호출을 정상 생성
+(recycling 은 8/8 정상). 양 도메인 공통으로 fallback 을 적용해 함수 호출 루프의
+**결정론적 종료** 를 보장한다. 자세한 학습/검증 결과는
+[training/README.md](../training/README.md) "2-7. 학습 결과 및 알려진 이슈"
+참조.
+
+`_run_function_loop` 구현 시 의사코드:
+
+```python
+exec_status = self._call_execute_subtask(target)
+self._call_go_home()
+
+gemma_resp   = http_chat_completion(messages_with_tool_result(exec_status))
+parsed       = try_parse_json(gemma_resp)  # 실패 시 None
+is_verify    = (
+    isinstance(parsed, dict)
+    and parsed.get('function') == 'verify_result'
+    and isinstance(parsed.get('args'), dict)
+)
+
+if is_verify:
+    verify_status = self._call_verify_result(**parsed['args'])
+else:
+    self.get_logger().warn(
+        f'마지막 turn 응답이 verify_result 함수 호출 아님 — 코드 강제 호출. '
+        f'gemma_resp={gemma_resp!r}'
+    )
+    verify_status = self._call_verify_result(
+        original_command=self._user_command)
+```
+
+### verify reasoning 환각 / status enum 정확도
+
+`train_gemma_qlora.py` 의 `finetune_vision_layers=False` 로 vision encoder 가
+base 그대로라서 verify 의 JSON 형식 / status enum 어휘는 정확하지만 실제
+이미지 → status 정답률은 낮음 (smoke test 5-6/8 sample 에서 SUCCESS↔FAIL 혼동,
+blurred → UNCLEAR 미인식). reasoning 내용은 환각 다수.
+
+**현재 정책**: agent_node 는 `verify_result` 의 `status` enum 만 분기에 사용,
+`reasoning` 은 로그용. 잘못된 status 는 다음으로 보완:
+
+- `max_verify_iterations` 재시도 (CLI 인자, 위 실행 예제 참조)
+- `_depth_grasp_check` depth 보조 검증 (`agent_node._call_verify_result`
+  docstring 의 "depth grasp 보조 검증" 단계)
+
+정확도 개선이 필요해지면 `finetune_vision_layers=True` 재학습 또는 verify QA
+augmentation 검토. 자세한 내용은
+[training/README.md](../training/README.md) "2-7. 학습 결과 및 알려진 이슈".

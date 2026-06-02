@@ -321,7 +321,70 @@ python training/lora_finetuning/train_gemma_qlora.py \
 function_call 만 들어 있어 image 디렉터리는 비어 있어도 됨 (collator 가 image 없는
 sample 만 처리). 정상 loss 가 감소하면 본격 학습으로 진행.
 
-## 2-7. GGUF 변환
+### 학습 후 형식 검증 (smoke test)
+
+`smoke_test_lora.py` 가 학습된 LoRA adapter 의 응답을 base + LoRA 로드 후
+held-out (실제로는 merged.jsonl 에서 random pick) sample 로 추론해 다음을
+검증합니다:
+
+- function_call: 단일 JSON object, `{"function": ..., "args": {...}}` 키 존재,
+  function ∈ {look_scene, execute_subtask, verify_result}
+- verify: 단일 JSON object, `{"status": ..., "reasoning": ...}` 키 존재,
+  status ∈ {SUCCESS, FAIL, PARTIAL, UNCLEAR}
+
+```bash
+python training/lora_finetuning/smoke_test_lora.py \
+  --adapter-dir training/outputs/lora_recycling \
+  --dataset     training/lora_finetuning/data/recycling/recycling_merged.jsonl \
+  --image-dir   training/lora_finetuning/data/recycling/verify_images \
+  --n-function-call 8 --n-verify 8
+```
+
+## 2-7. 학습 결과 및 알려진 이슈 (2026-06-02)
+
+`unsloth/gemma-4-E2B-it` 기반 양 도메인 LoRA 학습 완료 (rank/alpha=16/32, 3 epoch,
+loss masking 활성). smoke test 결과:
+
+| 도메인 | function_call | verify (형식) | 종합 |
+|---|---|---|---|
+| recycling | 8/8 | 8/8 | 16/16 |
+| tableware | 7/32 (22%) | 8/8 | — |
+
+### 이슈 1 — tableware function_call 마지막 turn cluster gap
+
+tableware 의 vocab 이 plate/fork/spoon 3종으로 좁아 function_call 학습 분포가
+sub-domain 으로 분할됨. 일부 명령 cluster (예: "정리함으로 옮겨줘") 는 마지막
+verify_result turn 응답을 모델이 빈 응답으로 끝냄. recycling 은 영향 없음
+(can/plastic/paper vocab 이 더 robust). train_loss 종료값 자체는 두 도메인
+거의 같음 (recycling 0.0478 / tableware 0.0470).
+
+**해결 정책 (2026-06-02 결정)**: LoRA 추가 학습 / data augmentation 대신
+**배포 측 fallback** 으로 대응. agent_node 가 마지막 turn 응답이
+`{"function":"verify_result", ...}` 아니면 코드가 verify_result 를 강제 호출.
+자세한 내용은 [deploy/README.md](../deploy/README.md) "에이전트 함수 호출 루프 —
+verify_result fallback" 참조.
+
+### 이슈 2 — verify reasoning 환각 + status enum 정확도
+
+`train_gemma_qlora.py` 의 `finetune_vision_layers=False` (Unsloth 권장) 로
+vision encoder 가 base 그대로 유지됨. 결과:
+
+- **JSON 형식 / status enum 어휘**: 정확 (smoke 8/8)
+- **status 정답률**: 낮음 — 5-6/8 sample 에서 SUCCESS↔FAIL 혼동, blurred 이미지를
+  UNCLEAR 로 인식 못함
+- **reasoning 내용**: 실제 객체 색/위치와 무관한 환각 다수 ("the plastic bottle
+  in the plastic bin is not in the plastic bin" 같은 자기모순도 발생)
+
+**현재 정책**: agent_node 가 reasoning 은 로그용으로만 사용하고 status enum 으로
+분기. enum 오답은 배포 실 동작에서 `max_verify_iterations` 재시도 + depth-grasp
+보조 검증 (`_depth_grasp_check`) 으로 보완. 정확도 개선이 필요해지면 다음
+옵션 검토:
+
+- `finetune_vision_layers=True` — VRAM/시간 비용 큼
+- verify QA augmentation (distractor 다양화, status 분포 보정)
+- depth-grasp 보조 검증 가중치 상향
+
+## 2-8. GGUF 변환
 
 ```bash
 bash training/lora_finetuning/convert_lora_to_gguf.sh \
@@ -329,7 +392,7 @@ bash training/lora_finetuning/convert_lora_to_gguf.sh \
   models/gemma/adapters/adapter_recycling.gguf
 ```
 
-## 2-8. 데이터 보관 위치
+## 2-9. 데이터 보관 위치
 
 function_call / verify/merged JSONL 은 **도메인별 하위 폴더**로 관리합니다 (git 추적):
 
