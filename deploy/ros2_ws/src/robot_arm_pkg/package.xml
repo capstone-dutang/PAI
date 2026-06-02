@@ -3,7 +3,7 @@
   <name>robot_arm_pkg</name>
   <version>0.0.1</version>
   <description>ROS2 robot arm package — Gemma 4 E2B VLA + ACT Policy</description>
-  <maintainer email="todo@todo.com">todo</maintainer>
+  <maintainer email="seongbin55228295@gmail.com">seongbin</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>

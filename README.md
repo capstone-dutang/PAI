@@ -667,28 +667,36 @@ ACT가 언어 임베딩을 무시하고 시각 정보에만 의존하는 **short
 `sim/config/multi_target_scenes.yaml`로 장면·배치 규칙을 정의한다:
 
 ```yaml
-# sim/config/multi_target_scenes.yaml (발췌)
-object_library: sim/assets/objects/recycling   # 래퍼 USD 디렉터리
-placement:                                     # SceneManager 배치 영역·규칙
-  spawn_region: {x_range: [0.15, 0.45], y_range: [-0.25, 0.25]}   # 테이블 footprint
-  reach:                                       # 선택 — 가동범위(annular sector)
-    center: [0.0, 0.0]
-    r_range: [0.10, 0.42]
-    theta_range_deg: [-90.0, 90.0]
-  table_top_z: 0.74
-  min_separation: 0.08
-scenes:                          # can/plastic/paper 대칭 — 총 7개 장면
-  - name: recycling_3cat       # 캔+플라스틱+종이 (multi-target)
-    objects:
-      - {category: can,     count: 1}
-      - {category: plastic, count: 1}
-      - {category: paper,   count: 1}
-  - name: recycling_2can       # 같은 범주 변별 (multi-target)
-    objects: [{category: can, count: 2}]
-  - name: recycling_single_can # 단일 객체 (single-target)
-    objects: [{category: can, count: 1}]
-  # 2plastic / 2paper / single_plastic / single_paper (대칭 장면) 생략
-multi_target_ratio: 0.6        # multi-target 장면 목표 비율
+# sim/config/multi_target_scenes.yaml (발췌) — domains.<name> 네임스페이스 구조.
+# record_sim_teleop 가 --domain 값으로 해당 블록을 선택한다.
+domains:
+  recycling:
+    object_library: sim/assets/objects/recycling   # 래퍼 USD 디렉터리
+    placement:                                      # SceneManager 배치 영역·규칙 (실측값)
+      spawn_region: {x_range: [-1.5921, 1.5927], y_range: [-0.8126, 0.8132]}
+      reach:                                        # 선택 — 가동범위(annular sector)
+        center: [-0.5, 0.0]
+        r_range: [0.115, 0.35]
+        theta_range_deg: [-90.0, 90.0]
+      table_top_z: 0.0104
+      min_separation: 0.08
+      exclusion_zones:                              # 초기 배치 금지 + verify destination
+        - {x_range: [-0.4250, -0.2700], y_range: [-0.4050, -0.2050], destination: plastic}
+        - {x_range: [-0.3100, -0.1550], y_range: [-0.4050, -0.2050], destination: can}
+        - {x_range: [-0.1950, -0.0400], y_range: [-0.4050, -0.2050], destination: paper}
+    scenes:                          # can/plastic/paper 대칭 — 총 7개 장면
+      - name: recycling_3cat       # 캔+플라스틱+종이 (multi-target)
+        objects:
+          - {category: can,     count: 1}
+          - {category: plastic, count: 1}
+          - {category: paper,   count: 1}
+      - name: recycling_2can       # 같은 범주 변별 (multi-target)
+        objects: [{category: can, count: 2}]
+      - name: recycling_single_can # 단일 객체 (single-target)
+        objects: [{category: can, count: 1}]
+      # 2plastic / 2paper / single_plastic / single_paper (대칭 장면) 생략
+    multi_target_ratio: 0.6        # multi-target 장면 목표 비율
+  # tableware: { ... }             # plate/fork/spoon 대칭 블록 (동일 구조) 생략
 ```
 
 `TargetSelector`([D5])가 매 에피소드 이 정의에서 장면·배치 객체·grasp 타겟을
@@ -803,10 +811,8 @@ datasets = [
 | `training/imitation_data/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
-| `sim/config/multi_target_scenes.yaml` | placement 의 spawn_region·table_top_z·bin_exclusion 실측값 (현재 placeholder — Isaac Sim 에서 측정) | base_scene.usd 실측 |
 | `training/act_cotraining/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
 | `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 | 캘리브레이션 완료, 엔드이펙터 측정 |
-| `deploy/calibration/` | `camera_intrinsics.yaml`, `camera_robot_transform.yaml` 배치 | 캘리브레이션 수행 |
 
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
@@ -816,6 +822,8 @@ datasets = [
 > - `deploy/config/label_vocab.yaml` (데이터 수집 / function_call / Sim 공유 vocabulary)
 > - `camera_node.py`
 > - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
+> - `sim/config/multi_target_scenes.yaml` (placement 실측 완료 — spawn_region·table_top_z·exclusion_zones 를 base_scene.usd 에서 측정해 기입, domains.recycling/tableware 네임스페이스 구조)
+> - `deploy/calibration/camera_intrinsics.yaml` (RealSense D435 공장 캘리브레이션값), `camera_robot_transform.yaml` (eye-on-base hand-eye 결과), `home_pose.yaml` (follower rest 자세 캡처)
 >
 > **Gemma 도메인 LoRA 파이프라인 — 본체 구현 + 양 도메인 실행 완료 (2026-06-02)**:
 > - `training/lora_finetuning/generate_function_call_qa.py` (function_call 합성)

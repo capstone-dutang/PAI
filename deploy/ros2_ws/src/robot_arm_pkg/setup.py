@@ -17,8 +17,8 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='todo',
-    maintainer_email='todo@todo.com',
+    maintainer='seongbin',
+    maintainer_email='seongbin55228295@gmail.com',
     description='ROS2 robot arm package — Gemma 4 E2B VLA + ACT Policy',
     license='Apache-2.0',
     entry_points={

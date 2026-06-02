@@ -347,7 +347,7 @@ def build_system_prompt() -> str:
 
 
 # ──────────────────────────────────────────────
-# Q&A 합성 (외부 LLM 클라이언트 미구현)
+# Q&A 합성 (외부 LLM 클라이언트 = llm_client.LLMClient)
 # ──────────────────────────────────────────────
 
 def synthesize_user_command(

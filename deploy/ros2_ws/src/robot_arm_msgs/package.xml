@@ -6,7 +6,7 @@
     PAI 프로젝트 커스텀 메시지/서비스 패키지.
     agent_node ↔ act_node / embedding_node / llama_server_manager 간 통신용.
   </description>
-  <maintainer email="todo@todo.com">todo</maintainer>
+  <maintainer email="seongbin55228295@gmail.com">seongbin</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
