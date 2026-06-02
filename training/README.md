@@ -389,17 +389,28 @@ vision encoder 가 base 그대로 유지됨. 결과:
 LoRA 어댑터 (safetensors) 를 llama.cpp 의 GGUF 어댑터로 변환해야 Jetson 의
 llama-server 가 `/lora-adapter` HTTP 로 hot-swap 적재할 수 있습니다.
 
-### 1회 환경 준비 (외부 학습 PC)
+### 1회 환경 준비 (외부 학습 PC) — **변환 전용 venv 권장**
+
+> 학습 env (Unsloth 기반 torch/transformers) 가 깨지지 않도록 **반드시 별도
+> venv** 에서 진행하세요. llama.cpp 의 `requirements-convert_lora_to_gguf.txt`
+> 는 `torch==2.11.0+cpu`, `transformers==5.5.1`, `numpy==1.26.4` 등을 강제
+> 업그레이드합니다. 이를 학습 venv 에 깔면 `torchvision::nms` 미스매치로
+> `Gemma4Config` 가 import 안 되어 학습 / smoke test 가 모두 깨집니다.
 
 ```bash
+# llama.cpp clone (변환 본체)
 git clone https://github.com/ggerganov/llama.cpp.git ~/llama.cpp
-pip install -r ~/llama.cpp/requirements/requirements-convert_lora_to_gguf.txt
 export LLAMA_CPP_DIR=~/llama.cpp
+
+# 변환 전용 venv
+python -m venv ~/venvs/gguf_convert
+source ~/venvs/gguf_convert/bin/activate
+pip install -r ~/llama.cpp/requirements/requirements-convert_lora_to_gguf.txt
+pip install huggingface_hub  # base 모델 자동 다운로드용
 ```
 
-`LLAMA_CPP_DIR` 환경 변수를 안 주면 스크립트가 기본값 `~/llama.cpp` 를 사용.
-변환 자체는 llama.cpp 의 `convert_lora_to_gguf.py` 가 담당하며 빌드 버전에 따라
-파일명이 underscore / hyphen 으로 다를 수 있어 스크립트가 양쪽을 자동 탐색.
+이후 변환 작업은 항상 `source ~/venvs/gguf_convert/bin/activate` 해서 venv 안에서
+실행합니다. 학습으로 돌아갈 때는 `deactivate` 후 학습 venv 활성화.
 
 ### 도메인별 변환 실행
 
@@ -414,6 +425,33 @@ bash training/lora_finetuning/convert_lora_to_gguf.sh \
 ```
 
 `BASE_MODEL` 환경 변수로 base 모델 override 가능 (기본 `unsloth/gemma-4-E2B-it`).
+HF repo id 를 그대로 주면 스크립트가 `huggingface_hub.snapshot_download` 로
+`$HF_BASE_CACHE/<basename>` (기본 `~/models/hf/gemma-4-E2B-it`) 에 자동 다운로드
+후 그 로컬 path 를 llama.cpp 변환기에 전달합니다. 이미 로컬 디렉터리 path 를
+주면 그대로 사용.
+
+### 학습 env 가 이미 깨진 경우 (복구)
+
+위 venv 가이드 전에 글로벌로 `pip install -r requirements-convert_lora_to_gguf.txt`
+를 실행했다면 학습 env 의 torch/transformers 가 변환용 버전으로 덮여있을 수
+있습니다. 학습 / smoke test 가 다음과 같이 실패하면 그 증상:
+
+```
+RuntimeError: operator torchvision::nms does not exist
+ModuleNotFoundError: Could not import module 'Gemma4Config'
+```
+
+복구 (학습 시 동작했던 버전으로 되돌림):
+
+```bash
+# 학습 venv 안에서 (또는 unsloth 도커 컨테이너에서)
+pip install --force-reinstall \
+  torch==2.10.0 torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cu128
+pip install --force-reinstall transformers==5.5.0
+```
+
+그 후 변환 작업은 반드시 별도 venv 에서 진행.
 
 ### Jetson 배치
 

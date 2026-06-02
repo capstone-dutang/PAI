@@ -27,6 +27,20 @@
 #
 # 환경 변수:
 #   LLAMA_CPP_DIR  : llama.cpp clone 경로 (기본 ~/llama.cpp)
+#   BASE_MODEL     : base 모델 위치 — 로컬 디렉터리 path 또는 HF repo id
+#                    (기본 'unsloth/gemma-4-E2B-it'). HF repo id 입력 시
+#                    자동으로 snapshot_download → 로컬 path 로 변환.
+#                    llama.cpp 변환기 본체는 로컬 디렉터리만 허용함.
+#   HF_BASE_CACHE  : 자동 다운로드 받은 base 모델을 저장할 부모 디렉터리
+#                    (기본 ~/models/hf). 실제 path = $HF_BASE_CACHE/<repo_basename>
+#
+# 학습 env 보호 (중요):
+#   본 스크립트는 학습용 env (torch/transformers) 와 충돌할 수 있는 의존성을
+#   설치하지 않는다. 그러나 README 의 '1회 환경 준비' 단계 (
+#   pip install -r llama.cpp/requirements/...) 를 학습 venv 안에서 그대로
+#   실행하면 torch/torchvision/transformers 가 강제 업그레이드되어 학습 env
+#   가 깨질 수 있다. 변환 전용 venv 사용을 권장 — 자세한 절차는
+#   training/README.md "2-8. GGUF 변환" 참조.
 #
 # llama.cpp 변환 스크립트 정책:
 #   llama.cpp 는 LoRA 변환용 스크립트 이름이 빌드 버전마다 다르다 (
@@ -49,6 +63,7 @@ LORA_DIR="${1:?usage: $0 <lora_dir> <output_gguf>}"
 OUTPUT_GGUF="${2:?usage: $0 <lora_dir> <output_gguf>}"
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
 BASE_MODEL="${BASE_MODEL:-unsloth/gemma-4-E2B-it}"
+HF_BASE_CACHE="${HF_BASE_CACHE:-$HOME/models/hf}"
 
 # ── 인자/환경 검증 ────────────────────────────────────────────────
 if [[ ! -d "$LORA_DIR" ]]; then
@@ -83,6 +98,27 @@ if [[ -z "$CONVERT_SCRIPT" ]]; then
   echo "  탐색 위치: $LLAMA_CPP_DIR/{convert_lora_to_gguf.py,convert-lora-to-gguf.py}" >&2
   echo "  llama.cpp 최신 버전으로 pull / 빌드 후 재시도." >&2
   exit 1
+fi
+
+# BASE_MODEL 처리 — llama.cpp 변환기는 로컬 디렉터리 path 만 허용.
+# HF repo id (= 디렉터리 아님) 입력 시 자동으로 snapshot_download → 로컬 path 변환.
+if [[ ! -d "$BASE_MODEL" ]]; then
+  LOCAL_BASE="$HF_BASE_CACHE/$(basename "$BASE_MODEL")"
+  if [[ ! -f "$LOCAL_BASE/config.json" ]]; then
+    echo "[convert_lora_to_gguf] base 모델 로컬에 없음 — HF 에서 다운로드"
+    echo "  repo_id     = $BASE_MODEL"
+    echo "  local_dir   = $LOCAL_BASE"
+    mkdir -p "$LOCAL_BASE"
+    python -c "
+from huggingface_hub import snapshot_download
+snapshot_download(repo_id='$BASE_MODEL', local_dir='$LOCAL_BASE',
+                  allow_patterns=['config.json','tokenizer*','*.json',
+                                  'special_tokens_map.json','generation_config.json'])
+"
+  else
+    echo "[convert_lora_to_gguf] base 모델 로컬 캐시 사용: $LOCAL_BASE"
+  fi
+  BASE_MODEL="$LOCAL_BASE"
 fi
 
 # 출력 디렉터리 자동 생성
