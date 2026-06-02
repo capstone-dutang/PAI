@@ -31,13 +31,12 @@
 template: "the {attribute} {object} {spatial}"
 
 # 전역 spatial_qualifiers — 위치/방향 (도메인 무관).
-# Sim 자동 라벨링(REGION_SPATIALS)이 이 5개를 그대로 사용한다.
+# Sim 자동 라벨링(REGION_SPATIALS)이 이 4개를 그대로 사용한다.
 spatial_qualifiers:
   - "on the left side of the table"
   - "on the right side of the table"
   - "in the center of the table"
   - "in front of the robot"
-  - "at the back of the table"
 
 domains:
 
@@ -58,7 +57,7 @@ domains:
   tableware:
     objects:
       plate:
-        attributes: [white, blue, ceramic, plastic]
+        attributes: [white, ceramic, plastic]
       fork:
         attributes: [silver, plastic, wooden]
       spoon:
