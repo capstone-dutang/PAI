@@ -282,7 +282,11 @@ def print_report(plans: List[EpisodePlan], object_remap: Dict[str, str]) -> None
 def load_embed_model(model_name: str):
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer(model_name)
-    dim = int(model.get_sentence_embedding_dimension())
+    # sentence-transformers 신버전은 get_embedding_dimension, 구버전은
+    # get_sentence_embedding_dimension. 둘 다 지원 (deprecation warning 회피).
+    _get_dim = getattr(model, 'get_embedding_dimension', None) \
+        or model.get_sentence_embedding_dimension
+    dim = int(_get_dim())
     if dim != EXPECTED_EMBED_DIM:
         raise RuntimeError(
             f'임베딩 dim={dim} != {EXPECTED_EMBED_DIM}. 모델이 '
