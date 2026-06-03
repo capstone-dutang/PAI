@@ -518,8 +518,63 @@ bash training/act/scripts/train_act.sh tableware
 ```
 
 - 산출물: `${OUTPUT_DIR}/checkpoints/last/pretrained_model/` → Jetson `~/models/act/<domain>/pretrained_model` 로 복사
-- recycling 데이터셋은 재라벨([`relabel_recycling_dataset.py`](imitation_data/scripts/relabel_recycling_dataset.py)) + 신규 수집분을 [`merge_lerobot_datasets.py`](imitation_data/scripts/merge_lerobot_datasets.py) 로 단일 데이터셋 합본한 뒤 그 root 를 `DATASET_ROOT` 로 지정
+- recycling 데이터셋은 재라벨([`relabel_recycling_dataset.py`](imitation_data/scripts/relabel_recycling_dataset.py)) + 신규 수집분을 **단일 데이터셋으로 병합**한 뒤 그 root 를 `DATASET_ROOT` 로 지정 (병합 방법은 아래 **3-1** 참조 — 클라우드 학습 환경에서는 `aggregate_datasets` 권장)
 - 데이터셋의 `observation.language_embedding`(MiniLM, D=384, L2 정규화)이 배포 `embedding_node` 와 동일 모델이어야 함
 
 스크립트 내부의 하이퍼파라미터·선행 조건·환경 변수는 [`train_act.sh`](act/scripts/train_act.sh)
 헤더 주석 참조.
+
+## 3-1. recycling 데이터셋 병합 — 클라우드에서는 `aggregate_datasets` 권장
+
+recycling 은 재라벨본(~270) + 신규 수집본을 **단일 데이터셋으로 합쳐** `DATASET_ROOT`
+로 지정해야 한다(`lerobot-train` 은 단일 `--dataset.*` 가정). tableware 는 단일
+데이터셋이라 병합이 필요 없다.
+
+> ⚠️ **클라우드(RunPod 등) 학습 환경에서는 재인코딩 방식 merge 를 피한다**:
+> [`merge_lerobot_datasets.py`](imitation_data/scripts/merge_lerobot_datasets.py) 는
+> 프레임을 **디코드 → 재인코딩**한다. vCPU 가 적거나 호스트 CPU 경합이 심한 클라우드
+> GPU pod 에서는 **원본 av1 디코드가 병목**이 되어 571 에피소드에 **~수십 시간**이
+> 걸린다. 인코딩 코덱을 h264 로 바꿔도(또는 `h264_nvenc`) 병목은 인코딩이 아니라
+> **디코드**라 효과가 없고, NVENC 는 RTX 5090(Blackwell) 에서 미지원이다.
+> (관련 증상: `torchcodec` 로드 실패 `undefined symbol ... libtorchcodec`, NVENC
+> `OpenEncodeSessionEx failed: unsupported device`.)
+
+대신 **lerobot 내장 `aggregate_datasets`** 를 쓴다. 비디오 mp4 를 재인코딩 없이
+**stream-copy(concatenate)** 하고 parquet/메타만 합쳐 **수십 초** 만에 끝난다.
+임베딩은 그대로 보존되고 task 테이블도 병합·remap 된다.
+
+```bash
+# 1) 재인코딩 없는 파일복사 병합 (수십 초)
+python - <<'PY'
+from pathlib import Path
+from lerobot.datasets.aggregate import aggregate_datasets
+base = Path("training/imitation_data/datasets")
+aggregate_datasets(
+    repo_ids=["local/recycling_real_relabeled", "local/recycling_real"],
+    roots=[base/"recycling_real_relabeled", base/"recycling_real"],
+    aggr_repo_id="local/recycling_real_merge",
+    aggr_root=base/"recycling_real_merge",
+)
+print("done")
+PY
+
+# 2) labels.jsonl 재생성 (aggregate 는 사이드카 미생성 — 학습엔 불필요하나 검증/정합용)
+python training/imitation_data/scripts/regenerate_labels.py \
+  --dataset-root training/imitation_data/datasets/recycling_real_merge --domain recycling
+
+# 3) 병합본 검증 (feature/임베딩↔task cos≈1.0 / NaN / 커버리지)
+python training/imitation_data/scripts/verify_real_dataset.py \
+  --dataset-root training/imitation_data/datasets/recycling_real_merge --domain recycling
+
+# 4) 학습
+DATASET_ROOT=training/imitation_data/datasets/recycling_real_merge \
+  bash training/act/scripts/train_act.sh recycling
+```
+
+> **`aggregate_datasets` 가 없는 lerobot 버전**이면 차선책으로
+> `merge_lerobot_datasets.py --video-codec h264`(CPU x264) 를 쓰되, 본 실행 전
+> `--limit 5` 로 속도를 먼저 확인한다.
+>
+> **RTX 5090(Blackwell) 환경 메모**: torch 는 cu128 빌드(예: 2.8.0+cu128), torchcodec
+> 은 torch 와 ABI 가 맞는 버전(예: torch 2.8 ↔ torchcodec 0.6.0) 이어야 비디오
+> 디코드(학습/병합 공통)가 동작한다. HF 모델 다운로드가 멈추면 `HF_HUB_DISABLE_XET=1`.
