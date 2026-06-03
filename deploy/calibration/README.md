@@ -74,6 +74,26 @@ cp ~/calibration/camera_robot_transform.yaml <repo>/deploy/calibration/
 SO-101 엔드이펙터 위치 근처에서 grasp 성공 시 depth 값이 변화하는 영역을 측정하여
 설정합니다. 카메라 frame 기준 좌표를 사용합니다.
 
+`scripts/measure_grasp_roi.py` 로 실측을 자동화할 수 있습니다. `/camera/depth` 를
+구독해 마우스로 지정한 ROI 를 `camera_intrinsics.yaml` 의 K 로 카메라 좌표에
+역투영하고, grasp 성공/빈손 두 상태의 depth 변화로 `depth_change_threshold` 까지
+산출합니다.
+
+```bash
+# GUI 모드 (Jetson — 캘리브레이션과 동일하게 DISPLAY 필요)
+export DISPLAY=:1
+python3 scripts/measure_grasp_roi.py \
+    --intrinsics ~/calibration/camera_intrinsics.yaml \
+    --out ~/calibration/grasp_roi.yaml
+#   드래그=ROI 지정 → g(물체 든 상태) → e(빈손) → s(저장)
+
+# headless 모드: 픽셀 ROI 직접 지정, 단발 측정
+python3 scripts/measure_grasp_roi.py \
+    --intrinsics ~/calibration/camera_intrinsics.yaml --roi 280 200 360 280
+```
+
+산출 결과는 아래 형식입니다.
+
 ```yaml
 # ~/calibration/grasp_roi.yaml (예시)
 roi:
