@@ -805,7 +805,6 @@ datasets = [
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
 | `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Gemma 도메인 LoRA 학습, llama-server 구동, embedding_node |
-| `llama_server_manager.py` | `_hot_swap()` (llama-server `/lora-adapter` HTTP) | adapter GGUF 준비, llama.cpp API 형식 확인 |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `training/imitation_data/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `training/imitation_data/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
@@ -835,6 +834,7 @@ datasets = [
 > - `training/lora_finetuning/smoke_test_lora.py` (학습 후 형식 sanity check)
 > - `training/lora_finetuning/convert_lora_to_gguf.sh` (BASE_MODEL HF repo id 자동 다운로드 + 변환 본체)
 > - 산출물: `models/gemma/adapters/adapter_{recycling,tableware}.gguf` 양 도메인 GGUF 생성 완료 (gitignore — Jetson 으로 scp 전송 대상)
+> - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/llama_server_manager.py` `_hot_swap()` 본체 구현 (id 기반 `/lora-adapters` HTTP) + Jetson Orin Nano 8GB 실기 hot-swap 검증 완료 (init deactivate / recycling↔tableware swap / 같은 도메인 재요청 idempotency 통과). 자세한 검증 명령과 결과는 [deploy/README.md](deploy/README.md) "LoRA hot-swap 실기 검증 (2026-06-02)" 참조.
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.

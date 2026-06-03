@@ -10,13 +10,23 @@ llama-server의 /lora-adapters HTTP 엔드포인트로 hot-swap 요청을 보내
 
 llama-server는 systemd 등으로 상시 구동되어 있다고 가정한다 (README 참조).
 
-API 형식 (llama.cpp build b8931 기준, 2026-06-02 확정):
+API 형식 (llama.cpp build b8931-9725a313b 기준, 2026-06-02 Jetson 실기 확정):
   GET /lora-adapters
     → [{"id": int, "path": str, "scale": float,
         "task_name": str, "prompt_prefix": str}, ...]
   POST /lora-adapters
     body: [{"id": int, "scale": float}, ...]
     → 200 OK + {"success": true}
+
+  새 어댑터 등록은 llama-server 의 `--lora <path>[,<path>...]` 옵션 갱신 후
+  재시작으로만 가능 (path 기반 동적 load 미지원). 본 노드는 재시작된 서버를
+  _refresh_adapter_index 가 자동 재조회.
+
+실기 검증 (2026-06-02 통과):
+  Jetson Orin Nano 8GB / llama-server (b8931) / 양 도메인 어댑터 등록 상태에서
+  init deactivate / recycling↔tableware swap / 같은 도메인 재요청 idempotency
+  모두 정상. 검증 명령과 결과 표는 deploy/README.md "LoRA hot-swap 실기 검증
+  (2026-06-02)" 절 참조.
 
 핵심 동작:
   llama-server 시작 시 --lora 옵션으로 등록된 모든 어댑터의 scale 이 1.0 으로

@@ -155,3 +155,100 @@ blurred → UNCLEAR 미인식). reasoning 내용은 환각 다수.
 정확도 개선이 필요해지면 `finetune_vision_layers=True` 재학습 또는 verify QA
 augmentation 검토. 자세한 내용은
 [training/README.md](../training/README.md) "2-7. 학습 결과 및 알려진 이슈".
+
+## LoRA hot-swap 실기 검증 (2026-06-02)
+
+llama-server 의 LoRA 어댑터 hot-swap 인프라 ([llama_server_manager._hot_swap](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/llama_server_manager.py))
+를 Jetson Orin Nano 8GB 실기에서 검증 완료. llama.cpp build `b8931-9725a313b`
+기준 `/lora-adapters` (복수형) HTTP 엔드포인트가 id 기반으로 동작함을 확인.
+
+### llama-server 시작 명령 (Jetson)
+
+```bash
+~/llama.cpp/build/bin/llama-server \
+  -m       ~/llama.cpp/gemma4-e2b/gemma-4-E2B-it-Q4_K_M.gguf \
+  --mmproj ~/llama.cpp/gemma4-e2b/mmproj-gemma4-e2b-f16.gguf \
+  --no-mmproj-offload \
+  --lora   ~/models/gemma/adapters/adapter_recycling.gguf,~/models/gemma/adapters/adapter_tableware.gguf \
+  --n-gpu-layers 99 \
+  --ctx-size 2048 \
+  --batch-size 256 --ubatch-size 256 \
+  --jinja --parallel 1 --cache-ram 512 \
+  --host 0.0.0.0 --port 8080
+```
+
+옵션 메모 (Orin Nano 8GB 메모리 압박 대응):
+- `--no-mmproj-offload`: vision + audio projector 를 CPU 에서 실행 (mmproj 가
+  vision + audio 통합이라 GPU 만으로는 OOM). verify_result 호출 시 약간 느려짐.
+- `--parallel 1` (n_seq_max=1) + `--batch/ubatch 256`: KV cache 와 compute
+  buffer 절감. function_call 7-turn + verify 시스템 프롬프트가 ctx 2048 안에
+  충분히 들어감.
+- 어댑터 두 개를 `--lora` 콤마로 묶음 (CLI 가 다중 `--lora` 를 deprecate 함).
+- llama-server 는 등록된 어댑터를 모두 scale=1.0 (활성) 으로 시작하므로
+  `llama_server_manager.__init__` 가 즉시 모두 scale=0 으로 deactivate.
+
+### 검증 명령
+
+ROS2 노드 실행:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 run robot_arm_pkg llama_server_manager
+```
+
+기대 로그:
+```
+[INFO] llama_server_manager 시작 | server: http://localhost:8080 | adapter_dir: /home/hansungai/models/gemma/adapters/
+[INFO] 시작 시 어댑터 deactivate 완료 — registered: ['adapter_recycling.gguf', 'adapter_tableware.gguf']
+```
+
+GET 으로 시작 직후 모두 비활성 확인:
+```bash
+curl -s http://localhost:8080/lora-adapters | python3 -m json.tool
+# 둘 다 "scale": 0.0
+```
+
+도메인 변경 트리거 (다른 터미널):
+```bash
+ros2 topic echo /selected_domain &
+
+# recycling 활성화
+ros2 topic pub --once /domain_selection robot_arm_msgs/msg/DomainSelection \
+  '{domain: "recycling", scale: 1.0}'
+# → /selected_domain: 'recycling'
+# → GET /lora-adapters: recycling 1.0, tableware 0.0
+
+# tableware 로 swap
+ros2 topic pub --once /domain_selection robot_arm_msgs/msg/DomainSelection \
+  '{domain: "tableware", scale: 1.0}'
+# → GET: recycling 0.0, tableware 1.0
+
+# 같은 도메인 재요청 — idempotency
+ros2 topic pub --once /domain_selection robot_arm_msgs/msg/DomainSelection \
+  '{domain: "tableware", scale: 1.0}'
+# → 노드 로그: "도메인 'tableware' 이미 적재됨 — 스왑 생략, 통보만 발행"
+```
+
+### 검증 결과 (2026-06-02 통과)
+
+| 항목 | 결과 |
+|---|---|
+| 시작 시 인덱스 캐시 구축 (GET `/lora-adapters` → basename → id) | ✅ |
+| 시작 시 모두 scale=0 deactivate (POST `/lora-adapters`) | ✅ |
+| recycling hot-swap (id 0=1.0, id 1=0.0) + `/selected_domain` 발행 | ✅ |
+| tableware hot-swap (id 0=0.0, id 1=1.0) + `/selected_domain` 발행 | ✅ |
+| 같은 도메인 재요청 idempotency (HTTP 미발생, 통보만 발행) | ✅ |
+| `chat_template_kwargs: {"enable_thinking": false}` 로 `content` 정상 반환 | ✅ |
+
+### 새 도메인 추가 시 운영 주의
+
+`/lora-adapters` POST 는 미리 등록된 어댑터의 scale 변경만 지원 (path 기반
+동적 load 미지원). 새 도메인 어댑터를 추가하려면:
+
+1. 새 GGUF 어댑터를 `~/models/gemma/adapters/adapter_<new_domain>.gguf` 로 배치
+2. llama-server 의 `--lora` 옵션에 새 path 추가하여 **재시작**
+3. [deploy/config/domain_map.yaml](config/domain_map.yaml) 에 매핑 추가
+
+`llama_server_manager` 노드는 재시작된 서버를 `_refresh_adapter_index` 가
+자동 재조회하므로 별도 수정 불필요. 자세한 매커니즘은 [llama_server_manager.py](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/llama_server_manager.py)
+모듈 docstring 의 "API 형식" 절 참조.
