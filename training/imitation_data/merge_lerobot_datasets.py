@@ -21,6 +21,10 @@ merge_lerobot_datasets.py
 주의:
   - 비디오를 디코드→재인코딩한다. 재라벨 산출물은 이미 1회 재인코딩됐으므로
     병합까지 거치면 그 부분은 총 2회 재인코딩된다 (1회성, 화질 손실 경미).
+  - **인코딩 코덱**: 기본 `--video-codec libx264`. 원본이 av1 이어도 av1
+    재인코딩은 CPU 로 매우 느려(특히 vCPU 적은 클라우드), 빠른 h264 로 다시 굽는다.
+    학습은 코덱과 무관(lerobot 이 디코드만 하면 됨). av1 유지하려면
+    `--video-codec av1`. 본 실행 전 `--limit 5` 로 속도를 먼저 확인할 것.
   - 임베딩/라벨은 원본 보존이므로, 병합 전 각 원본이 **같은 vocab·같은 임베딩
     모델(MiniLM D=384)** 로 만들어졌는지 반드시 확인할 것 (정합은 호출자 책임).
 
@@ -72,11 +76,12 @@ class SrcSpec:
 
 @dataclass
 class Args:
-    sources:     List[SrcSpec]
-    dst_root:    str
-    dst_repo_id: str
-    dry_run:     bool
-    limit:       int
+    sources:      List[SrcSpec]
+    dst_root:     str
+    dst_repo_id:  str
+    dry_run:      bool
+    limit:        int
+    video_codec:  str
 
 
 def _parse_src(spec: str) -> SrcSpec:
@@ -103,6 +108,10 @@ def parse_args() -> Args:
                    help='쓰기 없이 호환성/카운트만 리포트')
     p.add_argument('--limit',       type=int, default=0,
                    help='병합할 총 에피소드 상한 (0=전체, 실기 테스트용)')
+    p.add_argument('--video-codec', default='libx264',
+                   help="dst 비디오 인코딩 코덱 (기본 libx264 — av1 재인코딩이 "
+                        "CPU 로 매우 느려서). 'av1'/'libsvtav1' 지정 시 lerobot "
+                        "기본(av1) 사용. 학습엔 코덱 무관.")
     a = p.parse_args()
     if len(a.src) < 2:
         p.error('--src 는 2개 이상 지정해야 함 (병합 대상).')
@@ -113,6 +122,7 @@ def parse_args() -> Args:
         dst_repo_id = a.dst_repo_id or f'local/{Path(dst_root).name}',
         dry_run     = a.dry_run,
         limit       = a.limit,
+        video_codec = a.video_codec,
     )
 
 
@@ -158,6 +168,49 @@ def assert_compatible(srcs: list) -> None:
             raise RuntimeError(f'fps 불일치 — 원본#{i} fps={fps} != 원본#0 fps={ref_fps}')
 
 
+def install_video_codec_override(codec: str) -> None:
+    """lerobot 의 비디오 인코더(encode_video_frames)가 항상 지정 코덱을 쓰도록 강제.
+
+    av1(libsvtav1) 재인코딩이 CPU 로 매우 느려, 병합 시 빠른 코덱(libx264)으로
+    바꾸기 위함. lerobot 0.4.4 는 인코딩 코덱을 features 메타가 아니라
+    encode_video_frames 의 기본값(libsvtav1)에서 가져오므로, 함수 자체를
+    monkeypatch 해 vcodec 을 덮어쓴다. codec 가 'av1'/'libsvtav1'/'' 면 패치하지
+    않는다(lerobot 기본 사용). 학습은 코덱과 무관(디코드만 하면 됨).
+    """
+    if not codec or codec in ('av1', 'libsvtav1'):
+        return
+    import inspect
+
+    def _wrap(orig):
+        try:
+            has_vcodec = 'vcodec' in inspect.signature(orig).parameters
+        except (ValueError, TypeError):
+            has_vcodec = True
+
+        def wrapper(*a, **k):
+            if has_vcodec:
+                k['vcodec'] = codec
+            return orig(*a, **k)
+        return wrapper
+
+    patched = []
+    # 정의 모듈 + 이름으로 임포트해 쓰는 모듈 양쪽을 패치 (임포트 방식 불명확)
+    for modname in ('lerobot.datasets.video_utils',
+                    'lerobot.datasets.lerobot_dataset'):
+        try:
+            mod = __import__(modname, fromlist=['encode_video_frames'])
+        except Exception:
+            continue
+        if hasattr(mod, 'encode_video_frames'):
+            mod.encode_video_frames = _wrap(mod.encode_video_frames)
+            patched.append(modname)
+    if patched:
+        print(f'[merge] 비디오 코덱 override → {codec!r} (patched: {patched})')
+    else:
+        print(f'[merge] ⚠️ 코덱 override 실패 — encode_video_frames 를 못 찾음. '
+              f'lerobot 기본(av1)으로 인코딩될 수 있음.')
+
+
 # ──────────────────────────────────────────────
 # 메인
 # ──────────────────────────────────────────────
@@ -177,6 +230,13 @@ def main() -> None:
     fps        = int(getattr(srcs[0], 'fps', None) or srcs[0].meta.fps)
     robot_type = getattr(srcs[0].meta, 'robot_type', None) or 'so101_follower'
     features   = build_target_features(srcs[0])
+    # [속도] dst 비디오 코덱 변경 (기본 libx264 — av1 재인코딩이 CPU 로 너무 느림).
+    # features 메타와 인코더 양쪽을 맞춰준다.
+    if args.video_codec and args.video_codec not in ('av1', 'libsvtav1'):
+        if CAMERA_KEY in features and isinstance(features[CAMERA_KEY].get('info'), dict):
+            features[CAMERA_KEY]['info']['video.codec'] = args.video_codec
+            features[CAMERA_KEY]['info']['video.pix_fmt'] = 'yuv420p'
+        install_video_codec_override(args.video_codec)
     print(f'[merge] feature/fps 호환 OK (fps={fps}, robot_type={robot_type})')
 
     # 3) 에피소드 인덱스 + 라벨 수집 + 리포트
