@@ -21,10 +21,12 @@ merge_lerobot_datasets.py
 주의:
   - 비디오를 디코드→재인코딩한다. 재라벨 산출물은 이미 1회 재인코딩됐으므로
     병합까지 거치면 그 부분은 총 2회 재인코딩된다 (1회성, 화질 손실 경미).
-  - **인코딩 코덱**: 기본 `--video-codec libx264`. 원본이 av1 이어도 av1
+  - **인코딩 코덱**: 기본 `--video-codec h264`(CPU x264). 원본이 av1 이어도 av1
     재인코딩은 CPU 로 매우 느려(특히 vCPU 적은 클라우드), 빠른 h264 로 다시 굽는다.
-    학습은 코덱과 무관(lerobot 이 디코드만 하면 됨). av1 유지하려면
-    `--video-codec av1`. 본 실행 전 `--limit 5` 로 속도를 먼저 확인할 것.
+    NVIDIA GPU 가 있으면 `--video-codec h264_nvenc` 로 **GPU NVENC 인코딩**(가장
+    빠름, ffmpeg 에 nvenc 빌드 필요). 학습은 코덱과 무관(lerobot 이 디코드만 하면
+    됨). av1 유지하려면 `--video-codec av1`. 본 실행 전 `--limit 5` 로 속도 확인 권장.
+    (유효 코덱명은 lerobot 의 VALID_VIDEO_CODECS — libx264 가 아니라 h264 임)
   - 임베딩/라벨은 원본 보존이므로, 병합 전 각 원본이 **같은 vocab·같은 임베딩
     모델(MiniLM D=384)** 로 만들어졌는지 반드시 확인할 것 (정합은 호출자 책임).
 
@@ -108,10 +110,12 @@ def parse_args() -> Args:
                    help='쓰기 없이 호환성/카운트만 리포트')
     p.add_argument('--limit',       type=int, default=0,
                    help='병합할 총 에피소드 상한 (0=전체, 실기 테스트용)')
-    p.add_argument('--video-codec', default='libx264',
-                   help="dst 비디오 인코딩 코덱 (기본 libx264 — av1 재인코딩이 "
-                        "CPU 로 매우 느려서). 'av1'/'libsvtav1' 지정 시 lerobot "
-                        "기본(av1) 사용. 학습엔 코덱 무관.")
+    p.add_argument('--video-codec', default='h264',
+                   help="dst 비디오 인코더 (기본 h264=CPU x264). av1(libsvtav1) "
+                        "재인코딩이 CPU 로 매우 느려서. 유효값(lerobot 0.4.4): "
+                        "h264, h264_nvenc(GPU/5090 권장·가장 빠름), hevc, "
+                        "hevc_nvenc, libsvtav1, auto. 'av1'/'libsvtav1' 지정 시 "
+                        "패치 안 함(lerobot 기본). 학습엔 코덱 무관.")
     a = p.parse_args()
     if len(a.src) < 2:
         p.error('--src 는 2개 이상 지정해야 함 (병합 대상).')
