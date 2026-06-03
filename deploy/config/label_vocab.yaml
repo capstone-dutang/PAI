@@ -59,7 +59,7 @@ domains:
       plate:
         attributes: [white, ceramic, plastic]
       fork:
-        attributes: [silver, plastic, wooden]
+        attributes: [silver, plastic]
       spoon:
         attributes: [silver, plastic, wooden]
     spatial_qualifiers:
