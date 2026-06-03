@@ -59,7 +59,7 @@ ros2 run robot_arm_pkg embedding_node \
   --ros-args -p model_path:=~/models/embedding/
 
 # 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
-python <repo>/training/imitation_data/record_real_teleop.py \
+python <repo>/training/imitation_data/scripts/record_real_teleop.py \
   --robot-port      /dev/ttyACM1 \
   --robot-id        follower \
   --teleop-port     /dev/ttyACM0 \
@@ -70,7 +70,7 @@ python <repo>/training/imitation_data/record_real_teleop.py \
   --num-episodes    50
 
 # 5. 수집 종료 후 paraphrase + 임베딩 후처리 (외부 PC 또는 Jetson 어디서나)
-python <repo>/training/imitation_data/postprocess_real_labels.py \
+python <repo>/training/imitation_data/scripts/postprocess_real_labels.py \
   --dataset                ~/datasets/myname/dataset_real \
   --labels-jsonl           labels_myname_dataset_real.jsonl \
   --external-llm           gpt-4o-mini \
@@ -88,7 +88,7 @@ python <repo>/training/imitation_data/postprocess_real_labels.py \
 
 ```bash
 # 1. Sim teleop 시연 데이터 수집 (~500 에피소드) — 반드시 Isaac Sim 의 python 으로 실행
-~/isaacsim/python.sh training/imitation_data/record_sim_teleop.py \
+~/isaacsim/python.sh training/imitation_data/scripts/record_sim_teleop.py \
   --scene-usd        sim/scenes/base_scene.usd \
   --teleop-port      /dev/ttyACM0 \
   --dataset-repo-id  myname/dataset_sim \
@@ -96,7 +96,7 @@ python <repo>/training/imitation_data/postprocess_real_labels.py \
   --num-episodes     500
 
 # 2. 각 에피소드에 Gemma + 외부 LLM 라벨 부여
-python sim/generate_language_labels.py \
+python training/imitation_data/scripts/generate_language_labels.py \
   --dataset dataset_sim/ \
   --gemma-server http://localhost:8080 \
   --external-llm gpt-4o-mini \
@@ -117,7 +117,7 @@ Q&A 데이터 생성(`generate_function_call_qa.py` 의 function_call, `generate
 > `{"type":"image","image":...}` 가 text 앞에 추가) 형식. tool role 은
 > FastVisionModel 미지원이라 `user` role + `"[tool_result] "` prefix 로 변환됨.
 > `generate_function_call_qa.py` 는 이미 신 형식으로 직접 생성하며,
-> 기존 string-content 데이터는 [`convert_function_call_to_vision_format.py`](lora_finetuning/convert_function_call_to_vision_format.py)
+> 기존 string-content 데이터는 [`convert_function_call_to_vision_format.py`](lora_finetuning/scripts/convert_function_call_to_vision_format.py)
 > 로 1회 변환 가능.
 
 ## 2-1. 학습 환경 준비 (외부 PC)
@@ -131,7 +131,7 @@ export OPENAI_API_KEY=sk-...   # gpt-4o-mini 호출용 (function_call / verify �
 
 ```bash
 # 도메인별로 1회씩 (recycling, tableware)
-python training/lora_finetuning/generate_function_call_qa.py \
+python training/lora_finetuning/scripts/generate_function_call_qa.py \
   --domain         recycling \
   --label-vocab    deploy/config/label_vocab.yaml \
   --output         training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
@@ -144,7 +144,7 @@ python training/lora_finetuning/generate_function_call_qa.py \
 
 **먼저 dry run (10샘플)** 으로 출력 JSONL 한두 줄 직접 검사 권장:
 ```bash
-python training/lora_finetuning/generate_function_call_qa.py \
+python training/lora_finetuning/scripts/generate_function_call_qa.py \
   --domain recycling --output /tmp/function_call_dry.jsonl --num-samples 10
 head -n 2 /tmp/function_call_dry.jsonl | python -m json.tool
 ```
@@ -154,11 +154,11 @@ head -n 2 /tmp/function_call_dry.jsonl | python -m json.tool
 이전 string-content + tool role 형식으로 생성된 JSONL 이 있다면 다음으로 변환:
 
 ```bash
-python training/lora_finetuning/convert_function_call_to_vision_format.py \
+python training/lora_finetuning/scripts/convert_function_call_to_vision_format.py \
   --input  training/lora_finetuning/data/recycling/function_call_qa_recycling.jsonl \
   --output training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl
 
-python training/lora_finetuning/convert_function_call_to_vision_format.py \
+python training/lora_finetuning/scripts/convert_function_call_to_vision_format.py \
   --input  training/lora_finetuning/data/tableware/function_call_qa_tableware.jsonl \
   --output training/lora_finetuning/data/tableware/function_call_qa_tableware.vision.jsonl
 ```
@@ -172,8 +172,8 @@ LLM 환경(openai) 와 Isaac Sim 환경의 의존성을 분리하기 위해 두 
 
 | 단계 | 스크립트 | 환경 | 입력 | 출력 |
 |---|---|---|---|---|
-| **Step 1** | [`generate_verify_qa.py`](lora_finetuning/generate_verify_qa.py) | 일반 Python (gpt-4o-mini) | vocab + multi_target_scenes | 학습용 JSONL + `*.scenarios.jsonl` sidecar |
-| **Step 2** | [`render_verify_images.py`](lora_finetuning/render_verify_images.py) | `~/isaacsim/python.sh` (Isaac Sim standalone) | sidecar + base_scene + 자산 | 시나리오별 PNG |
+| **Step 1** | [`generate_verify_qa.py`](lora_finetuning/scripts/generate_verify_qa.py) | 일반 Python (gpt-4o-mini) | vocab + multi_target_scenes | 학습용 JSONL + `*.scenarios.jsonl` sidecar |
+| **Step 2** | [`render_verify_images.py`](lora_finetuning/scripts/render_verify_images.py) | `~/isaacsim/python.sh` (Isaac Sim standalone) | sidecar + base_scene + 자산 | 시나리오별 PNG |
 
 > **freeze 결정의 캐노니컬 위치는 각 스크립트 모듈 docstring 의 매트릭스를
 > 참조**합니다 (값 / 분포 / 템플릿 / destination / 렌더 정책 등). 본 README 에
@@ -211,7 +211,7 @@ training/lora_finetuning/data/recycling/
 
 dry run (10 샘플, ≈ $0.001):
 ```bash
-python training/lora_finetuning/generate_verify_qa.py \
+python training/lora_finetuning/scripts/generate_verify_qa.py \
   --domain         recycling \
   --output-jsonl   /tmp/verify_dry.jsonl \
   --image-dir      /tmp/verify_dry_images \
@@ -224,7 +224,7 @@ head -n 1 /tmp/verify_dry.jsonl.scenarios.jsonl | python -m json.tool
 본격 합성 (양 도메인, ≈ $0.05):
 ```bash
 for D in recycling tableware; do
-  python training/lora_finetuning/generate_verify_qa.py \
+  python training/lora_finetuning/scripts/generate_verify_qa.py \
     --domain         $D \
     --output-jsonl   training/lora_finetuning/data/$D/${D}_verify_qa.jsonl \
     --image-dir      training/lora_finetuning/data/$D/verify_images/ \
@@ -243,7 +243,7 @@ Sim 환경 사전 준비:
 렌더 실행:
 ```bash
 for D in recycling tableware; do
-  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \
+  ~/isaacsim/python.sh training/lora_finetuning/scripts/render_verify_images.py \
     --scenarios  training/lora_finetuning/data/$D/${D}_verify_qa.jsonl.scenarios.jsonl \
     --scene-usd  sim/scenes/base_scene.usd \
     --domain     $D \
@@ -264,7 +264,7 @@ done
 ## 2-5. Q&A 병합 (70:30, oversample)
 
 ```bash
-python training/lora_finetuning/merge_qa_dataset.py \
+python training/lora_finetuning/scripts/merge_qa_dataset.py \
   --function_call   training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
   --verify          training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \
   --output          training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
@@ -274,7 +274,7 @@ verify 가 비어 있어도 동작 (function_call 만 사용 + 경고). 1차 학
 시험하려면 빈 파일을 `--verify` 로 넘기면 됩니다:
 ```bash
 : > /tmp/verify_empty.jsonl
-python training/lora_finetuning/merge_qa_dataset.py \
+python training/lora_finetuning/scripts/merge_qa_dataset.py \
   --function_call training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
   --verify        /tmp/verify_empty.jsonl \
   --output        training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
@@ -283,7 +283,7 @@ python training/lora_finetuning/merge_qa_dataset.py \
 ## 2-6. Unsloth QLoRA 파인튜닝 (FastVisionModel)
 
 ```bash
-python training/lora_finetuning/train_gemma_qlora.py \
+python training/lora_finetuning/scripts/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
   --dataset    training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl \
   --image-dir  training/lora_finetuning/data/recycling/verify_images \
@@ -309,7 +309,7 @@ python training/lora_finetuning/train_gemma_qlora.py \
 text-only 샘플과 vision collator 호환성을 빠르게 검증할 수 있는 짧은 run:
 
 ```bash
-python training/lora_finetuning/train_gemma_qlora.py \
+python training/lora_finetuning/scripts/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
   --dataset    training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl \
   --image-dir  training/lora_finetuning/data/recycling/verify_images \
@@ -333,7 +333,7 @@ held-out (실제로는 merged.jsonl 에서 random pick) sample 로 추론해 다
   status ∈ {SUCCESS, FAIL, PARTIAL, UNCLEAR}
 
 ```bash
-python training/lora_finetuning/smoke_test_lora.py \
+python training/lora_finetuning/scripts/smoke_test_lora.py \
   --adapter-dir training/lora_finetuning/outputs/lora_recycling \
   --dataset     training/lora_finetuning/data/recycling/recycling_merged.jsonl \
   --image-dir   training/lora_finetuning/data/recycling/verify_images \
@@ -415,11 +415,11 @@ pip install huggingface_hub  # base 모델 자동 다운로드용
 ### 도메인별 변환 실행
 
 ```bash
-bash training/lora_finetuning/convert_lora_to_gguf.sh \
+bash training/lora_finetuning/scripts/convert_lora_to_gguf.sh \
   training/lora_finetuning/outputs/lora_recycling \
   models/gemma/adapters/adapter_recycling.gguf
 
-bash training/lora_finetuning/convert_lora_to_gguf.sh \
+bash training/lora_finetuning/scripts/convert_lora_to_gguf.sh \
   training/lora_finetuning/outputs/lora_tableware \
   models/gemma/adapters/adapter_tableware.gguf
 ```
@@ -502,9 +502,9 @@ training/lora_finetuning/data/
 # 3. ACT 학습 (`act/`)
 
 > **설계 변경 (co-training → real-only)**: 원래는 Sim + Real co-training
-> ([`train_act_cotraining.sh`](act/train_act_cotraining.sh)) 으로 설계했으나, Sim teleop
+> ([`train_act_cotraining.sh`](act/scripts/train_act_cotraining.sh)) 으로 설계했으나, Sim teleop
 > 수집이 실질적으로 불가능해 **real-only 도메인별 학습**으로 전환했습니다. co-training
-> 스켈레톤은 참고용으로 보존하며, **현재 운영 스크립트는 [`train_act.sh`](act/train_act.sh)**
+> 스켈레톤은 참고용으로 보존하며, **현재 운영 스크립트는 [`train_act.sh`](act/scripts/train_act.sh)**
 > 입니다. 단일 `act.pth` + LoRA hot-swap 가정도 **도메인별 ACT 체크포인트**(recycling /
 > tableware 각각)로 바뀌었습니다.
 
@@ -512,14 +512,14 @@ LeRobot 0.4.4 `lerobot-train` 으로 도메인별 real 데이터셋을 학습합
 
 ```bash
 # 도메인은 첫 인자 또는 DOMAIN 환경변수. 나머지 설정은 환경변수로 override.
-bash training/act/train_act.sh recycling
-DATASET_ROOT=/data/recycling_merged bash training/act/train_act.sh recycling
-bash training/act/train_act.sh tableware
+bash training/act/scripts/train_act.sh recycling
+DATASET_ROOT=/data/recycling_merged bash training/act/scripts/train_act.sh recycling
+bash training/act/scripts/train_act.sh tableware
 ```
 
 - 산출물: `${OUTPUT_DIR}/checkpoints/last/pretrained_model/` → Jetson `~/models/act/<domain>/pretrained_model` 로 복사
-- recycling 데이터셋은 재라벨([`relabel_recycling_dataset.py`](imitation_data/relabel_recycling_dataset.py)) + 신규 수집분을 [`merge_lerobot_datasets.py`](imitation_data/merge_lerobot_datasets.py) 로 단일 데이터셋 합본한 뒤 그 root 를 `DATASET_ROOT` 로 지정
+- recycling 데이터셋은 재라벨([`relabel_recycling_dataset.py`](imitation_data/scripts/relabel_recycling_dataset.py)) + 신규 수집분을 [`merge_lerobot_datasets.py`](imitation_data/scripts/merge_lerobot_datasets.py) 로 단일 데이터셋 합본한 뒤 그 root 를 `DATASET_ROOT` 로 지정
 - 데이터셋의 `observation.language_embedding`(MiniLM, D=384, L2 정규화)이 배포 `embedding_node` 와 동일 모델이어야 함
 
-스크립트 내부의 하이퍼파라미터·선행 조건·환경 변수는 [`train_act.sh`](act/train_act.sh)
+스크립트 내부의 하이퍼파라미터·선행 조건·환경 변수는 [`train_act.sh`](act/scripts/train_act.sh)
 헤더 주석 참조.

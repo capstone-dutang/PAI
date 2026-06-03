@@ -20,7 +20,7 @@ relabel_recycling_dataset.py 산출물(재라벨된 LeRobotDataset)이 올바른
      - 에피소드 내 첫/끝 프레임 임베딩 동일(broadcast) + L2 정규화 확인
 
 CLI:
-  python training/imitation_data/verify_relabel.py \
+  python training/imitation_data/scripts/verify_relabel.py \
     --dataset-root training/imitation_data/datasets/recycling_real_relabeled \
     --dataset-repo-id myname/dataset_recycling_relabeled \
     --label-vocab deploy/config/label_vocab.yaml \

@@ -31,7 +31,7 @@ relabel_recycling_dataset.py
   - 임베딩 모델은 수집/tableware 재수집/배포 embedding_node 와 반드시 동일해야 한다.
 
 CLI 예 (dry-run):
-  python training/imitation_data/relabel_recycling_dataset.py \
+  python training/imitation_data/scripts/relabel_recycling_dataset.py \
     --src-root      training/imitation_data/datasets/recycling_real \
     --src-repo-id   myname/dataset_real \
     --dst-root      training/imitation_data/datasets/recycling_real_relabeled \

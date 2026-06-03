@@ -20,7 +20,7 @@ sanity check 스크립트. GGUF 변환 / 배포 전에 외부 PC 에서 1회 실
   정합성 확인이 목적이므로 held-out 분리 없이 진행한다 (정량 평가는 별도).
 
 CLI 예:
-  python training/lora_finetuning/smoke_test_lora.py \\
+  python training/lora_finetuning/scripts/smoke_test_lora.py \\
     --base-model   unsloth/gemma-4-E2B-it \\
     --adapter-dir  training/lora_finetuning/outputs/lora_recycling \\
     --dataset      training/lora_finetuning/data/recycling/recycling_merged.jsonl \\

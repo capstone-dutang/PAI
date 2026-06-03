@@ -24,7 +24,7 @@ text-only function_call 호환성 (per_device_batch_size=1 가정):
   rank/alpha 는 CLI 기본 16/32.
 
 CLI 예:
-  python training/lora_finetuning/train_gemma_qlora.py \\
+  python training/lora_finetuning/scripts/train_gemma_qlora.py \\
     --base-model    unsloth/gemma-4-E2B-it \\
     --dataset       training/lora_finetuning/data/recycling/qa_merged.jsonl \\
     --image-dir     training/lora_finetuning/data/recycling/verify_images \\

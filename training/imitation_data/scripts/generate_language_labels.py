@@ -26,7 +26,7 @@ augmentation으로 무작위 추출.
   embedding_node / postprocess_real_labels.py와 동일 모델 (강제)
 
 CLI 사용 예:
-  python generate_language_labels.py \\
+  python training/imitation_data/scripts/generate_language_labels.py \\
     --dataset                dataset_sim/ \\
     --gemma-server           http://localhost:8080 \\
     --label-vocab            deploy/config/label_vocab.yaml \\

@@ -37,7 +37,7 @@ lerobot==0.4.4
 
 # ── 임베딩 라이브러리 ────────────────────────────────────────
 # embedding_node     : paraphrase-multilingual-MiniLM-L12-v2 (D=384, ~120MB)
-# postprocess_real_labels.py / sim/generate_language_labels.py도 동일 모델 사용
+# postprocess_real_labels.py / training/imitation_data/scripts/generate_language_labels.py도 동일 모델 사용
 #
 # sentence-transformers 5.x는 transformers 5.x pre-release에 맞춰 만들어졌고
 # stable transformers 4.x와는 export가 어긋나 ImportError가 발생한다

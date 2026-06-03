@@ -31,7 +31,7 @@ merge_lerobot_datasets.py
     모델(MiniLM D=384)** 로 만들어졌는지 반드시 확인할 것 (정합은 호출자 책임).
 
 CLI 예 (dry-run):
-  python training/imitation_data/merge_lerobot_datasets.py \
+  python training/imitation_data/scripts/merge_lerobot_datasets.py \
     --src training/imitation_data/datasets/recycling_real_relabeled \
     --src training/imitation_data/datasets/recycling_real_new \
     --dst-root    training/imitation_data/datasets/recycling_real_merged \

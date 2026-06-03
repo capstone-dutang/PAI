@@ -17,7 +17,7 @@ freeze (2026-05-25): function_call / verify 통합 학습 (FastVisionModel) 결�
   4) 이미 typed-array 인 content 는 그대로 유지 (멱등 변환)
 
 CLI:
-  python training/lora_finetuning/convert_function_call_to_vision_format.py \\
+  python training/lora_finetuning/scripts/convert_function_call_to_vision_format.py \\
     --input  training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \\
     --output training/lora_finetuning/data/recycling/recycling_function_call_qa.vision.jsonl
 """

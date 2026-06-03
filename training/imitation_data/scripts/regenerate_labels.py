@@ -37,15 +37,15 @@ LeRobotDataset v3.0 의 labels.jsonl 을 데이터셋 **자체의 정답 라벨*
 
 CLI:
   # 미리보기 (권장: 먼저 dry-run)
-  python training/imitation_data/regenerate_labels.py \
+  python training/imitation_data/scripts/regenerate_labels.py \
     --dataset-root training/imitation_data/datasets/recycling_real --dry-run
 
   # 실제 재생성 (recycling_real 신규본 — desync 있던 대상)
-  python training/imitation_data/regenerate_labels.py \
+  python training/imitation_data/scripts/regenerate_labels.py \
     --dataset-root training/imitation_data/datasets/recycling_real
 
   # 여러 개 한 번에 (선택: tableware 도 중복/충돌 정리)
-  python training/imitation_data/regenerate_labels.py \
+  python training/imitation_data/scripts/regenerate_labels.py \
     --dataset-root training/imitation_data/datasets/recycling_real \
     --dataset-root training/imitation_data/datasets/tableware_real
 """

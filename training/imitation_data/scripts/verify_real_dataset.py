@@ -34,7 +34,7 @@ verify_relabel.py 와의 차이:
   G. 부가 위생   — videos 파일 수, tmp* 잔존 디렉터리
 
 CLI:
-  python training/imitation_data/verify_real_dataset.py \
+  python training/imitation_data/scripts/verify_real_dataset.py \
     --dataset-root training/imitation_data/datasets/recycling_real
   # --domain 은 생략 시 labels.jsonl 의 domain 필드에서 추론
   # --no-embed 로 임베딩 재계산(모델 로드) 생략 가능

@@ -5,7 +5,7 @@ verify 시나리오 sidecar (`*.scenarios.jsonl`) 를 입력으로 Isaac Sim 에
 RGB PNG 를 생성한다 — generate_verify_qa.py(LLM 환경) 의 2-pass 짝.
 
 실행 환경 (필수):
-  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py ...
+  ~/isaacsim/python.sh training/lora_finetuning/scripts/render_verify_images.py ...
   Isaac Sim standalone python — generate_verify_qa.py(openai SDK 환경) 와 다른
   환경. 본 스크립트는 OPENAI_API_KEY 등 LLM 의존성 없음.
 
@@ -37,7 +37,7 @@ freeze 결정 (2026-05-25, C2 → Sim 렌더 분리 후 본 파일에 박힘):
   · 시나리오 root   : /World/VerifyScenario — 시나리오 사이 하위 prim 전체 제거.
 
 CLI:
-  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\
+  ~/isaacsim/python.sh training/lora_finetuning/scripts/render_verify_images.py \\
     --scenarios       training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl.scenarios.jsonl \\
     --scene-usd       sim/scenes/base_scene.usd \\
     --domain          recycling \\

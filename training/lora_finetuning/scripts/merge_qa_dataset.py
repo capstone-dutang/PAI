@@ -15,7 +15,7 @@ freeze 결정 (2026-05-25):
   verify 를 약 214 개로 oversample (≈2.14x 중복). 데이터 손실 없이 비율 보장.
 
 CLI 사용 예:
-  python training/lora_finetuning/merge_qa_dataset.py \\
+  python training/lora_finetuning/scripts/merge_qa_dataset.py \\
     --function_call   training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \\
     --verify          training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \\
     --output          training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl

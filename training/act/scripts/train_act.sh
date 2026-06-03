@@ -53,12 +53,12 @@
 # 사용법
 # -----------------------------------------------------------------------------
 #   # 도메인은 첫 인자 또는 DOMAIN 환경변수. 나머지는 환경변수로 override.
-#   bash training/act/train_act.sh recycling
-#   DATASET_ROOT=/data/recycling_merged bash training/act/train_act.sh recycling
-#   bash training/act/train_act.sh tableware
+#   bash training/act/scripts/train_act.sh recycling
+#   DATASET_ROOT=/data/recycling_merged bash training/act/scripts/train_act.sh recycling
+#   bash training/act/scripts/train_act.sh tableware
 #
 #   # 반응성 실험: closed-loop 성격 강화
-#   N_ACTION_STEPS=25 bash training/act/train_act.sh recycling
+#   N_ACTION_STEPS=25 bash training/act/scripts/train_act.sh recycling
 # =============================================================================
 
 set -euo pipefail

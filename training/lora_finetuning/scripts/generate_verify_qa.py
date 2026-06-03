@@ -68,7 +68,7 @@ freeze 결정 (2026-05-25, C2 통합 vision 포맷 결정 후):
                                 sidecar 만 제공.
 
 CLI (Step 1):
-  python training/lora_finetuning/generate_verify_qa.py \\
+  python training/lora_finetuning/scripts/generate_verify_qa.py \\
     --domain         recycling \\
     --label-vocab    deploy/config/label_vocab.yaml \\
     --output-jsonl   training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \\
@@ -77,7 +77,7 @@ CLI (Step 1):
     --external-llm   gpt-4o-mini
 
 CLI (Step 2 — Sim 환경):
-  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\
+  ~/isaacsim/python.sh training/lora_finetuning/scripts/render_verify_images.py \\
     --scenarios       training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl.scenarios.jsonl \\
     --scene-usd       sim/scenes/base_scene.usd \\
     --domain          recycling \\
@@ -103,7 +103,7 @@ import yaml  # noqa: F401  (load_vocab 가 사용)
 
 _ROBOT_ARM_PKG_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__),
-    '..', '..', 'deploy', 'ros2_ws', 'src', 'robot_arm_pkg',
+    '..', '..', '..', 'deploy', 'ros2_ws', 'src', 'robot_arm_pkg',
 ))
 if _ROBOT_ARM_PKG_ROOT not in sys.path:
     sys.path.insert(0, _ROBOT_ARM_PKG_ROOT)
@@ -460,7 +460,7 @@ def main() -> None:
     )
     print(
         '[generate_verify_qa] 다음 단계 (PNG 렌더링):\n'
-        '  ~/isaacsim/python.sh training/lora_finetuning/render_verify_images.py \\\n'
+        '  ~/isaacsim/python.sh training/lora_finetuning/scripts/render_verify_images.py \\\n'
         f'    --scenarios {scenarios_path} \\\n'
         '    --scene-usd sim/scenes/base_scene.usd \\\n'
         f'    --domain    {args.domain} \\\n'

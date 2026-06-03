@@ -35,8 +35,8 @@ SubtaskCommand.language_embedding / observation.language_embedding 채널을
     - 데이터 수집 데이터셋 재라벨링 필수
     - ACT 학습 obs 차원 변경 → 재학습 필수
     - SubtaskCommand.language_embedding 길이 변경
-    - sim/generate_language_labels.py / training/imitation_data/postprocess_real_labels.py도
-      동일 모델로 변경
+    - training/imitation_data/scripts/generate_language_labels.py /
+      training/imitation_data/scripts/postprocess_real_labels.py도 동일 모델로 변경
 """
 
 from __future__ import annotations

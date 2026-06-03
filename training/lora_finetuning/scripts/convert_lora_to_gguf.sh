@@ -13,10 +13,10 @@
 #   export LLAMA_CPP_DIR=~/llama.cpp
 #
 #   # 도메인별 변환
-#   bash training/lora_finetuning/convert_lora_to_gguf.sh \
+#   bash training/lora_finetuning/scripts/convert_lora_to_gguf.sh \
 #     training/lora_finetuning/outputs/lora_recycling \
 #     models/gemma/adapters/adapter_recycling.gguf
-#   bash training/lora_finetuning/convert_lora_to_gguf.sh \
+#   bash training/lora_finetuning/scripts/convert_lora_to_gguf.sh \
 #     training/lora_finetuning/outputs/lora_tableware \
 #     models/gemma/adapters/adapter_tableware.gguf
 #
