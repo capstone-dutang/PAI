@@ -1,0 +1,41 @@
+# llama.cpp server (Gemma 4 E2B + recycling/tableware LoRA) — PAI robot arm 백엔드
+#
+# 설치:
+#   sudo cp deploy/systemd/llama-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now llama-server.service
+#
+# 사용자명이 hansungai 가 아니면 User=/Group=/ExecStart= 의 경로를 함께 수정한다.
+# systemd ExecStart 는 `~` 를 확장하지 않으므로 모든 경로는 절대경로여야 한다.
+# 옵션 의미는 deploy/README.md "LoRA hot-swap 실기 검증 (2026-06-02)" 절의
+# "옵션 메모" 참조. 옵션은 2026-06-02 Jetson Orin Nano 8GB 실기 검증과 동일하며,
+# 모델 경로만 ~/models/gemma/ 아래로 통일했다 (base/mmproj/adapter 모두).
+
+[Unit]
+Description=llama.cpp server (Gemma 4 E2B + recycling/tableware LoRA) for PAI robot arm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hansungai
+Group=hansungai
+WorkingDirectory=/home/hansungai/llama.cpp
+
+ExecStart=/home/hansungai/llama.cpp/build/bin/llama-server \
+  -m /home/hansungai/models/gemma/gemma-4-E2B-it-Q4_K_M.gguf \
+  --mmproj /home/hansungai/models/gemma/mmproj-gemma4-e2b-f16.gguf \
+  --no-mmproj-offload \
+  --lora /home/hansungai/models/gemma/adapters/adapter_recycling.gguf,/home/hansungai/models/gemma/adapters/adapter_tableware.gguf \
+  --n-gpu-layers 99 \
+  --ctx-size 2048 \
+  --batch-size 256 --ubatch-size 256 \
+  --jinja --parallel 1 --cache-ram 512 \
+  --host 0.0.0.0 --port 8080
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

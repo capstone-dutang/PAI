@@ -6,8 +6,10 @@
 ## 사전 조건
 
 - `deploy/scripts/setup_jetson_base.sh` 실행 완료 (ROS2 + LeRobot 베이스 환경)
-- 모델 배치 — `~/models/gemma/{gemma_4_e2b_q4.gguf, adapters/adapter_<domain>.gguf}`,
-  `~/models/embedding/`, `~/models/act/act.pth`
+- 모델 배치 — `~/models/gemma/{gemma-4-E2B-it-Q4_K_M.gguf, mmproj-gemma4-e2b-f16.gguf,
+  adapters/adapter_<domain>.gguf}`, `~/models/embedding/`, `~/models/act/act.pth`
+  (모델 파일은 repo `deploy/` 에 없으며 학습·변환 산출물을 수동 배치. llama-server
+  바이너리는 `~/llama.cpp/build/bin/` 에 별도 위치)
 - 캘리브레이션 결과 배치 — `~/calibration/{camera_intrinsics.yaml,
   camera_robot_transform.yaml, grasp_roi.yaml, home_pose.yaml}`
   (캘리브레이션 절차는 [`calibration/README.md`](calibration/README.md) 참조)
@@ -40,15 +42,106 @@ colcon build --packages-select robot_arm_msgs robot_arm_pkg
 source install/setup.bash
 ```
 
-## 배포 실행
+## llama-server 상시 구동 (systemd)
+
+llama-server 는 ROS2 노드들이 HTTP 로 접속하는 상시 백엔드이므로 systemd
+서비스로 등록해 **부팅 시 자동 시작 + 장애 시 자동 재시작**되게 한다. 유닛
+파일은 [`systemd/llama-server.service`](systemd/llama-server.service) 에 있으며,
+2026-06-02 Jetson 실기 검증 명령과 동일한 옵션이다 (옵션 의미는 아래
+"LoRA hot-swap 실기 검증" 절의 "옵션 메모" 참조).
+
+### 전제
+
+- 유닛은 사용자 `hansungai` / 홈 `/home/hansungai` 기준 **절대경로**로 작성됨.
+  사용자명이 다르면 `User=`, `Group=`, `ExecStart=` 경로를 함께 수정.
+- systemd ExecStart 는 `~` 를 확장하지 않으므로 모든 경로가 절대경로여야 함.
+- 다음 파일이 유닛에 적힌 위치에 있어야 함:
+  - 바이너리 `/home/hansungai/llama.cpp/build/bin/llama-server` (llama.cpp 빌드 위치 — 모델과 별개)
+  - base GGUF `/home/hansungai/models/gemma/gemma-4-E2B-it-Q4_K_M.gguf`
+  - mmproj `/home/hansungai/models/gemma/mmproj-gemma4-e2b-f16.gguf`
+  - 어댑터 `/home/hansungai/models/gemma/adapters/adapter_{recycling,tableware}.gguf`
+- 모델은 `~/models/gemma/` 아래로 통일한다 (base·mmproj·adapter). `--lora`/`-m`/`--mmproj`
+  는 GGUF 를 읽기만 하므로, 기존 위치(`~/llama.cpp/gemma4-e2b/`)에서 이 경로로 복사한
+  뒤 유닛을 실행하면 그대로 동작한다 (바이너리는 옮기지 않음).
+
+### 메모리 단편화 완화 (커널 VM 튜닝, Orin Nano 8GB 권장)
+
+Orin Nano 8GB 의 unified memory 에서는 대용량 연속(higher-order) 할당이 잦은
+llama-server 가 메모리 단편화로 로드 실패·OOM 을 겪을 수 있다. 다음 커널 VM
+튜닝으로 완화한다. drop-in 파일: [`sysctl.d/99-llama-server-vm.conf`](sysctl.d/99-llama-server-vm.conf)
 
 ```bash
-# llama-server (Gemma 4 E2B base, --jinja로 함수 호출 활성화)
-# systemd 서비스로 상시 구동 권장
-~/llama.cpp/llama-server \
-  -m ~/models/gemma/gemma_4_e2b_q4.gguf \
-  --jinja \
-  --host 0.0.0.0 --port 8080
+# /etc/sysctl.conf 에 직접 append 하지 말고 drop-in 으로 설치 (중복 append 방지)
+sudo cp <repo>/deploy/sysctl.d/99-llama-server-vm.conf /etc/sysctl.d/
+sudo sysctl --system        # 즉시 적용 (재부팅 시 systemd-sysctl 가 자동 적용)
+
+# 적용 확인
+sysctl vm.compaction_proactiveness vm.min_free_kbytes
+```
+
+- `vm.compaction_proactiveness=100` — 커널이 백그라운드(kcompactd)에서 더 적극적으로
+  메모리 압축, 연속 블록 확보 (기본 20). CPU 를 약간 더 씀.
+- `vm.min_free_kbytes=131072` (128MB) — free 예약량을 늘려 압축/할당이 연속 블록을
+  유지하기 쉽게 함.
+
+이 값들은 **시스템 전역 커널 설정**이라 systemd 유닛(ExecStart, 프로세스 단위)이
+아니라 sysctl 로 적용한다. 부팅 시 `systemd-sysctl.service` 가 `llama-server.service`
+보다 먼저 적용하므로 별도 순서 의존성은 없다.
+
+### 설치
+
+```bash
+# 1) 유닛 파일 설치
+sudo cp <repo>/deploy/systemd/llama-server.service /etc/systemd/system/
+
+# 2) 재로드 + 부팅 자동 시작 등록 + 즉시 시작
+sudo systemctl daemon-reload
+sudo systemctl enable --now llama-server.service
+
+# 3) 상태 / 로그 확인
+systemctl status llama-server.service
+journalctl -u llama-server.service -f
+```
+
+### 동작 확인
+
+```bash
+# 어댑터 두 개가 등록되었는지 (서버 시작 직후엔 scale 1.0)
+curl -s http://localhost:8080/lora-adapters | python3 -m json.tool
+```
+
+이후 `llama_server_manager` 노드가 시작 시 두 어댑터를 모두 scale=0 으로
+deactivate 한다 (아래 "배포 실행" 및 "LoRA hot-swap 실기 검증" 절 참조).
+
+### 운영 명령
+
+```bash
+sudo systemctl restart llama-server.service   # --lora 등 옵션 변경/어댑터 추가 후
+sudo systemctl stop    llama-server.service
+sudo systemctl disable llama-server.service   # 부팅 자동 시작 해제
+```
+
+### 트러블슈팅
+
+- **시작 직후 죽고 CUDA 라이브러리 not found**: systemd 는 로그인 셸 환경
+  (`~/.bashrc` 의 `LD_LIBRARY_PATH` 등) 을 상속하지 않는다. 대화형 셸에서는
+  뜨는데 서비스로는 실패하면 유닛 `[Service]` 에 다음을 추가 후 재로드:
+  ```ini
+  Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64
+  ```
+- **OOM 으로 재시작 반복** (`journalctl` 에 `Killed`): Orin Nano 8GB 메모리
+  압박. 먼저 위 "메모리 단편화 완화" 절의 sysctl 튜닝 적용 여부 확인. 그래도
+  부족하면 큰 노드와의 동시 기동을 피하거나 `--ctx-size` / `--cache-ram` 추가 절감.
+
+## 배포 실행
+
+llama-server 는 systemd 서비스로 상시 구동된다 (위 "llama-server 상시 구동
+(systemd)" 절). 부팅 시 자동 시작되므로 여기서는 서비스 상태만 확인하고 ROS2
+노드를 실행한다.
+
+```bash
+# llama-server 가 떠 있는지 확인 (active 여야 함)
+systemctl is-active llama-server.service
 
 # 카메라
 ros2 run robot_arm_pkg camera_node
@@ -163,6 +256,11 @@ llama-server 의 LoRA 어댑터 hot-swap 인프라 ([llama_server_manager._hot_s
 기준 `/lora-adapters` (복수형) HTTP 엔드포인트가 id 기반으로 동작함을 확인.
 
 ### llama-server 시작 명령 (Jetson)
+
+> 아래는 2026-06-02 검증 당시 그대로의 명령 기록이라 base/mmproj 가
+> `~/llama.cpp/gemma4-e2b/` 에 있다. 운영 레이아웃은 base·mmproj 도 `~/models/gemma/`
+> 로 통일했으므로(위 "llama-server 상시 구동 (systemd)" 절) 지금 수동 실행 시엔
+> `-m`/`--mmproj` 경로를 `~/models/gemma/` 로 바꿔 쓴다.
 
 ```bash
 ~/llama.cpp/build/bin/llama-server \
