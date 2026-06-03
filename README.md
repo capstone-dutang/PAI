@@ -18,7 +18,8 @@ PAI/
 │   ├── config/                                 # Jetson 런타임 설정
 │   │   ├── domain_map.yaml                     # 사용자 명령 → 도메인 매핑
 │   │   ├── label_vocab.yaml                    # 데이터 수집 / function_call / Sim 공유 vocabulary
-│   │   └── grasp_roi.yaml                      # verify_result용 엔드이펙터 ROI
+│   │   ├── grasp_roi.yaml                      # verify_result용 엔드이펙터 ROI (grasp 검증 — 미래 확장)
+│   │   └── destination_roi.yaml                # verify_result용 목적지 ROI (place 검증 — 현재 운영)
 │   ├── calibration/                            # 실기 캘리브레이션 결과
 │   └── ros2_ws/
 │       └── src/
@@ -272,6 +273,16 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 > depth 검증은 결정론적 grasp 성공/실패 신호를 제공한다. 두 신호가 상충할 때의
 > 정책(예: depth 우선 / Gemma 우선)은 운영 중 튜닝 대상.
 
+> **검증 대상 — 현재 운영은 destination(place) 기준**:
+> 실물 ACT 에피소드는 home_pose 시작 → 태스크 → home_pose 복귀로 수집되고, 배포 시에도
+> verify 직전 `/go_home` 으로 팔을 home_pose 에 고정한다. 따라서 verify 시점 그리퍼는
+> 이미 비어 있어 grasp(집기) 흔적을 볼 수 없다. 그래서 depth 보조 검증은 엔드이펙터가
+> 아니라 **목적지(통/목표 영역)** ROI 의 depth 변화로 "물체가 놓였는가"(place)를 본다.
+> ROI 정의는 [`deploy/config/destination_roi.yaml`](deploy/config/destination_roi.yaml)
+> — 카메라·목적지 고정 전제로 **픽셀 ROI + baseline depth** 로 표현해 카메라 intrinsics
+> 에 의존하지 않는다. 위 "Depth grasp 보조 검증" 서술은 grasp 시점 검증을 다시 도입할
+> 때를 위한 **미래 정책**으로 남겨둔다(`grasp_roi.yaml`). 구현: `agent_node._depth_place_check`.
+
 ---
 
 ## 실행 환경
@@ -515,7 +526,8 @@ Hand-Eye 캘리브레이션 (Eye-to-Hand 방식): 카메라 고정, SO-101 엔�
 3. **캘리브레이션 launch** — `ros2 launch robot_arm_pkg calibration.launch.py robot_port:=/dev/follower` + rqt EasyHandeye2 GUI.
 4. **포즈 샘플링** — 10~15개 포즈에서 Take Sample → Compute → Save.
 5. **결과 저장** — `~/calibration/camera_intrinsics.yaml`, `~/calibration/camera_robot_transform.yaml` 로 복사 (+ 저장소 백업).
-6. **`grasp_roi.yaml` 작성** — `verify_result` 의 depth grasp 보조 검증용 ROI (`{frame, x/y/z_range, depth_change_threshold}`) 정의.
+6. **`grasp_roi.yaml` 작성** — `verify_result` 의 depth grasp 보조 검증용 ROI (`{frame, x/y/z_range, depth_change_threshold}`) 정의. (grasp 시점 검증 — 미래 확장)
+7. **`destination_roi.yaml` 작성** — `verify_result` 의 depth place 보조 검증용 목적지 ROI (`{roi_px, baseline_depth, depth_change_threshold}`) 정의. **현재 운영 기본** — verify 시점 home_pose 에서 목적지(통/목표 영역) depth 변화로 배치 확인.
 
 > 자세한 셋업·실행·결과 저장 절차는 [`deploy/calibration/README.md`](deploy/calibration/README.md) 참조.
 
@@ -811,7 +823,8 @@ datasets = [
 | `sim/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
 | `training/act/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
-| `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 | 캘리브레이션 완료, 엔드이펙터 측정 |
+| `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 (grasp 시점 검증 — 미래 확장) | 캘리브레이션 완료, 엔드이펙터 측정 |
+| `deploy/config/destination_roi.yaml` | 실측 목적지 ROI(픽셀) / baseline depth / threshold 로 템플릿 갱신 (place 검증 — 현재 운영) | 캘리브레이션 완료, 목적지 배치 확정 |
 
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)

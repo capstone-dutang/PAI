@@ -13,7 +13,7 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
          /embed_text 서비스 호출   → language_embedding 획득
          execute_subtask(...)      → SubtaskCommand 발행 → ExecutionStatus 대기
          /go_home (Trigger)        → verify 직전 팔 자세를 home_pose 로 고정
-         verify_result(...)        → Gemma 시각 검증 + depth grasp 보조 검증
+         verify_result(...)        → Gemma 시각 검증 + depth place 보조 검증
             → SUCCESS / FAIL / PARTIAL / UNCLEAR
             → SUCCESS면 종료, 그 외 max_verify_iterations(기본 3)까지 재시도
             → 초과 시 WAITING_USER 상태로 전환
@@ -38,7 +38,7 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
 파라미터:
   server_url             (str)   — llama-server 주소
   domain_map             (str)   — domain_map.yaml 경로
-  grasp_roi              (str)   — grasp_roi.yaml 경로 (verify_result용)
+  destination_roi        (str)   — destination_roi.yaml 경로 (verify_result place 검증용)
   max_verify_iterations  (int)   — 검증 재시도 한계 (기본 3)
   exec_timeout_s         (float) — ExecutionStatus 대기 타임아웃 (기본 120s)
 
@@ -83,14 +83,20 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
    verify fallback (deploy/README.md): execute 직후 모델 응답이 verify_result 함수
    호출이 아니면 코드가 verify_result 를 강제 호출 (original_command=_user_command).
 
-⑤ _depth_grasp_check — 안전 비활성(None) 골격
-   세 전제가 충족돼야 실제 판정 활성화:
-     (1) grasp_roi.yaml 실측값 배치 (현재는 README 예시 = 템플릿).
-     (2) depth 비교 기준 확정 (절대 임계 / pre-grasp 차분 — grasp_roi.yaml TODO).
-     (3) ROI 표현 충돌 해소 — grasp_roi 는 미터 단위 3D 박스라 픽셀 투영에
-         intrinsics 가 필요하나 README "agent_node 는 intrinsics 비의존" 결정과
-         충돌. 미터 ROI 를 픽셀 ROI 로 바꾸거나 intrinsics 배선 결정 필요.
-   셋 충족 전까지 None 반환 → 결정 ③에 의해 Gemma 단독으로 동작 (안전).
+⑤ _depth_place_check — destination ROI median depth 기반 place 보강 판정
+   verify 시점은 /go_home 후 home_pose (그리퍼 비어 있음 — 데이터 수집과 동일
+   종료 자세). 따라서 그리퍼 grasp 검증은 불가하며, 검증 대상은 "물체가 목적지
+   (통/목표 영역)에 놓였는가" = place 다.
+   카메라·목적지 고정 전제로 목적지는 이미지의 고정 픽셀 영역 → destination_roi.yaml
+   은 픽셀 ROI + baseline depth 로 표현한다. 미터 3D 박스/카메라 intrinsics 가
+   불필요해 README "agent_node 는 intrinsics 비의존" 결정과 충돌하지 않는다.
+   판정: 목적지 ROI median 이 baseline(빈 목적지)보다 depth_change_threshold 이상
+   작아지면(물체가 쌓여 카메라에 가까움) True. destination_roi 미설정 / 도메인 ROI
+   없음 / depth 없음 / 유효픽셀 없음 → None → 결정 ③에 의해 Gemma 단독.
+
+   ▷ grasp(집기 직후 carry 시점) 검증은 home_pose 복귀 데이터로는 불가 — 미래
+     확장으로 유보. grasp_roi.yaml + 미래 _depth_grasp_check 가 그 hook
+     (README "grasp 검증 정책" 절 참조).
 
 ⑥ 종료 상태 — 신규 토픽/메시지 미도입 (v1)
    내부 상태기계 IDLE / RUNNING / WAITING_USER 로 표현. max_verify_iterations
@@ -99,7 +105,6 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
    거부). 전용 /user_intervention 토픽 명세는 향후 작업으로 유보.
 
 미구현(타 노드 의존) 잔여:
-  _depth_grasp_check 실판정 — 위 ⑤ 세 전제 충족 후.
   _classify_domain — 단순 substring 매칭 placeholder (운영 중 정책 확정).
 """
 
@@ -114,6 +119,7 @@ import threading
 import uuid
 from typing import Dict, List, Optional
 
+import numpy as np
 import requests
 import rclpy
 from rclpy.node import Node
@@ -139,7 +145,7 @@ from robot_arm_pkg.prompts import (
     SYSTEM_PROMPT, LOOK_SCENE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT,
     VerifyStatus, ExecStatus,
 )
-from robot_arm_pkg.utils.ros_image import image_msg_to_rgb_array
+from robot_arm_pkg.utils.ros_image import image_msg_to_rgb_array, depth_msg_to_meters
 
 
 # ── HTTP / 서비스 타임아웃 ─────────────────────
@@ -178,20 +184,20 @@ class AgentNode(Node):
         self.declare_parameter('server_url',            'http://localhost:8080')
         self.declare_parameter('domain_map',
                                os.path.expanduser('~/ros2_ws/config/domain_map.yaml'))
-        self.declare_parameter('grasp_roi',
-                               os.path.expanduser('~/calibration/grasp_roi.yaml'))
+        self.declare_parameter('destination_roi',
+                               os.path.expanduser('~/calibration/destination_roi.yaml'))
         self.declare_parameter('max_verify_iterations', 3)
         self.declare_parameter('exec_timeout_s',        120.0)
 
         self.server_url           : str   = self.get_parameter('server_url').value
         self.domain_map_path      : str   = self.get_parameter('domain_map').value
-        self.grasp_roi_path       : str   = self.get_parameter('grasp_roi').value
+        self.destination_roi_path : str   = self.get_parameter('destination_roi').value
         self.max_verify_iterations: int   = self.get_parameter('max_verify_iterations').value
         self.exec_timeout_s       : float = self.get_parameter('exec_timeout_s').value
 
         # ── 설정 로드 ─────────────────────────────
         self._domain_map: Dict[str, str] = self._load_domain_map(self.domain_map_path)
-        self._grasp_roi:  Optional[dict] = self._load_grasp_roi(self.grasp_roi_path)
+        self._destination_roi: Optional[dict] = self._load_destination_roi(self.destination_roi_path)
 
         # ── 입력 캐시 (latest-only) ───────────────
         self._latest_rgb:    Optional[Image]      = None
@@ -285,10 +291,10 @@ class AgentNode(Node):
                 flat[str(kw)] = str(domain)
         return flat
 
-    def _load_grasp_roi(self, path: str) -> Optional[dict]:
+    def _load_destination_roi(self, path: str) -> Optional[dict]:
         """
-        grasp_roi.yaml 로드. verify_result의 depth 검증에 사용.
-        파일 없으면 None 반환 → depth 검증 비활성.
+        destination_roi.yaml 로드. verify_result 의 depth place 검증에 사용.
+        파일 없으면 None 반환 → depth place 검증 비활성 (Gemma 단독).
         """
         try:
             import yaml  # noqa: PLC0415
@@ -296,11 +302,11 @@ class AgentNode(Node):
                 return yaml.safe_load(f)
         except FileNotFoundError:
             self.get_logger().warn(
-                f'grasp_roi.yaml 없음: {path} → depth grasp 검증 비활성 (Gemma 단독 검증)'
+                f'destination_roi.yaml 없음: {path} → depth place 검증 비활성 (Gemma 단독 검증)'
             )
             return None
         except Exception as e:  # noqa: BLE001
-            self.get_logger().error(f'grasp_roi.yaml 파싱 실패: {e}')
+            self.get_logger().error(f'destination_roi.yaml 파싱 실패: {e}')
             return None
 
     # ── 구독 콜백 ─────────────────────────────────
@@ -670,7 +676,7 @@ class AgentNode(Node):
              user   : [image (현재 RGB), text "original_command: \"...\"..."]  ← image-first
              응답   : {"status": <enum>, "reasoning": <english>}
            (generate_verify_qa.build_sample 의 user_text 와 정확히 일치시킴)
-        2) depth grasp 보조 검증 — _depth_grasp_check()
+        2) depth place 보조 검증 — _depth_place_check()
         3) 종합 판정 — _combine_verify() (결정 ③: Gemma 우선 + depth 단방향 veto)
 
         reasoning 은 로그용으로만 사용 (training/README.md 이슈 2).
@@ -713,7 +719,7 @@ class AgentNode(Node):
             except Exception as e:  # noqa: BLE001
                 self.get_logger().error(f'verify_result Gemma 호출 실패: {e}')
 
-        depth = self._depth_grasp_check()
+        depth = self._depth_place_check()
         final = self._combine_verify(gemma_status, depth)
 
         self._emit_log(
@@ -733,45 +739,99 @@ class AgentNode(Node):
         """
         결정 ③: Gemma status 우선 + depth 단방향 veto.
           - depth None  → Gemma 단독 (depth 비활성/미실측).
-          - Gemma SUCCESS + depth False → PARTIAL 로 강등 (grasp 흔적 없음 → 재시도 유도).
+          - Gemma SUCCESS + depth False → PARTIAL 로 강등 (목적지에 놓인 흔적 없음 → 재시도 유도).
           - 그 외 → Gemma 신뢰. depth 단독 SUCCESS 승격은 없음.
         """
         if depth is None:
             return gemma_status
         if gemma_status == VerifyStatus.SUCCESS and depth is False:
             self.get_logger().warn(
-                'verify: Gemma=SUCCESS 이나 depth grasp 흔적 없음 → PARTIAL 강등'
+                'verify: Gemma=SUCCESS 이나 depth place 흔적 없음 → PARTIAL 강등'
             )
             return VerifyStatus.PARTIAL
         return gemma_status
 
-    def _depth_grasp_check(self) -> Optional[bool]:
+    def _depth_place_check(self) -> Optional[bool]:
         """
-        grasp_roi.yaml ROI 내 depth 변화로 grasp 성공 여부 산출 (보조 신호).
+        destination_roi.yaml 의 목적지 ROI median depth 로 place(목적지 배치) 성공
+        흔적을 산출하는 보조 신호 (결정 ⑤).
 
-        결정 ⑤: 현재는 안전 비활성(None) 골격. 다음 세 전제가 충족돼야 실판정 활성화:
-          (1) grasp_roi.yaml 실측값 배치 (현재는 README 예시 = 템플릿).
-          (2) depth 비교 기준 확정 (절대 임계 / pre-grasp 차분 — grasp_roi.yaml TODO).
-          (3) ROI 표현 충돌 해소 — grasp_roi 는 미터 단위 3D 박스라 depth 픽셀 투영에
-              카메라 intrinsics 가 필요하나, README "agent_node 는 intrinsics 비의존"
-              결정과 충돌. 미터 ROI 를 픽셀 ROI 로 바꾸거나 intrinsics 배선을 결정해야 함.
+        verify 시점은 /go_home 후 home_pose (그리퍼 비어 있음 — 데이터 수집과 동일
+        종료 자세)이므로 검증 대상은 grasp 가 아니라 place 다. 카메라·목적지 고정
+        전제로 목적지를 픽셀 ROI 로 표현 → intrinsics 비의존.
 
-        None 반환 시 _combine_verify 가 Gemma 단독으로 동작 (결정 ③).
+        판정: active_domain 의 목적지 ROI median depth 가 baseline_depth(빈 목적지)
+        보다 depth_change_threshold 이상 작아지면(물체가 쌓여 카메라에 가까움) 흔적.
+
+        반환:
+          True  — 도메인 목적지 ROI 중 하나라도 place 흔적
+          False — 측정된 ROI 모두 변화 없음
+          None  — 비활성/판정불가 (yaml 없음 / depth 없음 / 도메인 ROI 없음 /
+                  유효 depth 픽셀 없음) → _combine_verify 가 Gemma 단독 (결정 ③).
+
+        grasp(집기 시점) 검증은 home_pose 복귀 데이터로는 불가 — 미래 확장으로 유보
+        (README "grasp 검증 정책" 절).
         """
-        if self._grasp_roi is None or self._latest_depth is None:
+        cfg = self._destination_roi
+        if cfg is None or self._latest_depth is None:
             return None
 
-        # 전제 (2)(3) 미확정 — 실판정 비활성. 활성화 시 아래를 구현:
-        #   a. depth 메시지 디코딩 (16UC1=mm / 32FC1=m → 미터 배열; camera_node 인코딩 확인)
-        #   b. ROI 마스킹 (frame 변환 / 미터→픽셀 투영 또는 픽셀 ROI)
-        #   c. ROI 내 median depth 와 비교기준(절대 임계 / pre-grasp 차분) 대조
-        #   d. depth_change_threshold 초과 → True (grasp 흔적), 아니면 False
-        self.get_logger().warn(
-            'depth grasp 검증 미활성 (grasp_roi 실측 / 비교기준 / intrinsics 미확정) '
-            '→ None (Gemma 단독)',
-            throttle_duration_sec=30.0,
-        )
-        return None
+        dests = (cfg.get('destinations') or {}).get(self._active_domain or '')
+        if not dests:
+            self.get_logger().warn(
+                f'depth place 검증: 도메인 {self._active_domain!r} 목적지 ROI 없음 → None',
+                throttle_duration_sec=30.0,
+            )
+            return None
+
+        try:
+            depth_m = depth_msg_to_meters(
+                self._latest_depth, float(cfg.get('depth_scale', 0.001))
+            )
+        except ValueError as e:
+            self.get_logger().warn(f'depth place 검증: depth 디코딩 실패: {e} → None')
+            return None
+
+        threshold = float(cfg.get('depth_change_threshold', 0.02))
+        h, w = depth_m.shape
+        any_measured = False
+
+        for d in dests:
+            roi = d.get('roi_px')
+            baseline = d.get('baseline_depth')
+            if not roi or baseline is None:
+                continue
+            med = self._roi_median_depth(depth_m, roi, w, h)
+            if med is None:
+                continue
+            any_measured = True
+            if float(baseline) - med >= threshold:
+                self.get_logger().info(
+                    f"depth place: {d.get('name', '?')} median={med:.3f}m "
+                    f"< baseline-thr={float(baseline) - threshold:.3f}m → place 흔적"
+                )
+                return True
+
+        if not any_measured:
+            return None  # 목적지 ROI 에 유효 depth 없음 → 판정 불가
+        return False
+
+    @staticmethod
+    def _roi_median_depth(depth_m: np.ndarray, roi_px, w: int, h: int) -> Optional[float]:
+        """
+        픽셀 ROI 내 유효 depth(0/inf/범위 밖 제외) median (m). 유효 픽셀 없으면 None.
+        roi_px = [x0, y0, x1, y1] (순서 무관, 이미지 경계로 클램프).
+        """
+        x0, y0, x1, y1 = (int(v) for v in roi_px)
+        x0, x1 = max(0, min(x0, x1)), min(w, max(x0, x1))
+        y0, y1 = max(0, min(y0, y1)), min(h, max(y0, y1))
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            return None
+        sub = depth_m[y0:y1, x0:x1]
+        valid = np.isfinite(sub) & (sub > 0.05) & (sub < 5.0)
+        if not bool(np.any(valid)):
+            return None
+        return float(np.median(sub[valid]))
 
     # ── llama-server HTTP / 파싱 헬퍼 ──────────────
 

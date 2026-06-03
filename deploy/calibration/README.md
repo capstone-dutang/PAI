@@ -103,3 +103,37 @@ roi:
   z_range: [0.20, 0.40]
 depth_change_threshold: 0.02  # m, 이 이상의 변화가 있으면 grasp 성공으로 간주
 ```
+
+## `destination_roi.yaml` 작성 (현재 운영 기본)
+
+`verify_result` 의 depth 기반 **place(목적지 배치) 검증**용 ROI 입니다. 실물 데이터가
+home_pose 복귀로 끝나 verify 시점 그리퍼가 비어 있으므로(위 `grasp_roi.yaml` 의 grasp
+시점 검증은 미래 확장), 현재 운영 검증은 그리퍼가 아니라 **목적지(통/목표 영역)** 의
+depth 변화로 물체가 놓였는지를 봅니다.
+
+카메라·목적지 고정 전제이므로 목적지는 이미지의 고정 픽셀 영역입니다 → **픽셀 ROI +
+baseline depth** 로 표현해 카메라 intrinsics 없이 동작합니다(`agent_node._depth_place_check`).
+
+측정 절차:
+
+1. 카메라·목적지를 운영 배치로 두고, **빈 목적지** 상태에서 측정 스크립트를 띄웁니다.
+2. 각 목적지를 드래그(또는 `--roi`)로 지정 → 콘솔에 표시되는 `roi_px` 와 `z_median`(m)
+   을 읽어 `destination_roi.yaml` 의 `roi_px` / `baseline_depth` 에 입력합니다.
+3. 물체를 놓은 상태의 median 과 baseline 의 차이의 절반쯤을 `depth_change_threshold`
+   로 잡습니다.
+
+> `measure_grasp_roi.py` 는 현재 미터 박스 yaml(grasp_roi 포맷)을 출력하므로,
+> destination_roi 는 콘솔의 `roi_px` / `z_median` 값을 보고 아래 형식으로 수기 입력합니다.
+
+```yaml
+# ~/calibration/destination_roi.yaml (예시)
+depth_scale: 0.001
+depth_change_threshold: 0.02   # m, baseline 보다 median 이 이만큼 작아지면 물체 있음
+destinations:
+  recycling:
+    - {name: can_bin,     roi_px: [120, 200, 220, 300], baseline_depth: 0.55}
+    - {name: plastic_bin, roi_px: [270, 200, 370, 300], baseline_depth: 0.55}
+    - {name: paper_bin,   roi_px: [420, 200, 520, 300], baseline_depth: 0.55}
+  tableware:
+    - {name: target_area, roi_px: [240, 220, 400, 340], baseline_depth: 0.50}
+```

@@ -11,8 +11,9 @@
   (모델 파일은 repo `deploy/` 에 없으며 학습·변환 산출물을 수동 배치. llama-server
   바이너리는 `~/llama.cpp/build/bin/` 에 별도 위치)
 - 캘리브레이션 결과 배치 — `~/calibration/{camera_intrinsics.yaml,
-  camera_robot_transform.yaml, grasp_roi.yaml, home_pose.yaml}`
-  (캘리브레이션 절차는 [`calibration/README.md`](calibration/README.md) 참조)
+  camera_robot_transform.yaml, destination_roi.yaml, home_pose.yaml}`
+  (`grasp_roi.yaml` 은 미래 grasp 검증용 — 선택. 캘리브레이션 절차는
+  [`calibration/README.md`](calibration/README.md) 참조)
 
 ## 빌드
 
@@ -34,7 +35,8 @@ cp -r <repo>/deploy/ros2_ws/src/* ~/ros2_ws/src/
 mkdir -p ~/ros2_ws/config ~/calibration
 cp <repo>/deploy/config/domain_map.yaml  ~/ros2_ws/config/domain_map.yaml
 cp <repo>/deploy/config/label_vocab.yaml ~/ros2_ws/config/label_vocab.yaml
-cp <repo>/deploy/config/grasp_roi.yaml   ~/calibration/grasp_roi.yaml   # 캘리브레이션 후 실측값으로 갱신
+cp <repo>/deploy/config/destination_roi.yaml ~/calibration/destination_roi.yaml   # 캘리브레이션 후 실측값으로 갱신 (place 검증)
+# grasp_roi.yaml 은 미래 grasp 검증용 — 필요 시 함께 복사
 
 # 3) 빌드
 cd ~/ros2_ws
@@ -159,7 +161,7 @@ ros2 run robot_arm_pkg embedding_node \
 ros2 run robot_arm_pkg agent_node \
   --ros-args -p server_url:=http://localhost:8080 \
              -p domain_map:=~/ros2_ws/config/domain_map.yaml \
-             -p grasp_roi:=~/calibration/grasp_roi.yaml \
+             -p destination_roi:=~/calibration/destination_roi.yaml \
              -p max_verify_iterations:=3 \
              -p exec_timeout_s:=120.0
 
@@ -211,7 +213,7 @@ docstring "구현 결정 사항" 블록에 있으며, 여기서는 운영 영향
   를 system 으로 쓰는 **별도 VLM 호출**(이미지-first). `SYSTEM_PROMPT`(JSON-only)와
   충돌하므로 분리. ⚠️ 전용 학습 분포 없음 — 묘사 정확도는 실기 검증 필요(상수 주석 참조).
 - **verify 종합 판정**: Gemma `status` 우선 + depth **단방향 veto**
-  (`SUCCESS` 인데 depth grasp 흔적 없음 → `PARTIAL` 강등으로 재시도 유도).
+  (`SUCCESS` 인데 depth place 흔적 없음 → `PARTIAL` 강등으로 재시도 유도).
   depth `None`(미실측/미설정/ depth 없음)이면 Gemma 단독. depth 단독 SUCCESS 승격 없음.
 - **재시도 의미**: attempt 단위로 look→execute→go_home→verify **전체를 재실행**한다
   (매 시도가 단일 시퀀스 학습 분포와 일치 — verify 결과를 모델에 다시 먹이지 않음).
@@ -219,11 +221,14 @@ docstring "구현 결정 사항" 블록에 있으며, 여기서는 운영 영향
 - **종료 상태**: 신규 토픽/메시지 미도입(v1). 초과 시 내부 `WAITING_USER` 상태 +
   AgentLog 종료 마커. 새 `/user_command` 가 들어오면 태스크 포기 후 재시작(루프
   실행 중에만 신규 명령 거부). 전용 `/user_intervention` 토픽은 향후.
-- **depth grasp 검증**: 현재 안전 비활성(`None`). grasp_roi 실측 + 비교기준 확정 +
-  미터 ROI↔intrinsics 충돌 해소(아래 주의) 후 활성. `_depth_grasp_check` 주석 참조.
-  - ⚠️ grasp_roi.yaml 은 미터 단위 3D 박스라 depth 픽셀 투영에 카메라 intrinsics 가
-    필요하나, [README.md](../README.md) "agent_node 는 intrinsics 비의존" 결정과
-    충돌한다. 미터 ROI 를 픽셀 ROI 로 바꾸거나 intrinsics 배선을 결정해야 함.
+- **depth place 검증**: `verify_result` 시 목적지 ROI median depth 변화로 place 보강
+  (단방향 veto). [`destination_roi.yaml`](config/destination_roi.yaml) 의 **픽셀 ROI +
+  baseline depth** 로 표현해 카메라 intrinsics 에 의존하지 않는다(미터 3D 박스 미사용 —
+  [README.md](../README.md) "agent_node 는 intrinsics 비의존" 결정 유지). destination_roi
+  미설정/도메인 ROI 없음/depth 없음/유효픽셀 없음 시 `None` → Gemma 단독.
+  `_depth_place_check` 주석 참조.
+  - grasp(집기 시점) 검증은 home_pose 복귀 데이터로는 불가 — 미래 확장으로 유보
+    (`grasp_roi.yaml` + 미래 `_depth_grasp_check`).
 - **신규 파라미터**: `exec_timeout_s` — `ExecutionStatus` 대기 타임아웃(기본 120s).
 - **의존성**: RGB→base64(PNG) 인코딩에 `python3-pil`(Pillow) 필요(cv_bridge 회피).
 - **연관 수정**: `act_node._finish_subtask` 가 `ExecStatus` enum(대문자)을 발행하도록
@@ -280,8 +285,8 @@ blurred → UNCLEAR 미인식). reasoning 내용은 환각 다수.
 `reasoning` 은 로그용. 잘못된 status 는 다음으로 보완:
 
 - `max_verify_iterations` 재시도 (CLI 인자, 위 실행 예제 참조)
-- `_depth_grasp_check` depth 보조 검증 (`agent_node._call_verify_result`
-  docstring 의 "depth grasp 보조 검증" 단계)
+- `_depth_place_check` depth 보조 검증 (`agent_node._call_verify_result`
+  docstring 의 "depth place 보조 검증" 단계)
 
 정확도 개선이 필요해지면 `finetune_vision_layers=True` 재학습 또는 verify QA
 augmentation 검토. 자세한 내용은
