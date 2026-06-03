@@ -108,11 +108,18 @@ class Report:
 
 
 def fsl_to_np(table: pa.Table, col: str) -> np.ndarray:
-    """fixed_size_list<float>[k] 컬럼 → (N, k) float32."""
+    """list<float>[k] / fixed_size_list<float>[k] 컬럼 → (N, k) float32.
+
+    record_real_teleop 산출물은 fixed_size_list(list_size 보유)지만,
+    aggregate_datasets 산출물은 가변 list 로 저장될 수 있어 list_size 가 없다.
+    두 경우 모두 지원하도록 폭 k 를 추론한다(행별 길이 동일 가정)."""
     arr = table[col].combine_chunks()
-    k = arr.type.list_size
+    n = len(arr)
     flat = arr.flatten().to_numpy(zero_copy_only=False)
-    return flat.reshape(-1, k).astype(np.float32)
+    k = getattr(arr.type, "list_size", None)
+    if not isinstance(k, int) or k <= 0:           # ListType (가변) → 폭 추론
+        k = (len(flat) // n) if n else 0
+    return flat.reshape(n, k).astype(np.float32)
 
 
 def load_vocab(path: str, domain: str) -> dict:
