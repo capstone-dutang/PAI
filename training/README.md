@@ -7,7 +7,7 @@
 |---|---|---|
 | 모방데이터 수집 | [`imitation_data/`](imitation_data/) | LeRobotDataset (Real teleop + Sim teleop) |
 | Gemma 도메인 LoRA 파인튜닝 | [`lora_finetuning/`](lora_finetuning/) | LoRA adapter (.safetensors → GGUF) |
-| ACT Co-training | [`act/`](act/) | ACT policy 체크포인트 (`act.pth`) |
+| ACT 학습 (real-only, 도메인별) | [`act/`](act/) | 도메인별 ACT policy 체크포인트 (`pretrained_model/`) |
 
 ---
 
@@ -25,7 +25,7 @@ Sim 데이터 수집 (teleop)" 절 참조.
 1. SO-101 리더/팔로워 USB 포트 확인
 2. LeRobot 캘리브레이션 완료 (`lerobot-calibrate`)
 3. 카메라 캘리브레이션 결과 (`camera_intrinsics.yaml`, `camera_robot_transform.yaml`) 를 `~/calibration/` 에 배치
-4. 임베딩 모델 결정 및 배치 (Gemma 도메인 LoRA 학습 / ACT Co-training과 동일 모델 사용 필수)
+4. 임베딩 모델 결정 및 배치 (Gemma 도메인 LoRA 학습 / ACT 학습과 동일 모델 사용 필수)
 5. `robot_controller_node` 가 떠 있다면 중지 (포트 점유 정책)
 6. **home pose 준비**: `~/calibration/home_pose.yaml` 이 없으면 follower 팔을 원하는 rest 자세에 둔 채로 record_real_teleop 첫 실행 — 그 자세가 자동 캡처되어 파일로 저장되고, 이후 에피소드 간 복귀와 배포 시 `/go_home` 서비스에서 같은 파일을 공유합니다. 자세를 바꾸려면 파일 삭제 후 재실행.
 
@@ -499,13 +499,27 @@ training/lora_finetuning/data/
 
 ---
 
-# 3. ACT Co-training (`act/`)
+# 3. ACT 학습 (`act/`)
 
-LeRobot 0.4.4 멀티 데이터셋 가중치 학습으로 Sim + Real 혼합.
+> **설계 변경 (co-training → real-only)**: 원래는 Sim + Real co-training
+> ([`train_act_cotraining.sh`](act/train_act_cotraining.sh)) 으로 설계했으나, Sim teleop
+> 수집이 실질적으로 불가능해 **real-only 도메인별 학습**으로 전환했습니다. co-training
+> 스켈레톤은 참고용으로 보존하며, **현재 운영 스크립트는 [`train_act.sh`](act/train_act.sh)**
+> 입니다. 단일 `act.pth` + LoRA hot-swap 가정도 **도메인별 ACT 체크포인트**(recycling /
+> tableware 각각)로 바뀌었습니다.
+
+LeRobot 0.4.4 `lerobot-train` 으로 도메인별 real 데이터셋을 학습합니다.
 
 ```bash
-bash training/act/train_act_cotraining.sh
+# 도메인은 첫 인자 또는 DOMAIN 환경변수. 나머지 설정은 환경변수로 override.
+bash training/act/train_act.sh recycling
+DATASET_ROOT=/data/recycling_merged bash training/act/train_act.sh recycling
+bash training/act/train_act.sh tableware
 ```
 
-스크립트 내부의 가중치·하이퍼파라미터·환경 변수는 `train_act_cotraining.sh`
+- 산출물: `${OUTPUT_DIR}/checkpoints/last/pretrained_model/` → Jetson `~/models/act/<domain>/pretrained_model` 로 복사
+- recycling 데이터셋은 재라벨([`relabel_recycling_dataset.py`](imitation_data/relabel_recycling_dataset.py)) + 신규 수집분을 [`merge_lerobot_datasets.py`](imitation_data/merge_lerobot_datasets.py) 로 단일 데이터셋 합본한 뒤 그 root 를 `DATASET_ROOT` 로 지정
+- 데이터셋의 `observation.language_embedding`(MiniLM, D=384, L2 정규화)이 배포 `embedding_node` 와 동일 모델이어야 함
+
+스크립트 내부의 하이퍼파라미터·선행 조건·환경 변수는 [`train_act.sh`](act/train_act.sh)
 헤더 주석 참조.

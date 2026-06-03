@@ -21,6 +21,10 @@ PAI/
 │   │   ├── grasp_roi.yaml                      # verify_result용 엔드이펙터 ROI (grasp 검증 — 미래 확장)
 │   │   └── destination_roi.yaml                # verify_result용 목적지 ROI (place 검증 — 현재 운영)
 │   ├── calibration/                            # 실기 캘리브레이션 결과
+│   ├── systemd/
+│   │   └── llama-server.service                # llama-server 상시 구동 systemd 유닛
+│   ├── sysctl.d/
+│   │   └── 99-llama-server-vm.conf             # 커널 VM 튜닝 (llama-server 메모리)
 │   └── ros2_ws/
 │       └── src/
 │           ├── robot_arm_msgs/                 # 커스텀 메시지 패키지 (신규)
@@ -40,7 +44,11 @@ PAI/
 │               │   ├── embedding_node.py       # 텍스트 → 벡터 임베딩 서비스 (신규)
 │               │   ├── llama_server_manager.py # llama-server LoRA hot-swap (신규)
 │               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
-│               │   └── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
+│               │   ├── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
+│               │   ├── prompts.py              # 시스템 프롬프트 + ExecStatus enum (SSoT)
+│               │   └── utils/                  # home_pose.py / ros_image.py 공통 유틸
+│               ├── scripts/
+│               │   └── measure_grasp_roi.py    # grasp_roi.yaml 실측 보조 스크립트
 │               ├── launch/
 │               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
 │               │   ├── so101.urdf
@@ -65,6 +73,8 @@ PAI/
 │   │   ├── setup_sim_camera.py                 # RGB 카메라 셋업 (캘리브레이션→USD)
 │   │   ├── setup_recycling_bins.py             # 분리수거 쓰레기통 3개 생성
 │   │   ├── setup_objects.py                    # 도메인 객체 래퍼 USD 생성 (recycling=YCB, tableware=SimReady)
+│   │   ├── setup_physics_scene.py              # PhysicsScene 솔버 파라미터 튜닝
+│   │   ├── setup_so101_gripper_physics.py      # 그리퍼 핑거 collision + PhysicsMaterial
 │   │   ├── measure_placement.py                # placement 실측 (table_top_z·bin_exclusion)
 │   │   └── probe_reach.py                      # 로봇 가동범위(reach) 실측
 │   └── teleop/                                 # Isaac Sim teleop 인프라
@@ -78,23 +88,31 @@ PAI/
 │   ├── imitation_data/                         # 모방데이터 수집 (ACT 학습용 시연)
 │   │   ├── record_real_teleop.py               # Jetson 실기 teleop 수집 (ROS2)
 │   │   ├── record_sim_teleop.py                # Isaac Sim teleop 수집 (직접 API)
-│   │   └── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
+│   │   ├── postprocess_real_labels.py          # Real 라벨 paraphrase + 임베딩 후처리
+│   │   ├── merge_lerobot_datasets.py           # LeRobotDataset 디스크 병합 (재라벨+신규)
+│   │   ├── relabel_recycling_dataset.py        # recycling 기존 수집분 재라벨링
+│   │   └── verify_relabel.py                   # 재라벨링 결과 검증
 │   ├── lora_finetuning/                        # Gemma 도메인 LoRA 파인튜닝
 │   │   ├── generate_function_call_qa.py        # function_call (함수 호출) 시나리오 합성
-│   │   ├── generate_verify_qa.py               # verify (검증) 시나리오 합성
+│   │   ├── convert_function_call_to_vision_format.py # function_call → vision chat 포맷 변환
+│   │   ├── generate_verify_qa.py               # verify (검증) 시나리오 합성 (+scenarios sidecar)
+│   │   ├── render_verify_images.py             # verify 시나리오 Sim 렌더링 (Cat-C 2-pass)
 │   │   ├── merge_qa_dataset.py                 # function_call / verify 70:30 혼합
 │   │   ├── llm_client.py                       # OpenAI API 공통 wrapper
-│   │   ├── train_gemma_qlora.py                # Unsloth QLoRA 학습
+│   │   ├── train_gemma_qlora.py                # Unsloth QLoRA 학습 (FastVisionModel)
+│   │   ├── smoke_test_lora.py                  # 학습 후 출력 형식 sanity check
 │   │   ├── convert_lora_to_gguf.sh             # GGUF 변환
 │   │   ├── requirements.txt                    # LoRA 파인튜닝 의존성
 │   │   └── data/                               # Q&A JSONL (도메인별, git 추적)
 │   │       ├── recycling/
 │   │       └── tableware/
 │   └── act/                                    # ACT 학습 (현재 real-only, co-training 유보)
-│       └── train_act_cotraining.sh             # Sim + Real 혼합 학습 (co-training 스켈레톤)
+│       ├── train_act.sh                        # real-only 도메인별 학습 (현재 운영)
+│       └── train_act_cotraining.sh             # Sim + Real 혼합 학습 (co-training 스켈레톤 — 보존)
 │
 ├── shared/                                     # 3목적 공통 자산 (현재 비어 있음)
 ├── docs/
+├── jetson_release.txt                          # Jetson 실기 환경 덤프 (JetPack/CUDA/L4T 버전)
 └── README.md
 ```
 
