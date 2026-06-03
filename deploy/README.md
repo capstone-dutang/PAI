@@ -160,7 +160,8 @@ ros2 run robot_arm_pkg agent_node \
   --ros-args -p server_url:=http://localhost:8080 \
              -p domain_map:=~/ros2_ws/config/domain_map.yaml \
              -p grasp_roi:=~/calibration/grasp_roi.yaml \
-             -p max_verify_iterations:=3
+             -p max_verify_iterations:=3 \
+             -p exec_timeout_s:=120.0
 
 # ACT Policy
 ros2 run robot_arm_pkg act_node \
@@ -191,6 +192,43 @@ look_scene → execute_subtask → /go_home → verify_result
   학습 분포 (모두 home_pose 로 렌더) 와 일치 보장.
 - 캐노니컬 위치: [agent_node._run_function_loop](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py),
   [prompts.SYSTEM_PROMPT](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/prompts.py).
+
+### 구현 결정 사항 (2026-06-03 — 함수 호출 루프 본체 구현)
+
+함수 호출 루프 본체를 구현했다. 결정의 캐노니컬 기록은
+[agent_node.py](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py) 모듈
+docstring "구현 결정 사항" 블록에 있으며, 여기서는 운영 영향 항목만 navigation 한다
+(값 재기재 금지 — drift 방지).
+
+- **실행 모델**: 루프는 전용 워커 스레드에서 실행하고 `main()` 은
+  `MultiThreadedExecutor` 로 스핀한다. 구독 콜백은 블로킹하지 않는다.
+  `ExecutionStatus` 대기는 `threading.Event`, 서비스(`/embed_text`, `/go_home`)는
+  `call_async` + future 대기. exec_status 구독 + 서비스 클라이언트는
+  `ReentrantCallbackGroup`.
+- **look_scene 그라운딩**: 함수 호출 대화는 **텍스트 전용**(function_call 학습
+  분포 = 이미지 없음). 실제 이미지→묘사는
+  [prompts.LOOK_SCENE_SYSTEM_PROMPT](ros2_ws/src/robot_arm_pkg/robot_arm_pkg/prompts.py)
+  를 system 으로 쓰는 **별도 VLM 호출**(이미지-first). `SYSTEM_PROMPT`(JSON-only)와
+  충돌하므로 분리. ⚠️ 전용 학습 분포 없음 — 묘사 정확도는 실기 검증 필요(상수 주석 참조).
+- **verify 종합 판정**: Gemma `status` 우선 + depth **단방향 veto**
+  (`SUCCESS` 인데 depth grasp 흔적 없음 → `PARTIAL` 강등으로 재시도 유도).
+  depth `None`(미실측/미설정/ depth 없음)이면 Gemma 단독. depth 단독 SUCCESS 승격 없음.
+- **재시도 의미**: attempt 단위로 look→execute→go_home→verify **전체를 재실행**한다
+  (매 시도가 단일 시퀀스 학습 분포와 일치 — verify 결과를 모델에 다시 먹이지 않음).
+  시도 수 ≤ `max_verify_iterations`.
+- **종료 상태**: 신규 토픽/메시지 미도입(v1). 초과 시 내부 `WAITING_USER` 상태 +
+  AgentLog 종료 마커. 새 `/user_command` 가 들어오면 태스크 포기 후 재시작(루프
+  실행 중에만 신규 명령 거부). 전용 `/user_intervention` 토픽은 향후.
+- **depth grasp 검증**: 현재 안전 비활성(`None`). grasp_roi 실측 + 비교기준 확정 +
+  미터 ROI↔intrinsics 충돌 해소(아래 주의) 후 활성. `_depth_grasp_check` 주석 참조.
+  - ⚠️ grasp_roi.yaml 은 미터 단위 3D 박스라 depth 픽셀 투영에 카메라 intrinsics 가
+    필요하나, [README.md](../README.md) "agent_node 는 intrinsics 비의존" 결정과
+    충돌한다. 미터 ROI 를 픽셀 ROI 로 바꾸거나 intrinsics 배선을 결정해야 함.
+- **신규 파라미터**: `exec_timeout_s` — `ExecutionStatus` 대기 타임아웃(기본 120s).
+- **의존성**: RGB→base64(PNG) 인코딩에 `python3-pil`(Pillow) 필요(cv_bridge 회피).
+- **연관 수정**: `act_node._finish_subtask` 가 `ExecStatus` enum(대문자)을 발행하도록
+  교정(이전 소문자 리터럴 → SSoT `prompts.ExecStatus` 불일치 해소). agent_node 도
+  수신 status 를 `.upper()` 방어 정규화.
 
 ### verify_result fallback (2026-06-02 추가)
 

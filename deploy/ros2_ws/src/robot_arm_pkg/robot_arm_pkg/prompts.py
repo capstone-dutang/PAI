@@ -65,6 +65,42 @@ SYSTEM_PROMPT: str = (
 
 
 # ──────────────────────────────────────────────
+# look_scene 실제 grounding 호출용 시스템 프롬프트 (배포 전용)
+# ──────────────────────────────────────────────
+#
+# 위 SYSTEM_PROMPT 는 "JSON 함수 호출 객체로만 응답" 을 강제하므로 자연어 묘사
+# 출력과 충돌한다. 따라서 agent_node._call_look_scene 의 실제 시각 grounding
+# 단계 (RGB 이미지 + look_scene 의 prompt 인자 → target_description) 는 함수 호출
+# 대화와 분리된 별도 chat completion 으로 처리하며, 본 프롬프트를 system 으로 쓴다.
+#
+# ⚠️ 학습 분포 없음 (2026-06-03 결정):
+#   function_call 학습 데이터에는 이미지가 없어 "이미지 → 묘사" 직접 분포가 없다.
+#   본 호출은 base Gemma VLM (vision encoder = base, finetune_vision_layers=False)
+#   의 묘사 능력 + LoRA 의 템플릿 어휘 편향에 의존한다. 학습 측 합성기는 본 상수를
+#   import 하지 않으므로 변경해도 LoRA 재학습은 불필요하다. 단, 묘사 정확도는
+#   Jetson 실기에서 검증해야 하며 부족 시 look_scene image-grounded QA 추가가 후속.
+#
+# 출력 형식 / 어휘는 SYSTEM_PROMPT 의 look_scene 반환 규약과 정확히 일치시켜
+# target_description 분포 (Sim/Real/배포) 를 깨지 않게 한다.
+
+LOOK_SCENE_SYSTEM_PROMPT: str = (
+    'You are a robot vision module. Look at the RGB image and describe the single\n'
+    'object the robot should grasp next, following the user instruction.\n'
+    '\n'
+    'Output rules:\n'
+    '  - Output EXACTLY one line. English only, 5-15 words.\n'
+    '  - Strict format: "the {attribute} {object} {spatial}"\n'
+    '      attribute: one distinguishing color/material/size\n'
+    '      object:    a single noun '
+    '(can / plastic / paper / plate / bowl / cup / fork / spoon ...)\n'
+    '      spatial:   a location/relation phrase '
+    '(e.g., "on the right side of the table")\n'
+    '  - Example: "the blue can on the right side of the table"\n'
+    '  - No JSON, no quotes, no extra text, no action verbs, no first person.\n'
+)
+
+
+# ──────────────────────────────────────────────
 # 상태 enum
 # ──────────────────────────────────────────────
 #

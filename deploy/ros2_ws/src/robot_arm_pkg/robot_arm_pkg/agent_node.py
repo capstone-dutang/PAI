@@ -8,14 +8,15 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
     → 도메인 분류 (domain_map.yaml 키워드 매칭)
     → /domain_selection 발행 → llama_server_manager가 LoRA hot-swap
     → /selected_domain 수신 대기
-    → 함수 호출 루프:
+    → (워커 스레드에서) 함수 호출 루프:
          look_scene(prompt)        → Gemma VLM 호출 → 자연어 target_description
          /embed_text 서비스 호출   → language_embedding 획득
          execute_subtask(...)      → SubtaskCommand 발행 → ExecutionStatus 대기
+         /go_home (Trigger)        → verify 직전 팔 자세를 home_pose 로 고정
          verify_result(...)        → Gemma 시각 검증 + depth grasp 보조 검증
             → SUCCESS / FAIL / PARTIAL / UNCLEAR
             → SUCCESS면 종료, 그 외 max_verify_iterations(기본 3)까지 재시도
-            → 초과 시 사용자 개입 대기 상태로 전환
+            → 초과 시 WAITING_USER 상태로 전환
 
 구독 토픽:
   /user_command     (std_msgs/String)
@@ -32,33 +33,96 @@ Gemma 4 E2B VLA 에이전트의 함수 호출 루프를 오케스트레이션하
 
 서비스 클라이언트:
   /embed_text       (robot_arm_msgs/EmbedText)
+  /go_home          (std_srvs/Trigger)
 
 파라미터:
-  server_url             (str) — llama-server 주소
-  domain_map             (str) — domain_map.yaml 경로
-  grasp_roi              (str) — grasp_roi.yaml 경로 (verify_result용)
-  max_verify_iterations  (int) — 검증 재시도 한계 (기본 3)
+  server_url             (str)   — llama-server 주소
+  domain_map             (str)   — domain_map.yaml 경로
+  grasp_roi              (str)   — grasp_roi.yaml 경로 (verify_result용)
+  max_verify_iterations  (int)   — 검증 재시도 한계 (기본 3)
+  exec_timeout_s         (float) — ExecutionStatus 대기 타임아웃 (기본 120s)
 
-미구현 항목 (구현 시 추가 결정 필요):
-  _classify_domain()  — 키워드 매칭은 단순화된 placeholder. 실제 매칭 정책
-                        (대소문자/형태소/동의어 처리)은 운영 중 확정.
-  _call_look_scene()         — Gemma /v1/chat/completions 함수 호출 페이로드 구성
-  _call_execute_subtask()    — SubtaskCommand 발행 + ExecutionStatus 대기 로직
-  _call_verify_result()      — Gemma 시각 검증 + depth ROI 검증 종합
-  _depth_grasp_check()       — grasp_roi.yaml 기반 depth 변화 측정
-  _comb policy (Gemma vs depth) — README 미확정 #1 (depth 우선 / Gemma 우선 / 가중)
+═══════════════════════════════════════════════════════════════════════
+구현 결정 사항 (2026-06-03 확정)
+═══════════════════════════════════════════════════════════════════════
+① 실행 모델 — 워커 스레드 + MultiThreadedExecutor
+   _run_function_loop 은 구독 콜백(_selected_callback)에서 직접 돌리지 않고
+   전용 데몬 스레드에서 실행한다. 콜백은 즉시 반환하므로 executor 스핀 스레드가
+   막히지 않는다. 워커 안의 모든 블로킹(HTTP / 서비스 / status 대기)은 executor
+   콜백 바깥에서 일어난다.
+     - ExecutionStatus 대기: _exec_status_callback 이 threading.Event 를 set,
+       _call_execute_subtask 가 Event.wait(timeout) 으로 동기 대기.
+     - 서비스(/embed_text, /go_home): 이미 스핀 중이므로 spin_until_future_complete
+       사용 불가 → call_async + future.add_done_callback(Event) 패턴으로 대기.
+     - exec_status 구독 + 두 서비스 클라이언트는 ReentrantCallbackGroup 에 두어
+       워커가 대기하는 동안 응답/콜백이 헤드라인 블로킹 없이 흐르게 한다.
+     - main() 은 MultiThreadedExecutor 로 스핀.
+
+② look_scene 호출 — 텍스트 루프 + 별도 VLM 호출 (SYSTEM_PROMPT 미사용)
+   함수 호출 루프 대화는 텍스트 전용 (function_call 학습 분포 = 이미지 없음).
+   실제 시각 grounding 은 prompts.LOOK_SCENE_SYSTEM_PROMPT 를 쓰는 별도
+   chat completion (RGB 이미지 포함). SYSTEM_PROMPT 는 "JSON 으로만 응답" 을
+   강제해 자연어 묘사와 충돌하므로 쓰지 않는다.
+   ⚠️ 이 호출은 전용 학습 분포가 없다 (prompts.LOOK_SCENE_SYSTEM_PROMPT 주석 참조).
+
+③ verify 종합 판정 — Gemma status 우선 + depth 단방향 veto
+   _combine_verify(): depth 가 None(ROI 미설정/미실측/depth 없음)이면 Gemma 단독.
+   depth 는 SUCCESS 를 "반박"만 한다 (grasp 흔적 없음 → PARTIAL 강등으로 재시도
+   유도). depth 단독으로 SUCCESS 승격은 없다. verify status 정답률이 낮다는
+   training/README.md 이슈 2 를 max_verify_iterations 재시도 + depth veto 로 보완.
+   reasoning 은 로그용으로만 사용.
+
+   ExecutionStatus.status 대소문자: SSoT(prompts.ExecStatus)·msg 명세는 대문자이나
+   act_node 가 소문자로 발행하는 케이스가 있어 본 노드에서 .upper() 방어 정규화.
+   (원천 수정 = act_node._finish_subtask 가 ExecStatus enum 사용 — 별도 권장.)
+
+④ 재시도 의미 — 시도(attempt) 단위로 look→execute→go_home→verify 전체를 재실행
+   각 시도는 [system, user_command] 에서 새로 시작하므로 매번 function_call 학습
+   분포(단일 look→execute→verify 시퀀스)와 일치한다. verify 결과를 모델에 다시
+   먹이지 않는다 (verify 이후 turn 은 off-distribution). 시도 수 ≤ max_verify_iterations.
+   verify fallback (deploy/README.md): execute 직후 모델 응답이 verify_result 함수
+   호출이 아니면 코드가 verify_result 를 강제 호출 (original_command=_user_command).
+
+⑤ _depth_grasp_check — 안전 비활성(None) 골격
+   세 전제가 충족돼야 실제 판정 활성화:
+     (1) grasp_roi.yaml 실측값 배치 (현재는 README 예시 = 템플릿).
+     (2) depth 비교 기준 확정 (절대 임계 / pre-grasp 차분 — grasp_roi.yaml TODO).
+     (3) ROI 표현 충돌 해소 — grasp_roi 는 미터 단위 3D 박스라 픽셀 투영에
+         intrinsics 가 필요하나 README "agent_node 는 intrinsics 비의존" 결정과
+         충돌. 미터 ROI 를 픽셀 ROI 로 바꾸거나 intrinsics 배선 결정 필요.
+   셋 충족 전까지 None 반환 → 결정 ③에 의해 Gemma 단독으로 동작 (안전).
+
+⑥ 종료 상태 — 신규 토픽/메시지 미도입 (v1)
+   내부 상태기계 IDLE / RUNNING / WAITING_USER 로 표현. max_verify_iterations
+   초과 시 WAITING_USER + AgentLog 종료 마커. 복구: WAITING_USER 에서 새
+   /user_command 가 들어오면 태스크 포기 후 재시작 (신규 명령은 RUNNING 중에만
+   거부). 전용 /user_intervention 토픽 명세는 향후 작업으로 유보.
+
+미구현(타 노드 의존) 잔여:
+  _depth_grasp_check 실판정 — 위 ⑤ 세 전제 충족 후.
+  _classify_domain — 단순 substring 매칭 placeholder (운영 중 정책 확정).
 """
 
 from __future__ import annotations
 
+import base64
+import io
+import json
 import os
-from typing import Dict, Optional
+import re
+import threading
+import uuid
+from typing import Dict, List, Optional
 
+import requests
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from robot_arm_msgs.msg import (
     SubtaskCommand,
@@ -69,13 +133,43 @@ from robot_arm_msgs.msg import (
 from robot_arm_msgs.srv import EmbedText
 
 # 시스템 프롬프트 / 상태 enum SSoT — robot_arm_pkg.prompts
-# (학습 측 generate_function_call_qa 도 같은 모듈을 import 한다)
-from robot_arm_pkg.prompts import (  # noqa: F401
-    SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT, VerifyStatus, ExecStatus,
+# (학습 측 generate_function_call_qa / generate_verify_qa 도 같은 모듈을 import 한다.
+#  단 LOOK_SCENE_SYSTEM_PROMPT 는 배포 전용 — 학습 측은 import 하지 않음.)
+from robot_arm_pkg.prompts import (
+    SYSTEM_PROMPT, LOOK_SCENE_SYSTEM_PROMPT, VERIFY_SYSTEM_PROMPT,
+    VerifyStatus, ExecStatus,
 )
+from robot_arm_pkg.utils.ros_image import image_msg_to_rgb_array
+
+
+# ── HTTP / 서비스 타임아웃 ─────────────────────
+# chat completion 은 verify 시 --no-mmproj-offload(CPU projector) 로 느려질 수
+# 있어 넉넉히. 서비스(embed)는 빠른 작업, go_home 은 보간(기본 2s) + 여유.
+_HTTP_TIMEOUT_SEC    = 120.0
+_SERVICE_TIMEOUT_SEC = 10.0
+_GO_HOME_TIMEOUT_SEC = 15.0
+
+# 한 시도(attempt) 안에서 모델의 함수 호출 turn 상한 (look + execute + 여유).
+# 정상 시퀀스는 2~3 turn. 무한 루프 방지용 안전 상한.
+_INNER_MAX_TURNS = 6
+
+# verify_result 가 돌려줄 수 있는 enum 집합 (모델 응답 검증용).
+_VALID_VERIFY = {
+    VerifyStatus.SUCCESS, VerifyStatus.FAIL,
+    VerifyStatus.PARTIAL, VerifyStatus.UNCLEAR,
+}
+
+# look_scene 묘사 형식 1차 검증 정규식 ("the ..." 로 시작하는지만 가볍게).
+# 전체 vocabulary 멤버십 검증은 후속(label_vocab 경로 파라미터 추가 필요).
+_LOOK_SCENE_RE = re.compile(r'^the\s+\S+', re.IGNORECASE)
 
 
 class AgentNode(Node):
+
+    # 내부 상태기계 (결정 ⑥)
+    STATE_IDLE         = 'IDLE'          # 명령 없음 또는 hot-swap 대기 중
+    STATE_RUNNING      = 'RUNNING'       # 함수 호출 루프 워커 실행 중
+    STATE_WAITING_USER = 'WAITING_USER'  # max 초과 — 사용자 개입 대기
 
     def __init__(self):
         super().__init__('agent_node')
@@ -87,11 +181,13 @@ class AgentNode(Node):
         self.declare_parameter('grasp_roi',
                                os.path.expanduser('~/calibration/grasp_roi.yaml'))
         self.declare_parameter('max_verify_iterations', 3)
+        self.declare_parameter('exec_timeout_s',        120.0)
 
-        self.server_url           : str = self.get_parameter('server_url').value
-        self.domain_map_path      : str = self.get_parameter('domain_map').value
-        self.grasp_roi_path       : str = self.get_parameter('grasp_roi').value
-        self.max_verify_iterations: int = self.get_parameter('max_verify_iterations').value
+        self.server_url           : str   = self.get_parameter('server_url').value
+        self.domain_map_path      : str   = self.get_parameter('domain_map').value
+        self.grasp_roi_path       : str   = self.get_parameter('grasp_roi').value
+        self.max_verify_iterations: int   = self.get_parameter('max_verify_iterations').value
+        self.exec_timeout_s       : float = self.get_parameter('exec_timeout_s').value
 
         # ── 설정 로드 ─────────────────────────────
         self._domain_map: Dict[str, str] = self._load_domain_map(self.domain_map_path)
@@ -103,16 +199,18 @@ class AgentNode(Node):
         self._latest_joints: Optional[JointState] = None
 
         # ── 진행 상태 ─────────────────────────────
-        # _user_command:       현재 처리 중인 사용자 명령 (None이면 idle)
-        # _active_domain:      hot-swap 통보를 받은 후 확정되는 활성 도메인
-        # _pending_subtask_id: SubtaskCommand 발행 후 ExecutionStatus 대기 중인 id
-        # _last_status:        가장 최근 ExecutionStatus
-        # _verify_count:       verify_result 누적 호출 수 (한 사용자 명령 단위)
-        self._user_command:       Optional[str]              = None
-        self._active_domain:      Optional[str]              = None
-        self._pending_subtask_id: Optional[str]              = None
-        self._last_status:        Optional[ExecutionStatus]  = None
-        self._verify_count:       int                        = 0
+        # 상태 전이는 _lock 으로 보호 (콜백=executor 스레드 / 루프=워커 스레드).
+        self._lock = threading.Lock()
+        self._state:              str                       = self.STATE_IDLE
+        self._user_command:       Optional[str]             = None
+        self._active_domain:      Optional[str]             = None
+        self._loop_thread:        Optional[threading.Thread] = None
+        self._verify_count:       int                       = 0
+
+        # execute_subtask ↔ ExecutionStatus 동기화.
+        self._pending_subtask_id: Optional[str]             = None
+        self._last_status:        Optional[ExecutionStatus] = None
+        self._status_event = threading.Event()
 
         # ── QoS ───────────────────────────────────
         camera_qos = QoSProfile(
@@ -121,12 +219,18 @@ class AgentNode(Node):
             depth=1,
         )
 
+        # ── 콜백 그룹 (결정 ①) ────────────────────
+        # 워커가 call_async future / ExecutionStatus 를 대기하는 동안 해당 콜백이
+        # 헤드라인 블로킹 없이 흐르도록 ReentrantCallbackGroup 사용.
+        self._cb_group = ReentrantCallbackGroup()
+
         # ── 구독 ──────────────────────────────────
         self.create_subscription(String,          '/user_command',     self._user_cmd_callback,    10)
         self.create_subscription(Image,           '/camera/rgb',       self._rgb_callback,         camera_qos)
         self.create_subscription(Image,           '/camera/depth',     self._depth_callback,       camera_qos)
         self.create_subscription(JointState,      '/joint_states',     self._joints_callback,      10)
-        self.create_subscription(ExecutionStatus, '/execution_status', self._exec_status_callback, 10)
+        self.create_subscription(ExecutionStatus, '/execution_status', self._exec_status_callback, 10,
+                                 callback_group=self._cb_group)
         self.create_subscription(String,          '/selected_domain',  self._selected_callback,    10)
 
         # ── 발행 ──────────────────────────────────
@@ -135,12 +239,14 @@ class AgentNode(Node):
         self.log_pub     = self.create_publisher(AgentLog,        '/agent_log',        10)
 
         # ── 서비스 클라이언트 ─────────────────────
-        self.embed_client = self.create_client(EmbedText, '/embed_text')
+        self.embed_client   = self.create_client(EmbedText, '/embed_text', callback_group=self._cb_group)
+        self.go_home_client = self.create_client(Trigger,   '/go_home',    callback_group=self._cb_group)
 
         self.get_logger().info(
             f'agent_node 시작 | server: {self.server_url} | '
             f'domain_map: {self.domain_map_path} | '
-            f'max_verify_iterations: {self.max_verify_iterations}'
+            f'max_verify_iterations: {self.max_verify_iterations} | '
+            f'exec_timeout_s: {self.exec_timeout_s}'
         )
 
     # ── 설정 로드 ─────────────────────────────────
@@ -212,15 +318,20 @@ class AgentNode(Node):
         """
         외부 트리거. 도메인 분류 → DomainSelection 발행 → /selected_domain 대기.
         함수 호출 루프 진입은 _selected_callback에서.
-        """
-        if self._user_command is not None:
-            self.get_logger().warn(
-                f'이미 처리 중인 명령이 있어 새 명령 무시: {msg.data!r}'
-            )
-            return
 
-        self._user_command = msg.data
-        self._verify_count = 0
+        결정 ⑥: RUNNING 중에만 신규 명령을 거부한다. IDLE / WAITING_USER 상태면
+        새 명령을 수락해 (대기 중이던 태스크를 포기하고) 재시작한다.
+        """
+        with self._lock:
+            if self._state == self.STATE_RUNNING:
+                self.get_logger().warn(
+                    f'루프 실행 중 — 새 명령 무시: {msg.data!r}'
+                )
+                return
+            self._user_command = msg.data
+            self._verify_count = 0
+            self._state = self.STATE_IDLE  # hot-swap 대기 단계
+
         self.get_logger().info(f'/user_command 수신: {msg.data!r}')
 
         domain = self._classify_domain(msg.data)
@@ -228,7 +339,7 @@ class AgentNode(Node):
             self.get_logger().error(
                 f'도메인 분류 실패 (매칭되는 키워드 없음): {msg.data!r}'
             )
-            self._user_command = None
+            self._to_idle()
             return
 
         sel = DomainSelection()
@@ -239,21 +350,34 @@ class AgentNode(Node):
 
     def _selected_callback(self, msg: String) -> None:
         """
-        llama_server_manager가 hot-swap 완료를 통보 → 함수 호출 루프 시작.
+        llama_server_manager가 hot-swap 완료를 통보 → 워커 스레드에서 루프 시작.
+        결정 ①: 콜백 자체는 워커를 띄우고 즉시 반환한다.
         """
-        if self._user_command is None:
-            return  # 처리 중인 명령 없음 (외부에서 임의 발행 등)
+        with self._lock:
+            if self._user_command is None:
+                return  # 처리 중인 명령 없음 (외부에서 임의 발행 등)
+            if self._state == self.STATE_RUNNING:
+                self.get_logger().warn(
+                    '이미 루프 실행 중 — /selected_domain 중복 수신 무시'
+                )
+                return
+            self._active_domain = msg.data
+            self._state = self.STATE_RUNNING
+            self._loop_thread = threading.Thread(
+                target=self._run_function_loop,
+                name='agent_fn_loop',
+                daemon=True,
+            )
 
-        self._active_domain = msg.data
         self.get_logger().info(
-            f'hot-swap 완료 통보 수신: domain={msg.data!r} → 함수 호출 루프 시작'
+            f'hot-swap 완료 통보 수신: domain={msg.data!r} → 워커 스레드에서 루프 시작'
         )
-        self._run_function_loop()
+        self._loop_thread.start()
 
     def _exec_status_callback(self, msg: ExecutionStatus) -> None:
         """
         act_node가 SubtaskCommand 실행 결과 통보.
-        execute_subtask 호출 측이 대기 중일 때만 의미를 가진다.
+        execute_subtask 가 대기 중인 subtask_id 와 일치할 때만 Event 를 깨운다.
         """
         if msg.subtask_id != self._pending_subtask_id:
             return  # 다른 subtask 응답 (아마 stale)
@@ -262,9 +386,7 @@ class AgentNode(Node):
         self.get_logger().info(
             f'/execution_status 수신: id={msg.subtask_id!r} status={msg.status!r}'
         )
-        # 실제 루프 진행은 _run_function_loop의 루프에서 폴링 / 또는 후속 콜백에서 처리.
-        # 단일 스레드 spin 환경에서 동기 대기를 구현하려면 별도 callback group이 필요.
-        # 여기서는 미구현 영역으로 남기고 _run_function_loop에서 NotImplementedError로 명시한다.
+        self._status_event.set()
 
     # ── 도메인 분류 ───────────────────────────────
 
@@ -274,7 +396,7 @@ class AgentNode(Node):
 
         현재는 _domain_map(flat keyword → domain) 안의 키워드가 명령 문자열에
         포함되는지를 단순 substring 검사로 판단한다. 가장 먼저 매칭되는 항목을
-        반환. 매칭 우선순위, 동의어 정규화, 다국어 처리 등은 README 미확정.
+        반환. 매칭 우선순위, 동의어 정규화, 다국어 처리 등은 운영 중 확정.
 
         매칭 실패 시 None.
         """
@@ -283,130 +405,505 @@ class AgentNode(Node):
                 return domain
         return None
 
-    # ── 함수 호출 루프 ────────────────────────────
+    # ── 상태 전이 헬퍼 ────────────────────────────
+
+    def _to_idle(self) -> None:
+        with self._lock:
+            self._state = self.STATE_IDLE
+            self._user_command = None
+            self._pending_subtask_id = None
+
+    def _to_waiting_user(self) -> None:
+        # _user_command 는 로깅/디버그용으로 유지. 새 명령이 override.
+        with self._lock:
+            self._state = self.STATE_WAITING_USER
+            self._pending_subtask_id = None
+
+    # ── 함수 호출 루프 (워커 스레드) ──────────────
 
     def _run_function_loop(self) -> None:
         """
-        Gemma 함수 호출 루프 본체.
-          look_scene → execute_subtask → (/go_home) → verify_result
-          → SUCCESS면 종료, 그 외는 max_verify_iterations까지 재시도.
+        Gemma 함수 호출 루프 본체 (워커 스레드에서 실행 — 결정 ①).
 
-        verify 직전 /go_home 강제 (2026-05-25 freeze):
-          execute_subtask 의 ExecutionStatus 수신 후 verify_result 호출 전에
-          /go_home 서비스를 1회 호출한다. 이로써 카메라 시야 안의 팔 자세가
-          매번 home_pose 로 고정되어 verify 학습 분포 (모두 home_pose 로 렌더)
-          와 일치한다. /go_home 은 약 ~2초 차단성 호출이며, 그 동안 카메라
-          프레임은 latest-only 캐시이므로 verify_result 가 받는 RGB 는 복귀
-          완료 후의 한 프레임.
+        결정 ④: 시도(attempt) 단위로 look→execute→go_home→verify 전체를 재실행한다.
+          각 시도는 [system, user_command] 에서 새로 시작 → 매 시도가 function_call
+          학습 분포(단일 시퀀스)와 일치. verify 결과를 모델에 다시 먹이지 않는다.
+          시도 수 ≤ max_verify_iterations, SUCCESS 면 즉시 종료.
 
-        TODO: 구현 시 추가 결정 필요
-          1) 동기/비동기 실행 모델
-             - 본 노드는 ROS2 콜백에서 HTTP 호출과 ExecutionStatus 대기를
-               함께 수행해야 한다. 단일 스레드 spin에서는 차단 호출을 그대로
-               쓰면 다른 콜백이 멈춘다.
-             - 권장: rclpy MultiThreadedExecutor + ReentrantCallbackGroup으로
-               서비스 응답 / status 응답 / Gemma HTTP를 동시 처리 가능하게 함.
-               (변경 시 main()도 함께 수정 필요)
-
-          2) Gemma 함수 호출 프로토콜
-             - llama-server --jinja 활성 시 OpenAI 호환 함수 호출 형식 사용
-             - 시스템 프롬프트에 look_scene/execute_subtask/verify_result 시그니처
-               선언 → 모델이 JSON으로 함수 호출 응답
-             - 본 메서드는 응답 파싱 후 매칭되는 _call_*() 디스패치
-               (function_call 학습 데이터의 형식과 일치해야 함 — README Q&A 데이터 생성)
-
-          3) 종료 처리
-             - SUCCESS: self._user_command = None, _active_domain 유지(다음 명령 시 재평가)
-             - max 초과: WAITING_USER 상태로 진입. 현재는 단순히 _user_command를
-               유지하고 사용자 개입 토픽(예: /user_intervention) 대기 — 토픽
-               명세 미확정.
+        결정 ⑥: 초과 시 WAITING_USER 진입 + AgentLog 종료 마커.
         """
-        raise NotImplementedError(
-            "[agent_node] _run_function_loop() 미구현. "
-            "Gemma 함수 호출 프로토콜과 동기화 모델 확정 후 구현하세요."
-        )
+        try:
+            cmd = self._user_command
+            self.get_logger().info(
+                f'함수 호출 루프 시작: cmd={cmd!r} domain={self._active_domain!r}'
+            )
+
+            final = VerifyStatus.UNCLEAR
+            for attempt in range(1, self.max_verify_iterations + 1):
+                self._verify_count = attempt
+                self.get_logger().info(
+                    f'[attempt {attempt}/{self.max_verify_iterations}] '
+                    f'look→execute→go_home→verify'
+                )
+                final = self._run_single_attempt()
+                if final == VerifyStatus.SUCCESS:
+                    self.get_logger().info('verify SUCCESS — 태스크 완료')
+                    self._to_idle()
+                    return
+                self.get_logger().warn(
+                    f'verify={final!r} (attempt {attempt}) — 재시도'
+                )
+
+            # max_verify_iterations 초과 → 사용자 개입 대기 (결정 ⑥)
+            self.get_logger().error(
+                f'max_verify_iterations({self.max_verify_iterations}) 초과 — '
+                f'WAITING_USER 진입 (마지막 verify={final!r})'
+            )
+            self._emit_log(
+                thought='',
+                tool='',
+                args=json.dumps({'command': cmd}, ensure_ascii=False),
+                result=f'WAITING_USER:{final}',
+            )
+            self._to_waiting_user()
+
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().error(f'함수 호출 루프 예외: {type(e).__name__}: {e}')
+            self._to_idle()
+
+    def _run_single_attempt(self) -> str:
+        """
+        한 시도: 텍스트 전용 함수 호출 대화로 look_scene → execute_subtask 를 거쳐
+        verify_result 까지 진행하고 그 status 를 반환한다.
+
+        결정 ②: 대화는 텍스트 전용. look_scene 의 실제 grounding 은 _call_look_scene
+                내부의 별도 VLM 호출이 담당하고, 그 결과를 '[tool_result] ' 로 피드한다.
+        결정 ④: execute 직후 모델 응답이 verify_result 함수 호출이 아니면 코드가
+                verify_result 를 강제 호출 (deploy/README.md verify fallback).
+        """
+        messages: List[dict] = [
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user',   'content': self._user_command},
+        ]
+        last_target: Optional[str] = None
+        exec_seen = False
+
+        for _ in range(_INNER_MAX_TURNS):
+            message = self._chat_completion(messages)
+            parsed  = self._parse_function_call(message)
+
+            if parsed is None:
+                # 함수 호출 JSON 이 아님.
+                if exec_seen:
+                    # verify fallback (결정 ④)
+                    self.get_logger().warn(
+                        '마지막 turn 응답이 verify_result 함수 호출 아님 — '
+                        f'코드 강제 호출. message={message!r}'
+                    )
+                    return self._call_verify_result(self._user_command)
+                self.get_logger().error(
+                    f'함수 호출 파싱 실패 (execute 이전) — 시도 중단. message={message!r}'
+                )
+                return VerifyStatus.UNCLEAR
+
+            fn   = parsed['function']
+            args = parsed['args']
+            messages.append(
+                {'role': 'assistant',
+                 'content': json.dumps(parsed, ensure_ascii=False)}
+            )
+
+            if fn == 'look_scene':
+                self._emit_log('', fn, json.dumps(args, ensure_ascii=False), '')
+                desc = self._call_look_scene(args.get('prompt', ''))
+                last_target = desc
+                self._feed_tool_result(messages, desc or '')
+
+            elif fn == 'execute_subtask':
+                target = args.get('target_description') or last_target or ''
+                self._emit_log('', fn,
+                               json.dumps({'target_description': target}, ensure_ascii=False), '')
+                status = self._call_execute_subtask(target)
+                exec_seen = True
+                # verify 직전 /go_home 강제 (deploy/README.md freeze 2026-05-25)
+                self._call_go_home()
+                self._feed_tool_result(messages, status)
+
+            elif fn == 'verify_result':
+                return self._call_verify_result(
+                    args.get('original_command') or self._user_command
+                )
+
+            else:
+                self.get_logger().error(f'알 수 없는 함수 호출: {fn!r}')
+                if exec_seen:
+                    return self._call_verify_result(self._user_command)
+                return VerifyStatus.UNCLEAR
+
+        # inner turn 소진 (verify 를 못 봄)
+        if exec_seen:
+            self.get_logger().warn('inner turn 소진 — verify_result 강제 호출')
+            return self._call_verify_result(self._user_command)
+        return VerifyStatus.UNCLEAR
 
     # ── Gemma 함수 호출 핸들러 (개별) ─────────────
 
     def _call_look_scene(self, prompt: str) -> Optional[str]:
         """
-        Gemma VLM에 RGB + prompt 입력 → 자연어 target_description 반환.
+        Gemma VLM에 RGB + prompt 입력 → 자연어 target_description 반환 (결정 ②).
 
-        반환 형식 (엄격, LoRA가 이 분포로 학습됨):
-          영어 반구조화 템플릿  "the {attribute} {object} {spatial}"
-          - 5~15 단어
-          - vocabulary: deploy/config/label_vocab.yaml과 일치
-          - 예: "the blue can on the right side of the table"
+        함수 호출 대화와 분리된 별도 chat completion:
+          system : prompts.LOOK_SCENE_SYSTEM_PROMPT (SYSTEM_PROMPT 아님)
+          user   : [image (현재 RGB, base64 data URI), text=prompt]  ← image-first
+        반환 형식: "the {attribute} {object} {spatial}" (5~15 단어, 영어).
 
-        검증 권장 (구현 시):
-          - 정규식으로 템플릿 매칭, 실패 시 1회 재시도
-          - vocabulary 외 단어 포함 시 재시도 또는 강제 매핑
-
-        TODO: 구현 시 결정
-          - llama-server /v1/chat/completions 페이로드 (이미지 base64 임베드)
-          - 시스템 프롬프트는 robot_arm_pkg.prompts.SYSTEM_PROMPT 를 그대로 사용
-            (LoRA 학습 분포와 일치 보장 — function_call 합성기도 같은 상수를 import)
-          - 응답 파싱(JSON 함수 호출) 또는 그냥 본문 텍스트
-          - 최신 RGB 미수신 시 처리 정책 (대기 / 즉시 실패)
+        검증: 템플릿 1차 정규식. 불일치 시 1회 재시도. (전체 vocab 멤버십 검증은 후속.)
+        RGB 미수신 시 None 반환 → 호출 측이 빈 tool_result 로 피드.
         """
-        raise NotImplementedError("[agent_node] _call_look_scene() 미구현")
+        if self._latest_rgb is None:
+            self.get_logger().error('look_scene: RGB 미수신 — 묘사 불가')
+            return None
 
-    def _call_execute_subtask(self, target_description: str) -> Optional[ExecutionStatus]:
-        """
-        target_description을 임베딩 → SubtaskCommand 발행 → ExecutionStatus 수신까지 대기.
+        try:
+            uri = self._rgb_to_data_uri(self._latest_rgb)
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().error(f'look_scene: RGB 인코딩 실패: {e}')
+            return None
 
-        TODO: 구현 시 결정
-          - subtask_id 발급 정책 (UUID? 카운터?)
-          - ExecutionStatus 대기 타임아웃
-          - 임베딩 서비스 실패 시 fallback (재시도 / 빈 임베딩)
+        user_content = [
+            {'type': 'image_url', 'image_url': {'url': uri}},
+            {'type': 'text', 'text': prompt or 'describe the object to grasp'},
+        ]
+        messages = [
+            {'role': 'system', 'content': LOOK_SCENE_SYSTEM_PROMPT},
+            {'role': 'user',   'content': user_content},
+        ]
+
+        text = ''
+        for attempt in range(2):
+            message = self._chat_completion(messages, max_tokens=64)
+            text = self._message_text(message)
+            # 한 줄만 사용 + 따옴표 제거
+            text = (text.splitlines()[0] if text else '').strip().strip('"\'').strip()
+            if _LOOK_SCENE_RE.match(text):
+                return text
+            self.get_logger().warn(
+                f'look_scene 출력 형식 불일치 (시도 {attempt + 1}): {text!r}'
+            )
+        # 형식 검증 실패해도 마지막 텍스트를 best-effort 로 반환 (없으면 None)
+        return text or None
+
+    def _call_execute_subtask(self, target_description: str) -> str:
         """
-        raise NotImplementedError("[agent_node] _call_execute_subtask() 미구현")
+        target_description을 임베딩 → SubtaskCommand 발행 → ExecutionStatus 대기.
+
+        결정 ①: _status_event 로 동기 대기 (워커 스레드).
+        결정 ③(2c): act_node 가 소문자로 발행하는 케이스 대비 .upper() 방어 정규화.
+
+        반환: ExecStatus 문자열 (SUCCESS / FAIL / TIMEOUT). 대기 타임아웃 시 TIMEOUT.
+        """
+        if not target_description:
+            self.get_logger().error('execute_subtask: target_description 비어있음')
+
+        embedding = self._embed_text(target_description)
+        subtask_id = uuid.uuid4().hex
+
+        # 대기 상태 초기화 후 발행 (race 방지: pending 설정 → event clear → publish)
+        self._last_status = None
+        self._pending_subtask_id = subtask_id
+        self._status_event.clear()
+
+        cmd = SubtaskCommand()
+        cmd.subtask_id         = subtask_id
+        cmd.domain             = self._active_domain or ''
+        cmd.target_description = target_description
+        cmd.language_embedding = [float(x) for x in embedding]
+        self.subtask_pub.publish(cmd)
+        self.get_logger().info(
+            f'SubtaskCommand 발행: id={subtask_id} target={target_description!r} '
+            f'embed_dim={len(embedding)}'
+        )
+
+        if not self._status_event.wait(self.exec_timeout_s):
+            self.get_logger().error(
+                f'ExecutionStatus 대기 타임아웃({self.exec_timeout_s}s) id={subtask_id}'
+            )
+            self._pending_subtask_id = None
+            return ExecStatus.TIMEOUT
+
+        st = self._last_status
+        self._pending_subtask_id = None
+        if st is None:
+            return ExecStatus.TIMEOUT
+        return (st.status or '').upper() or ExecStatus.TIMEOUT  # 결정 ③(2c) 방어 정규화
+
+    def _call_go_home(self) -> None:
+        """
+        /go_home (std_srvs/Trigger) 1회 호출 — verify 직전 팔 자세를 home_pose 로
+        고정 (deploy/README.md freeze 2026-05-25). 서비스 부재/실패 시 경고만 하고
+        진행한다 (verify 학습 분포(home_pose 단일)와 어긋날 위험은 로그로 남김).
+        """
+        if not self.go_home_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn(
+                '/go_home 서비스 없음 — 건너뜀 (verify 자세 분포 불일치 위험)'
+            )
+            return
+
+        future = self.go_home_client.call_async(Trigger.Request())
+        res = self._wait_future(future, _GO_HOME_TIMEOUT_SEC)
+        if res is None:
+            self.get_logger().warn('/go_home 응답 타임아웃')
+        elif not res.success:
+            self.get_logger().warn(f'/go_home 실패: {res.message}')
+        else:
+            self.get_logger().info(f'/go_home 완료: {res.message}')
 
     def _call_verify_result(self, original_command: str) -> str:
         """
-        verify_result 함수 명세 (README "verify_result 함수 명세") 구현.
+        verify_result 함수 명세 구현 (결정 ②③).
 
-        Stateless 인터페이스로 freeze (2026-05-25):
-          Gemma 가 함수 호출 시 original_command 를 args 로 전달하며, agent_node
-          는 self._user_command 캐시 대신 인자를 우선 사용한다 (function_call 학습 분포
-          및 robot_arm_pkg.prompts.SYSTEM_PROMPT 와 일치).
+        Stateless: original_command 인자를 우선 사용 (function_call 학습 분포 일치).
+        전제: 호출 직전 /go_home 으로 팔이 home_pose 에 있음 (verify 학습 분포 일치).
 
-        전제 (2026-05-25 freeze):
-          호출 시점에 팔이 home_pose 에 있다 — _run_function_loop 가 verify
-          호출 직전에 /go_home 을 보장한다. verify 학습 분포가 home_pose 단일로
-          렌더되므로 본 함수가 캡처하는 RGB 도 같은 자세여야 함.
+        1) Gemma 시각 검증 (별도 chat completion):
+             system : prompts.VERIFY_SYSTEM_PROMPT
+             user   : [image (현재 RGB), text "original_command: \"...\"..."]  ← image-first
+             응답   : {"status": <enum>, "reasoning": <english>}
+           (generate_verify_qa.build_sample 의 user_text 와 정확히 일치시킴)
+        2) depth grasp 보조 검증 — _depth_grasp_check()
+        3) 종합 판정 — _combine_verify() (결정 ③: Gemma 우선 + depth 단방향 veto)
 
-        시각 검증 호출 (Gemma):
-          별도 chat completion (function_call 함수 호출 대화와 분리) 로 다음을 보낸다:
-            system : robot_arm_pkg.prompts.VERIFY_SYSTEM_PROMPT
-            user   : [image (현재 RGB), text "original_command: \\"...\\""]
-          응답: {"status": <enum>, "reasoning": <english string>}
-
-        입력:
-          - original_command (인자): Gemma 가 전달하는 원본 사용자 명령 문자열
-          - 현재 RGB / depth (latest-only 캐시)
-          - 직전 subtask 정보 (subtask_id / target_description) — 노드 상태
-
-        처리:
-          1) Gemma 시각 검증 (위 별도 호출)
-          2) depth grasp 보조 검증 — _depth_grasp_check()
-          3) 종합 판정 — README 미확정 #1 (depth 우선 / Gemma 우선 / 가중평균)
-
-        출력: VerifyStatus.SUCCESS | FAIL | PARTIAL | UNCLEAR (문자열)
+        reasoning 은 로그용으로만 사용 (training/README.md 이슈 2).
+        반환: VerifyStatus 문자열.
         """
-        raise NotImplementedError("[agent_node] _call_verify_result() 미구현")
+        gemma_status = VerifyStatus.UNCLEAR
+        reasoning = ''
+
+        if self._latest_rgb is None:
+            self.get_logger().warn('verify_result: RGB 미수신 → UNCLEAR')
+        else:
+            try:
+                uri = self._rgb_to_data_uri(self._latest_rgb)
+                user_text = (
+                    f'original_command: "{original_command}"\n'
+                    f'Output the verification JSON.'
+                )
+                messages = [
+                    {'role': 'system', 'content': VERIFY_SYSTEM_PROMPT},
+                    {'role': 'user', 'content': [
+                        {'type': 'image_url', 'image_url': {'url': uri}},
+                        {'type': 'text', 'text': user_text},
+                    ]},
+                ]
+                message = self._chat_completion(messages, max_tokens=128)
+                obj = self._extract_json(self._message_text(message))
+                if isinstance(obj, dict):
+                    status = obj.get('status')
+                    if status in _VALID_VERIFY:
+                        gemma_status = status
+                    else:
+                        self.get_logger().warn(
+                            f'verify status enum 벗어남: {status!r} → UNCLEAR'
+                        )
+                    reasoning = str(obj.get('reasoning', ''))
+                else:
+                    self.get_logger().warn(
+                        f'verify 응답 JSON 파싱 실패: {self._message_text(message)!r}'
+                    )
+            except Exception as e:  # noqa: BLE001
+                self.get_logger().error(f'verify_result Gemma 호출 실패: {e}')
+
+        depth = self._depth_grasp_check()
+        final = self._combine_verify(gemma_status, depth)
+
+        self._emit_log(
+            thought=reasoning,
+            tool='verify_result',
+            args=json.dumps({'original_command': original_command}, ensure_ascii=False),
+            result=json.dumps(
+                {'gemma': gemma_status, 'depth': depth, 'final': final},
+                ensure_ascii=False),
+        )
+        self.get_logger().info(
+            f'verify_result: gemma={gemma_status} depth={depth} → final={final}'
+        )
+        return final
+
+    def _combine_verify(self, gemma_status: str, depth: Optional[bool]) -> str:
+        """
+        결정 ③: Gemma status 우선 + depth 단방향 veto.
+          - depth None  → Gemma 단독 (depth 비활성/미실측).
+          - Gemma SUCCESS + depth False → PARTIAL 로 강등 (grasp 흔적 없음 → 재시도 유도).
+          - 그 외 → Gemma 신뢰. depth 단독 SUCCESS 승격은 없음.
+        """
+        if depth is None:
+            return gemma_status
+        if gemma_status == VerifyStatus.SUCCESS and depth is False:
+            self.get_logger().warn(
+                'verify: Gemma=SUCCESS 이나 depth grasp 흔적 없음 → PARTIAL 강등'
+            )
+            return VerifyStatus.PARTIAL
+        return gemma_status
 
     def _depth_grasp_check(self) -> Optional[bool]:
         """
-        grasp_roi.yaml로 정의된 ROI 내 depth 변화를 측정하여 grasp 성공 여부 산출.
+        grasp_roi.yaml ROI 내 depth 변화로 grasp 성공 여부 산출 (보조 신호).
 
-        TODO: 구현 시 결정
-          - ROI frame 변환 (camera | base_link)
-          - 이전 시점 depth와의 비교 vs threshold 절대값 비교
-          - 노이즈 처리 (median 필터 등)
-          - self._grasp_roi == None일 때 None 반환 → verify_result에서 depth 신호 무시
+        결정 ⑤: 현재는 안전 비활성(None) 골격. 다음 세 전제가 충족돼야 실판정 활성화:
+          (1) grasp_roi.yaml 실측값 배치 (현재는 README 예시 = 템플릿).
+          (2) depth 비교 기준 확정 (절대 임계 / pre-grasp 차분 — grasp_roi.yaml TODO).
+          (3) ROI 표현 충돌 해소 — grasp_roi 는 미터 단위 3D 박스라 depth 픽셀 투영에
+              카메라 intrinsics 가 필요하나, README "agent_node 는 intrinsics 비의존"
+              결정과 충돌. 미터 ROI 를 픽셀 ROI 로 바꾸거나 intrinsics 배선을 결정해야 함.
+
+        None 반환 시 _combine_verify 가 Gemma 단독으로 동작 (결정 ③).
         """
-        raise NotImplementedError("[agent_node] _depth_grasp_check() 미구현")
+        if self._grasp_roi is None or self._latest_depth is None:
+            return None
+
+        # 전제 (2)(3) 미확정 — 실판정 비활성. 활성화 시 아래를 구현:
+        #   a. depth 메시지 디코딩 (16UC1=mm / 32FC1=m → 미터 배열; camera_node 인코딩 확인)
+        #   b. ROI 마스킹 (frame 변환 / 미터→픽셀 투영 또는 픽셀 ROI)
+        #   c. ROI 내 median depth 와 비교기준(절대 임계 / pre-grasp 차분) 대조
+        #   d. depth_change_threshold 초과 → True (grasp 흔적), 아니면 False
+        self.get_logger().warn(
+            'depth grasp 검증 미활성 (grasp_roi 실측 / 비교기준 / intrinsics 미확정) '
+            '→ None (Gemma 단독)',
+            throttle_duration_sec=30.0,
+        )
+        return None
+
+    # ── llama-server HTTP / 파싱 헬퍼 ──────────────
+
+    def _chat_completion(self, messages: List[dict], max_tokens: int = 256) -> Optional[dict]:
+        """
+        llama-server /v1/chat/completions 호출 → choices[0].message dict 반환.
+
+        chat_template_kwargs.enable_thinking=false 필수 (deploy/README.md 실기 검증):
+          <|think|> 비활성. 없으면 함수 호출 JSON 이 content 가 아닌 reasoning_content
+          로 우회된다 (_message_text / _parse_function_call 에 fallback 도 둠).
+
+        HTTP 실패 시 None 반환 (호출 측이 파싱 실패로 처리).
+        """
+        body = {
+            'messages': messages,
+            'temperature': 0.0,          # 결정론적 (재현성)
+            'max_tokens': max_tokens,
+            'stream': False,
+            'chat_template_kwargs': {'enable_thinking': False},
+        }
+        try:
+            r = requests.post(
+                f'{self.server_url}/v1/chat/completions',
+                json=body,
+                timeout=_HTTP_TIMEOUT_SEC,
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data['choices'][0]['message']
+        except (requests.RequestException, KeyError, ValueError, IndexError) as e:
+            self.get_logger().error(f'/v1/chat/completions 실패: {e}')
+            return None
+
+    @staticmethod
+    def _message_text(message: Optional[dict]) -> str:
+        """
+        message 에서 본문 텍스트 추출. content 가 비면 reasoning_content 로 fallback
+        (enable_thinking 우회 케이스 방어 — deploy/README.md).
+        """
+        if not message:
+            return ''
+        text = (message.get('content') or '').strip()
+        if not text:
+            text = (message.get('reasoning_content') or '').strip()
+        return text
+
+    def _parse_function_call(self, message: Optional[dict]) -> Optional[dict]:
+        """
+        message → {"function": str, "args": dict} 추출. 실패 시 None.
+        content/reasoning_content fallback + 본문 군더더기 JSON 추출 포함.
+        """
+        obj = self._extract_json(self._message_text(message))
+        if (isinstance(obj, dict)
+                and isinstance(obj.get('function'), str)
+                and isinstance(obj.get('args', {}), dict)):
+            return {'function': obj['function'], 'args': obj.get('args', {})}
+        return None
+
+    @staticmethod
+    def _extract_json(text: str) -> Optional[object]:
+        """문자열에서 JSON 객체 파싱. 직접 실패 시 첫 {...} 블록 추출 재시도."""
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except (ValueError, TypeError):
+            pass
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    @staticmethod
+    def _feed_tool_result(messages: List[dict], value: str) -> None:
+        """
+        tool_result 를 '[tool_result] ' prefix 가 붙은 user 메시지로 추가.
+        (function_call 학습 분포 = TOOL_RESULT_PREFIX 와 일치 — generate_function_call_qa.)
+        """
+        messages.append(
+            {'role': 'user', 'content': '[tool_result] ' + str(value)}
+        )
+
+    def _rgb_to_data_uri(self, img_msg: Image) -> str:
+        """sensor_msgs/Image(RGB) → PNG base64 data URI (OpenAI image_url 형식).
+
+        cv_bridge 는 NumPy 2.x ABI 문제로 회피 (utils.ros_image 와 동일 사유).
+        PIL 인코딩 — Jetson 배포 env 에 pillow 필요.
+        """
+        from PIL import Image as PILImage  # noqa: PLC0415 (lazy: 텍스트 경로 import 보호)
+
+        arr = image_msg_to_rgb_array(img_msg)
+        buf = io.BytesIO()
+        PILImage.fromarray(arr).save(buf, format='PNG')
+        b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+        return f'data:image/png;base64,{b64}'
+
+    # ── 서비스 호출 헬퍼 (워커 스레드) ────────────
+
+    def _wait_future(self, future, timeout: float):
+        """
+        call_async future 를 워커 스레드에서 동기 대기 (결정 ①).
+        이미 executor 가 스핀 중이라 spin_until_future_complete 사용 불가 →
+        done_callback 으로 Event 를 깨운다.
+        """
+        ev = threading.Event()
+        future.add_done_callback(lambda _f: ev.set())
+        if not ev.wait(timeout):
+            return None
+        try:
+            return future.result()
+        except Exception as e:  # noqa: BLE001
+            self.get_logger().error(f'서비스 future 예외: {e}')
+            return None
+
+    def _embed_text(self, text: str) -> List[float]:
+        """
+        /embed_text 서비스 호출 → language_embedding (실패 시 빈 리스트).
+        """
+        if not self.embed_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error('/embed_text 서비스 없음 → 빈 임베딩')
+            return []
+        req = EmbedText.Request()
+        req.text = text
+        future = self.embed_client.call_async(req)
+        res = self._wait_future(future, _SERVICE_TIMEOUT_SEC)
+        if res is None:
+            self.get_logger().error('/embed_text 응답 없음/타임아웃 → 빈 임베딩')
+            return []
+        return list(res.embedding)
 
     # ── AgentLog 발행 헬퍼 ────────────────────────
 
@@ -433,8 +930,11 @@ class AgentNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = AgentNode()
+    # 결정 ①: MultiThreadedExecutor — 워커가 대기하는 동안 콜백/서비스 응답이 흐른다.
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

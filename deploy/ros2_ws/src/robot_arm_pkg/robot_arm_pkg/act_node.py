@@ -55,6 +55,10 @@ from sensor_msgs.msg import Image, JointState
 
 from robot_arm_msgs.msg import SubtaskCommand, ExecutionStatus
 
+# ExecutionStatus.status SSoT — 대문자 enum (agent_node 가 case 변환 없이 Gemma
+# tool_result 로 전달, function_call 학습 분포도 대문자). 소문자 리터럴 금지.
+from robot_arm_pkg.prompts import ExecStatus
+
 # SO-101 관절 이름 — robot_controller_node.py 와 동일한 순서 유지
 SO101_JOINT_NAMES: List[str] = [
     'shoulder_pan',
@@ -189,7 +193,7 @@ class ACTNode(Node):
 
         # chunk 소진 시 종료 → ExecutionStatus 발행
         if self._chunk_idx >= len(self._chunk):
-            self._finish_subtask(status='success', failure_reason='', confidence=0.0)
+            self._finish_subtask(status=ExecStatus.SUCCESS, failure_reason='', confidence=0.0)
             return
 
         cmd = self._chunk[self._chunk_idx]
@@ -202,7 +206,8 @@ class ACTNode(Node):
         """
         ExecutionStatus를 1회 발행하고 idle 상태로 복귀.
 
-        status: "success" | "fail" | "timeout"
+        status: ExecStatus.SUCCESS | FAIL | TIMEOUT (대문자 — SSoT prompts.ExecStatus).
+                agent_node 가 case 변환 없이 Gemma tool_result 로 전달한다.
         """
         if self._active_cmd is None:
             return

@@ -804,7 +804,7 @@ datasets = [
 
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
-| `agent_node.py` | Gemma 함수 호출 루프(`look_scene`/`execute_subtask`/`verify_result`), llama-server HTTP 클라이언트, `verify_result` 내부 depth grasp 검증 본체, task 종료 시 `/go_home` 서비스 호출 | Gemma 도메인 LoRA 학습, llama-server 구동, embedding_node |
+| `agent_node.py` | `_depth_grasp_check()` 실판정만 잔여(현재 안전 비활성 `None`). 함수 호출 루프 본체는 구현 완료(아래 "작성 완료" 참조) | grasp_roi 실측 + 비교기준/미터-ROI↔intrinsics 충돌 해소 (`deploy/config/grasp_roi.yaml` 행과 연동) |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `training/imitation_data/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `training/imitation_data/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
@@ -835,6 +835,11 @@ datasets = [
 > - `training/lora_finetuning/convert_lora_to_gguf.sh` (BASE_MODEL HF repo id 자동 다운로드 + 변환 본체)
 > - 산출물: `models/gemma/adapters/adapter_{recycling,tableware}.gguf` 양 도메인 GGUF 생성 완료 (gitignore — Jetson 으로 scp 전송 대상)
 > - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/llama_server_manager.py` `_hot_swap()` 본체 구현 (id 기반 `/lora-adapters` HTTP) + Jetson Orin Nano 8GB 실기 hot-swap 검증 완료 (init deactivate / recycling↔tableware swap / 같은 도메인 재요청 idempotency 통과). 자세한 검증 명령과 결과는 [deploy/README.md](deploy/README.md) "LoRA hot-swap 실기 검증 (2026-06-02)" 참조.
+>
+> **agent_node 함수 호출 루프 본체 — 구현 완료 (2026-06-03)**:
+> - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py` `_run_function_loop` / `_call_look_scene` / `_call_execute_subtask` / `_call_verify_result` 본체 구현 (llama-server `/v1/chat/completions` HTTP, `/embed_text`·`/go_home` 서비스, verify_result fallback, attempt 단위 재시도, `WAITING_USER` 종료 상태). 실행 모델은 워커 스레드 + `MultiThreadedExecutor`. 구현 결정 6건은 파일 상단 docstring + [deploy/README.md](deploy/README.md) "구현 결정 사항 (2026-06-03)" 참조.
+> - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/prompts.py` `LOOK_SCENE_SYSTEM_PROMPT` 추가 (look_scene 그라운딩 전용 — 배포 전용, 학습 분포 없음). `act_node.py` `ExecutionStatus.status` 대문자 enum(`ExecStatus`) 발행으로 교정.
+> - 잔여: `_depth_grasp_check()` 실판정(현재 안전 비활성 `None`) — grasp_roi 실측 + 미터-ROI↔intrinsics 충돌 해소 후. look_scene 묘사 정확도는 Jetson 실기 검증 필요.
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.
