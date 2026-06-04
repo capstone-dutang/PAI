@@ -89,24 +89,44 @@ echo -e "${GREEN}pip 패키지 설치 완료${NC}"
 # ROS 2 노드는 시스템 Python(/usr/bin/python3)으로 실행되므로 학습용 venv와는
 # 별개로 ~/.local site-packages에도 핵심 의존성이 필요하다. venv 활성화 여부와
 # 무관하게 시스템 python3를 명시적으로 호출해 user-local로만 설치한다.
-#   - setuptools<60: ROS 2 humble의 ament_python은 setuptools 58 기준으로
-#                    install_scripts 위치를 lib/<pkg>/로 redirect한다. 60+
-#                    에서 동작이 변경돼 console_scripts가 bin/으로 가버려
-#                    `ros2 launch`가 노드를 못 찾는다.
-#   - pandas: 시스템 dist-packages의 구버전이 user-local numpy(2.x)와
-#             바이너리 호환되지 않아 ROS 노드 import 시 충돌. user-local에
-#             깔아 sys.path 우선순위로 해결.
-#   - transforms3d: easy_handeye2 런타임 의존성.
-#   - lerobot[feetech]: SO-101 모터 통신용 Feetech SDK(scservo_sdk)가
-#                       lerobot의 feetech extras에 묶여 있다. 이게 없으면
-#                       robot_controller_node가 import 단계에서 죽는다.
+#
+# ⚠️ 설치 순서가 중요하다 (2026-06-04 Jetson Orin Nano 8GB 실기에서 확인된 함정):
+#   (1) pandas/transforms3d/lerobot 을 먼저 설치한다.
+#       - transforms3d: easy_handeye2 런타임 의존성.
+#       - lerobot[feetech]: SO-101 모터 통신용 Feetech SDK(scservo_sdk)가 lerobot 의
+#         feetech extras 에 묶여 있다(없으면 robot_controller_node 가 import 단계에서
+#         죽음). lerobot 은 동시에 setuptools>=71 / numpy / torch(CPU) 를 끌어온다.
+#   (2) torch/torchvision 을 Jetson(JetPack 6.2 / CUDA 12.6)용 cu126 wheel 로 교체.
+#       PyPI generic wheel 은 CPU 전용(+cpu)이라 cuda 불가 → act_node/embedding_node
+#       의 GPU 추론이 실패한다. lerobot 0.4.4 의 torch<2.11,>=2.2.1 /
+#       torchvision<0.26,>=0.21 범위를 만족하는 2.8.0 / 0.23.0 을 jetson-ai-lab
+#       index(.io 도메인 — .dev 는 DNS 실패)에서 받는다.
+#   (3) numpy 를 1.26.4 로 고정한다. Jetson torch wheel 은 NumPy 1.x ABI 로 빌드돼
+#       numpy 2.x 와 충돌한다("Failed to initialize NumPy" → torch.from_numpy 깨짐,
+#       act_node 추론 시 크래시). 반드시 torch 설치 뒤에 1.x 로 내린다.
+#   (4) setuptools 를 59.8.0(<60)으로 맨 마지막에 고정한다. ROS 2 humble 의
+#       ament_python 은 setuptools 58 기준으로 console_scripts 를 lib/<pkg>/ 로
+#       배치하는데, 60+ 에서는 bin/ 으로 가버려 `ros2 run` 이 노드를 못 찾는다.
+#       lerobot 이 setuptools>=71 을 요구하지만(설치 시 pip 경고만), 런타임 import 는
+#       59.8.0 에서 정상 동작한다. 이 고정을 lerobot 설치보다 앞에 두면 lerobot 이
+#       다시 setuptools 80+ 로 올려버리므로 반드시 맨 마지막에 둔다.
 echo -e "\n${YELLOW}[4/7] ROS 노드용 user-local 패키지 설치${NC}"
 
-/usr/bin/python3 -m pip install --user "setuptools<60"
+# (1) lerobot + 보조 패키지 (lerobot 이 setuptools/numpy/torch 를 의존성으로 끌어옴)
 /usr/bin/python3 -m pip install --user --upgrade \
     pandas \
     transforms3d
 /usr/bin/python3 -m pip install --user --upgrade "lerobot[feetech]==0.4.4"
+
+# (2) Jetson(cu126)용 torch/torchvision 으로 교체 (CPU wheel → CUDA wheel)
+/usr/bin/python3 -m pip install --user torch==2.8.0 torchvision==0.23.0 \
+    --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+# (3) numpy 1.x 로 고정 (Jetson torch wheel 의 NumPy 1.x ABI 호환)
+/usr/bin/python3 -m pip install --user "numpy==1.26.4"
+
+# (4) ament_python 빌드용 setuptools<60 을 맨 마지막에 고정 (순서 중요 — 위 주석 참조)
+/usr/bin/python3 -m pip install --user "setuptools==59.8.0"
 
 echo -e "${GREEN}user-local 패키지 설치 완료${NC}"
 

@@ -103,6 +103,16 @@ from robot_arm_pkg.prompts import ExecStatus
 # cv_bridge 비의존 이미지 변환 (NumPy 1.x/2.x 양쪽 호환) — robot_controller/agent 와 동일 유틸.
 from robot_arm_pkg.utils.ros_image import image_msg_to_rgb_array
 
+# ── GPU 메모리 단편화 회피 (torch import / CUDA init 전에 설정해야 효력) ──
+# 8GB Orin Nano 의 unified memory 에서 llama-server(GPU 상주)와 ACT 가 공존할 때,
+# torch 기본 caching allocator 가 큰 연속 블록을 잡아 GPU 단편화가 생기면, 메모리
+# 총량이 충분해도(예: llama 2.3G + act 0.6G ≪ 8G) NvMap ENOMEM 으로 cuda 로드가
+# 실패한다(2026-06-04 Jetson Orin Nano 실기 확인). expandable_segments 로 확장형
+# 세그먼트 할당을 써 이를 회피한다. torch 는 _load_policy 에서 lazy import 되므로
+# 모듈 로드 시점의 이 설정이 그 전에 적용된다. 외부에서 PYTORCH_CUDA_ALLOC_CONF 를
+# 지정하면 그 값을 존중한다(setdefault).
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 # SO-101 관절 이름 — robot_controller_node.py 와 동일한 순서 유지
 SO101_JOINT_NAMES: List[str] = [
     'shoulder_pan',
