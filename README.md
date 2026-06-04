@@ -416,6 +416,20 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 > Gemma LoRA는 llama-server에 HTTP `/lora-adapters` 요청으로 hot-swap (서브-초 latency).
 > 한 태스크가 끝나는 시점(verify_result 직후)에 스왑하면 안정적이다.
 
+> **GPU 공존 운영 (2026-06-04 실기 확인) — Orin Nano 8GB unified memory**:
+> llama-server(GPU, `--n-gpu-layers 99`)와 act_node(GPU, torch)가 같은 메모리를 공유한다.
+> 메모리 **총량은 충분**(llama ~2.3G + act ~0.6G + OS ≪ 8G)하지만, torch 기본 caching
+> allocator 의 큰 연속 블록 할당이 GPU **단편화**를 일으켜 `NvMap error 12 (ENOMEM)` +
+> `NVML ASSERT` 로 cuda 로드가 실패할 수 있다(총량이 충분해도). 다음으로 회피·운영한다:
+> - **act_node**: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`(확장형 세그먼트 할당으로
+>   단편화 회피). `act_node.py` 가 setdefault 하므로 빌드본은 자동 적용, 수동 실행 시 prefix
+>   로 보강. `-p device:=cuda` 명시 권장(시작 로그의 `device: cpu` 는 lazy 로드 전 기본값).
+> - **embedding_node**: `-p device:=cpu` 로 실행해 GPU 를 llama/act 에 양보(임베딩은 이벤트성·
+>   경량이고 agent 가 사전 임베딩하므로 CPU 로 충분).
+> - **전원/메모리**: 검증 동안 **GUI 끔**(`sudo systemctl set-default multi-user.target`,
+>   ~1GB 확보) + **전원 MAXN**(`sudo nvpmodel -m 0 && sudo jetson_clocks`)으로 할당 안정성 확보.
+> 위 배분으로 6개 노드 + llama-server 가 8GB 안에 공존함을 실기에서 확인.
+
 ---
 
 ## Jetson 환경 설치
@@ -471,6 +485,15 @@ chmod +x deploy/scripts/setup_calibration.sh
 | lerobot | 0.4.4 | SO-101 SDK, LeRobotDataset, ACTPolicy |
 | PyYAML | ≥6.0 | calibration / config YAML 파싱 |
 | sentence-transformers | ≥2.2.0 | `embedding_node` — paraphrase-multilingual-MiniLM-L12-v2 (D=384) |
+
+> ⚠️ **Jetson 실기 — torch/numpy/setuptools 는 위 generic 버전이 아니라 고정값 사용**:
+> Jetson(JetPack 6.2 / CUDA 12.6)에서는 PyPI generic torch wheel 이 CPU 전용(+cpu)이라
+> cuda 불가. **`torch==2.8.0` + `torchvision==0.23.0`** 을 jetson-ai-lab cu126 index
+> (`https://pypi.jetson-ai-lab.io/jp6/cu126`)에서 설치하고, **`numpy==1.26.4`** 로 고정한다
+> (Jetson torch 는 NumPy 1.x ABI — 2.x 는 `torch.from_numpy` 가 깨짐). `setuptools` 는
+> ament_python 빌드 호환을 위해 **59.8.0(<60)** 으로 마지막에 고정한다(lerobot 이
+> `setuptools>=71` 을 끌어오므로 설치 순서 주의). 이 모든 처리는
+> [`setup_jetson_base.sh`](deploy/scripts/setup_jetson_base.sh) [4] 단계가 수행한다.
 
 ---
 

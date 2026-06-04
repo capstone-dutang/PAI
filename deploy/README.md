@@ -5,7 +5,13 @@
 
 ## 사전 조건
 
-- `deploy/scripts/setup_jetson_base.sh` 실행 완료 (ROS2 + LeRobot 베이스 환경)
+- `deploy/scripts/setup_jetson_base.sh` 실행 완료 (ROS2 + LeRobot 베이스 환경).
+  이 스크립트가 **Jetson(JetPack 6.2 / CUDA 12.6)용 torch/torchvision cu126 wheel**
+  (`torch==2.8.0`, `torchvision==0.23.0`, jetson-ai-lab `.io` index)과 **`numpy==1.26.4`**
+  (Jetson torch 의 NumPy 1.x ABI)를 설치한다. PyPI generic(+cpu) wheel 은 cuda 불가,
+  numpy 2.x 는 `torch.from_numpy` 가 깨지므로 둘 다 필수. setuptools 는 ament_python
+  빌드 호환을 위해 59.8.0(<60)으로 마지막에 고정한다(lerobot 이 `setuptools>=71` 을
+  끌어오므로 설치 순서 주의 — 자세한 순서·이유는 스크립트 [4] 단계 주석 참조)
 - 모델 배치 — `~/models/gemma/{gemma-4-E2B-it-Q4_K_M.gguf, mmproj-gemma4-e2b-f16.gguf,
   adapters/adapter_<domain>.gguf}`, `~/models/embedding/`,
   `~/models/act/<domain>/pretrained_model/` (도메인별 LeRobot ACT 체크포인트 디렉터리
@@ -27,10 +33,22 @@ colcon build --packages-select robot_arm_msgs robot_arm_pkg
 source install/setup.bash
 ```
 
+> ⚠️ **빌드 워크스페이스 — `~/ros2_ws` 로 통일**: `setup_jetson_base.sh` 는 환경
+> 설치 편의상 저장소 안(`deploy/ros2_ws`)에서 한 번 빌드하지만, 운영 레이아웃은
+> 아래처럼 **`~/ros2_ws`** 로 소스를 복사해 빌드한다(노드 파라미터·systemd 가
+> `~/models`·`~/calibration` 홈 경로를 가정하고, 저장소를 깨끗이 유지하기 위함).
+> 따라서 `setup_jetson_base.sh` 실행 후에도 아래 단계로 `~/ros2_ws` 를 별도 빌드하고,
+> 운영 시 `~/ros2_ws/install/setup.bash` 를 source 한다(`.bashrc` 에 등록 시 저장소-내
+> install 과 중복 source 되지 않도록 `~/ros2_ws` 를 나중에 source). 스크립트의 저장소-내
+> 빌드와 이 절의 불일치는 알려진 항목으로, 스크립트는 환경설치 전용으로 본다.
+
 Jetson 실기 배포 시 다음을 복사한 후 빌드:
 
 ```bash
 # 1) 저장소의 deploy/ros2_ws/src/* 를 Jetson의 ~/ros2_ws/src/ 로 복사
+#    (~/ros2_ws/src 가 없으면 먼저 생성 — 디렉터리가 없는 채로 cp 하면
+#     "target is not a directory" 로 복사가 통째로 실패한다)
+mkdir -p ~/ros2_ws/src
 cp -r <repo>/deploy/ros2_ws/src/* ~/ros2_ws/src/
 
 # 2) 런타임 설정 복사
@@ -147,7 +165,13 @@ llama-server 는 systemd 서비스로 상시 구동된다 (위 "llama-server 상
 # llama-server 가 떠 있는지 확인 (active 여야 함)
 systemctl is-active llama-server.service
 
-# 카메라
+# RealSense 드라이버 (camera_node 의 입력원 — 반드시 먼저 기동)
+#   camera_node 는 이 드라이버의 /camera/camera/{color,aligned_depth_to_color}/image_raw
+#   를 받아 /camera/rgb · /camera/depth 로 재발행한다. 드라이버가 없으면 RGB 가 흐르지
+#   않아 act_node/agent_node 가 입력 대기로 멈춘다(ExecutionStatus 타임아웃 → 무한 재시도).
+ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true
+
+# 카메라 (RealSense → /camera/rgb · /camera/depth 재발행)
 ros2 run robot_arm_pkg camera_node
 
 # llama-server LoRA 스왑 매니저
@@ -155,9 +179,12 @@ ros2 run robot_arm_pkg llama_server_manager \
   --ros-args -p server_url:=http://localhost:8080 \
              -p adapter_dir:=~/models/gemma/adapters/
 
-# 임베딩 노드 (텍스트 → 벡터 Service)
+# 임베딩 노드 (텍스트 → 벡터 Service) — CPU 로 실행해 GPU 를 llama-server/act 에 양보
+#   (Orin Nano 8GB unified memory. 임베딩은 이벤트성·경량이고 agent 가 사전 임베딩하므로
+#    CPU 로 충분 — README "Jetson 메모리 배분" 절 참조)
 ros2 run robot_arm_pkg embedding_node \
-  --ros-args -p model_name:=~/models/embedding/
+  --ros-args -p model_name:=~/models/embedding/ \
+             -p device:=cpu
 
 # 에이전트 (Gemma 함수 호출 오케스트레이션)
 ros2 run robot_arm_pkg agent_node \
@@ -168,14 +195,18 @@ ros2 run robot_arm_pkg agent_node \
              -p exec_timeout_s:=120.0
 
 # ACT Policy (model_root 에서 SubtaskCommand.domain 으로 도메인별 pretrained_model 자동 재선택)
+#   GPU 단편화 회피를 위해 expandable_segments + device:=cuda 명시 (8GB 에서 llama-server
+#   와 GPU 공존 — README "Jetson 메모리 배분" 절). act_node.py 가 expandable_segments 를
+#   setdefault 하므로 빌드본은 prefix 가 없어도 적용되지만, 수동 실행 시 함께 준다.
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 ros2 run robot_arm_pkg act_node \
   --ros-args -p model_root:=~/models/act \
+             -p device:=cuda \
              -p horizon_steps:=300
 #   단일 도메인만 쓰면 고정 경로 override (도메인 재로드 비활성):
 #     -p model_path:=~/models/act/recycling/pretrained_model
-#   device 는 기본 auto(cuda 가능 시 cuda) — 명시하려면 -p device:=cuda
 
-# 로봇 컨트롤러 (SO-101 팔로워)
+# 로봇 컨트롤러 (SO-101 팔로워) — 포트는 환경에 따라 다름 (`ls /dev/ttyACM*` 로 확인)
 ros2 run robot_arm_pkg robot_controller_node \
   --ros-args -p robot_port:=/dev/ttyACM0 \
              -p robot_id:=follower
@@ -296,6 +327,19 @@ blurred → UNCLEAR 미인식). reasoning 내용은 환각 다수.
 정확도 개선이 필요해지면 `finetune_vision_layers=True` 재학습 또는 verify QA
 augmentation 검토. 자세한 내용은
 [training/README.md](../training/README.md) "2-7. 학습 결과 및 알려진 이슈".
+
+> **실기 1차 관찰 (2026-06-04 Jetson, recycling 1회 — 잠정, 추가 측정 필요)**:
+> 통합 루프(look→execute→go_home→verify→재시도→WAITING_USER)가 끝까지 정상 동작했고,
+> verify 종합 판정의 신뢰도는 **depth 신호 생존 여부에 좌우**됨을 확인.
+> - depth place 가 살아있을 때(`depth=False` 일관)는 Gemma 와 일치해 **정확히 FAIL/PARTIAL**
+>   판정 → 재시도 후 WAITING_USER 진입(설계대로).
+> - 반면 `depth=None`(ROI 미감지)/`True`(오감지)이면 Gemma 의 환각 SUCCESS 를 단방향
+>   veto 가 막지 못해 **오판 SUCCESS** 가 통과(다른 시도에서 관측).
+> ⇒ 단기 보완은 **depth 신호 안정화**(destination_roi 정렬·threshold), 근본은 Gemma
+>    verify 재학습. depth 우선/가중 등 종합정책 확정은 다회 측정 후로 유보.
+> 또한 ACT 자체의 **실제 grasp+place 성공률은 낮음**(real-only·첫 실기)으로,
+> `ExecutionStatus=SUCCESS`(=실행 완료)와 verify=FAIL(=실제 미배치)이 공존했다 — 둘은
+> 모순이 아니라 정상적 역할 분담이며, ACT 성능은 별도 데이터 보강 영역이다.
 
 ## LoRA hot-swap 실기 검증 (2026-06-02)
 
