@@ -43,7 +43,7 @@ PAI/
 │               │   ├── agent_node.py           # Gemma 함수 호출 오케스트레이션 (신규)
 │               │   ├── embedding_node.py       # 텍스트 → 벡터 임베딩 서비스 (신규)
 │               │   ├── llama_server_manager.py # llama-server LoRA hot-swap (신규)
-│               │   ├── act_node.py             # ACT Policy 추론 (LeRobot .pth)
+│               │   ├── act_node.py             # ACT Policy 추론 (LeRobot pretrained_model 디렉터리)
 │               │   ├── robot_controller_node.py# SO-101 팔로워 모터 제어 (LeRobot SDK)
 │               │   ├── prompts.py              # 시스템 프롬프트 + ExecStatus enum (SSoT)
 │               │   └── utils/                  # home_pose.py / ros_image.py 공통 유틸
@@ -353,8 +353,9 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 │   │       └── adapter_tableware.gguf
 │   ├── embedding/                 # paraphrase-multilingual-MiniLM-L12-v2 (D=384)
 │   │   └── <model_files>          # HF hub 캐시 또는 사전 다운로드
-│   └── act/
-│       └── act.pth                # ACT Policy 체크포인트 (단일)
+│   └── act/                       # 도메인별 ACT 정책 (단일 act.pth 가정 폐기 → 도메인별 디렉터리)
+│       ├── recycling/pretrained_model/  # LeRobot ACT 체크포인트 디렉터리
+│       └── tableware/pretrained_model/  #   (config.json + model.safetensors + pre/post processor)
 │
 ├── calibration/
 │   ├── camera_intrinsics.yaml
@@ -513,8 +514,10 @@ llama-server (Gemma base GGUF, `--jinja`) 를 systemd 로 상시 구동하고, R
   → Real LeRobotDataset (50~100 에피소드)
   (observation.state + observation.language_embedding + observation.images.top + action)
   │
-  └─▶ ACT Co-training (외부 PC, LeRobot 0.4.4 멀티 데이터셋)
-        Sim + Real 혼합 학습 → act.pth
+  └─▶ ACT 학습 (외부/클라우드 GPU, LeRobot 0.4.4)
+        (현 운영: real-only 도메인별 → 도메인별 pretrained_model/.
+         아래 co-training 표기는 보존된 원설계)
+        Sim + Real 혼합 학습 → 도메인별 pretrained_model/
             │
             ▼
         통합 배포 (Sim 환경 + Jetson 실물 동일 노드 구성)
@@ -861,7 +864,7 @@ datasets = [
 
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
-| `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
+| `act_node.py` | `_load_policy()`, `_predict_chunk()` (도메인별 pretrained_model 로드 + processor 적용) | ACT 학습(real-only) 완료 — **충족**(양 도메인 학습됨), 본체 구현만 잔여 |
 | `training/imitation_data/scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `training/imitation_data/scripts/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `training/imitation_data/scripts/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
@@ -897,6 +900,10 @@ datasets = [
 > - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py` `_run_function_loop` / `_call_look_scene` / `_call_execute_subtask` / `_call_verify_result` 본체 구현 (llama-server `/v1/chat/completions` HTTP, `/embed_text`·`/go_home` 서비스, verify_result fallback, attempt 단위 재시도, `WAITING_USER` 종료 상태). 실행 모델은 워커 스레드 + `MultiThreadedExecutor`. 구현 결정 6건은 파일 상단 docstring + [deploy/README.md](deploy/README.md) "구현 결정 사항 (2026-06-03)" 참조.
 > - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/prompts.py` `LOOK_SCENE_SYSTEM_PROMPT` 추가 (look_scene 그라운딩 전용 — 배포 전용, 학습 분포 없음). `act_node.py` `ExecutionStatus.status` 대문자 enum(`ExecStatus`) 발행으로 교정.
 > - depth place 보조 검증(`_depth_place_check`) 구현 완료 — `destination_roi.yaml` 의 픽셀 ROI + baseline depth median 비교(intrinsics 비의존, 단방향 veto). grasp(집기 시점) 검증은 home_pose 복귀 데이터로는 불가 → 미래 확장으로 유보. look_scene 묘사 정확도는 Jetson 실기 검증 필요.
+>
+> **ACT 정책 학습 — 양 도메인 완료 (2026-06-04, real-only)**:
+> - recycling(병합 571ep) / tableware(233ep) 도메인별 `pretrained_model/` 산출 (gitignore — `models/act/<domain>/` 로컬 배치, Jetson scp 대상). 단일 `act.pth` + LoRA hot-swap 가정은 **도메인별 ACT 체크포인트 + 모델 재선택**으로 변경(`act_node` 도메인 전환 시 재로드).
+> - **언어 조건화 배선 수정**: stock lerobot ACT 가 `observation.language_embedding`(중복 STATE)을 무시하던 문제를 발견 → 학습 데이터셋 feature 를 `observation.environment_state`(ENV)로 rename([`rename_feature.py`](training/imitation_data/scripts/rename_feature.py)) 후 재학습해 `encoder_env_state_input_proj(384→512)` 토큰으로 언어를 실제 사용. 오프라인 검증([`eval_act_offline.py`](training/act/scripts/eval_act_offline.py)) [4] 임베딩 swap 민감도로 확인(정식 판정은 Jetson multi-target rollout). 자세한 경위는 메모리/스크립트 docstring 참조.
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.

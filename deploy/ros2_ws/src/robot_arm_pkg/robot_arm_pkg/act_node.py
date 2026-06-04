@@ -29,7 +29,8 @@ act_node는 추론 시점에 임베딩 변환 지연이 없다.
   /execution_status (robot_arm_msgs/ExecutionStatus) — subtask 종료 시 1회
 
 파라미터:
-  model_path  (str)   — LeRobot ACT 체크포인트 경로 (.pth)
+  model_path  (str)   — LeRobot ACT 체크포인트 디렉터리 (도메인별 pretrained_model/,
+                        단일 .pth 아님. config+model+pre/post processor 포함)
   chunk_size  (int)   — 한 번에 예측할 스텝 수 (기본 100)
   publish_hz  (float) — 발행 주기 (기본 30Hz)
 

@@ -7,7 +7,9 @@
 
 - `deploy/scripts/setup_jetson_base.sh` 실행 완료 (ROS2 + LeRobot 베이스 환경)
 - 모델 배치 — `~/models/gemma/{gemma-4-E2B-it-Q4_K_M.gguf, mmproj-gemma4-e2b-f16.gguf,
-  adapters/adapter_<domain>.gguf}`, `~/models/embedding/`, `~/models/act/act.pth`
+  adapters/adapter_<domain>.gguf}`, `~/models/embedding/`,
+  `~/models/act/<domain>/pretrained_model/` (도메인별 LeRobot ACT 체크포인트 디렉터리
+  — 단일 act.pth 아님)
   (모델 파일은 repo `deploy/` 에 없으며 학습·변환 산출물을 수동 배치. llama-server
   바이너리는 `~/llama.cpp/build/bin/` 에 별도 위치)
 - 캘리브레이션 결과 배치 — `~/calibration/{camera_intrinsics.yaml,
@@ -165,9 +167,9 @@ ros2 run robot_arm_pkg agent_node \
              -p max_verify_iterations:=3 \
              -p exec_timeout_s:=120.0
 
-# ACT Policy
+# ACT Policy (model_path 는 도메인별 pretrained_model 디렉터리)
 ros2 run robot_arm_pkg act_node \
-  --ros-args -p model_path:=~/models/act/act.pth \
+  --ros-args -p model_path:=~/models/act/recycling/pretrained_model \
              -p chunk_size:=100
 
 # 로봇 컨트롤러 (SO-101 팔로워)
