@@ -36,7 +36,14 @@ act_node는 추론 시점에 임베딩 변환 지연이 없다.
 학습 시 obs 스키마(LeRobotDataset)와 추론 시 obs dict 키는 일치해야 함:
   observation.images.top         — RGB 이미지 텐서
   observation.state              — 관절 상태 텐서 (6축, SO-101 순서)
-  observation.language_embedding — 자연어 타겟 묘사 임베딩 (D차원)
+  observation.environment_state  — 자연어 타겟 묘사 임베딩 (D=384)
+
+  ⚠️ 언어 임베딩 키는 반드시 'observation.environment_state' 여야 한다.
+     lerobot ACT 는 input feature 를 type 으로 배선하는데(dataset_to_policy_features),
+     'observation.*' 는 STATE, 정확히 'observation.environment_state' 만 ENV 로 분류된다.
+     ENV 여야 ACT 가 encoder_env_state_input_proj 토큰으로 언어를 실제 사용한다.
+     (구 'observation.language_embedding' 키는 중복 STATE 로 분류돼 ACT 가 무시했음.)
+     학습 데이터셋도 이 키로 rename 되어 있어야 한다(rename_feature.py).
 
 TODO (ACT Co-training 완료 후 구현):
   _load_policy()    — 체크포인트 로드 및 normalizer 설정 확인
@@ -239,9 +246,10 @@ class ACTNode(Node):
           1. 입력 텐서 구성 — normalizer 설정에 맞게 전처리
              키 이름은 학습 시 LeRobotDataset 스키마와 반드시 일치해야 함:
              obs = {
-                 'observation.images.top':         _to_image_tensor(self._latest_rgb),
-                 'observation.state':              _to_state_tensor(self._latest_joints),
-                 'observation.language_embedding': torch.tensor(cmd.language_embedding),
+                 'observation.images.top':        _to_image_tensor(self._latest_rgb),
+                 'observation.state':             _to_state_tensor(self._latest_joints),
+                 # 키는 반드시 environment_state — ACT 가 ENV 토큰으로 배선(위 docstring 참조)
+                 'observation.environment_state': torch.tensor(cmd.language_embedding),
              }
 
           2. LeRobot Policy 추론

@@ -130,6 +130,18 @@ PAI/
 
 `agent_node`의 `look_scene` 함수는 Gemma 4 E2B VLM에 RGB 이미지를 입력하여 **자연어 타겟 묘사**(예: "the blue can on the right side of the table")를 출력한다. 이 텍스트는 `embedding_node`에서 벡터로 변환되어 `SubtaskCommand`에 실려 `act_node`로 전달되고, ACT는 이 임베딩을 observation 채널 중 하나로 사용한다. 이전 설계의 3D 좌표 산출 방식은 폐기되었다.
 
+> ⚠️ **언어 임베딩 obs 키는 `observation.environment_state` 여야 한다 (env_state 토큰)**:
+> lerobot ACT 는 input feature 를 type 으로 배선하는데(`dataset_to_policy_features`),
+> `observation.*` 는 STATE, **정확히 `observation.environment_state` 만 ENV** 로 분류된다.
+> ACT 가 언어(384d)를 실제로 쓰려면 ENV(env_state)로 들어가야 한다 — 그래야
+> `encoder_env_state_input_proj(384→512)` 토큰이 생긴다. 구 `observation.language_embedding`
+> 키는 중복 STATE 로 분류돼 **ACT 가 무시**했다(검증으로 확인). 따라서:
+> - 학습 데이터셋은 학습 전 [`rename_feature.py`](training/imitation_data/scripts/rename_feature.py)
+>   로 `language_embedding → environment_state` rename.
+> - 배포 `act_node` 도 obs dict 를 `observation.environment_state` 키로 구성(`SubtaskCommand.language_embedding` 필드명은 유지).
+> 아래 데이터 수집 절의 `observation.language_embedding` 채널은 **수집 시점 원본 키**이며,
+> ACT 학습 직전 위 rename 으로 `environment_state` 가 된다.
+
 **이 결정의 결과**:
 - `agent_node`는 depth/intrinsics/hand-eye calibration에 의존하지 않는다 (좌표 산출 책임 없음)
 - ACT가 RGB + 언어 임베딩으로 perception을 직접 학습 (end-to-end 표현 학습)

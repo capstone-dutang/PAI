@@ -44,8 +44,9 @@ try:
 except Exception:
     pass
 
-LANG_KEY = "observation.language_embedding"
 ACTION_KEY = "action"
+# 언어 임베딩 obs 키는 데이터셋마다 다르다(observation.language_embedding 또는,
+# ACT 가 ENV 로 인식하게 rename 한 observation.environment_state) → 런타임 auto-detect.
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -131,6 +132,11 @@ def main():
         if not obs_keys:  # config 없으면 데이터셋 feature 에서 추론
             obs_keys = [k for k in ds.features if k.startswith("observation.")]
         print(f"  obs 키: {obs_keys}")
+        # 언어/env_state 임베딩 키 auto-detect: 이미지도 아니고 state(6)도 아닌 obs.
+        # (ACT 는 이 키가 'observation.environment_state' 여야 ENV 토큰으로 사용)
+        lang_key = next((k for k in obs_keys
+                         if "image" not in k and k != "observation.state"), None)
+        print(f"  언어(env_state) 키: {lang_key}")
     except Exception as ex:
         print(f"  ❌ 로드 실패 — {type(ex).__name__}: {ex}")
         print("  (lerobot/torch 환경 또는 정책 경로 확인. [1] 결과만으로도 학습 정합은 확인 가능)")
@@ -173,18 +179,21 @@ def main():
         print(f"  L1 / std (작을수록↑): {np.round(l1_joint / scale, 3)}")
         print(f"  전체 평균 L1 = {errs.mean():.4f} | (참고) GT 평균 |Δstd| 대비 "
               f"{(l1_joint / scale).mean():.2%}")
-        print("  해석: L1/std 가 대체로 < ~0.3 이면 학습 매핑을 잘 재현(open-loop 기준).")
+        print("  ⚠️ 주의: lerobot 0.4.4 는 정규화를 별도 processor 로 처리하는데 본 eval 은")
+        print("     미적용이라 [3] 절대값(L1)은 신뢰 불가(과대). **핵심 판정은 아래 [4]** —")
+        print("     [4] 는 swap 전/후 모두 동일 조건이라 차이값이 정규화와 무관하게 유효.")
     except Exception as ex:
         print(f"  ❌ 예측 오차 평가 실패 — {type(ex).__name__}: {ex}")
 
     # ── [4] 언어 조건화 민감도 ──────────────────────────────────────────
     print("=" * 68)
     print("[4] 언어 조건화 민감도 (임베딩 swap 시 action 변화)")
-    if LANG_KEY not in obs_keys:
-        print("  ⏭️  정책 입력에 language_embedding 이 없어 생략 (=[1]에서 ❌).")
+    if lang_key is None:
+        print("  ⏭️  언어/env_state 입력 키를 못 찾음 — ACT 가 언어를 안 받는 구성입니다.")
+        print("      (observation.environment_state 로 rename 후 재학습했는지 확인)")
         return
     try:
-        ep_emb = {ep: ds[bounds[ep][0]][LANG_KEY] for ep in pick}
+        ep_emb = {ep: ds[bounds[ep][0]][lang_key] for ep in pick}
         deltas = []
         for ep in pick:
             others = [e for e in pick
@@ -198,7 +207,7 @@ def main():
                 with torch.no_grad():
                     a_real = policy.select_action(base).squeeze(0).cpu().numpy()
                 swap = dict(base)
-                swap[LANG_KEY] = ep_emb[random.choice(others)].unsqueeze(0).to(args.device)
+                swap[lang_key] = ep_emb[random.choice(others)].unsqueeze(0).to(args.device)
                 policy.reset()
                 with torch.no_grad():
                     a_swap = policy.select_action(swap).squeeze(0).cpu().numpy()
