@@ -36,3 +36,6 @@ training/imitation_data/datasets/
 #       config.json + model.safetensors(~200MB) + pre/post processor(정규화 — 배포 필수) + train_config.json.
 #       Jetson ~/models/act/<domain>/pretrained_model 로 배포. 재학습 외엔 재현 어려움.
 models/
+
+# 문서
+docs/
