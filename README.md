@@ -306,9 +306,11 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 - `status`: `SUCCESS` / `FAIL` / `PARTIAL` / `UNCLEAR`
 - `reasoning`: Gemma의 자연어 설명 + grasp 검증 결과 요약
 
-> Gemma 시각 검증은 의미 수준의 판정(통에 잘 들어갔는가)을 담당하고,
-> depth 검증은 결정론적 grasp 성공/실패 신호를 제공한다. 두 신호가 상충할 때의
-> 정책(예: depth 우선 / Gemma 우선)은 운영 중 튜닝 대상.
+> Gemma 시각 검증은 의미 수준의 판정(통에 잘 들어갔는가)을 담당하고, depth 검증은
+> 현재 운영 기준 결정론적 place(목적지 배치) 성공/실패 신호를 제공한다(아래
+> "destination(place) 기준" 블록). 두 신호 종합은 v1 으로 **Gemma 우선 + depth 단방향
+> veto**([`agent_node._combine_verify`](deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py))
+> 가 구현돼 있으며, depth 우선/가중 등 최종 정책은 실기 verify 정확도 측정 후 확정한다.
 
 > **검증 대상 — 현재 운영은 destination(place) 기준**:
 > 실물 ACT 에피소드는 home_pose 시작 → 태스크 → home_pose 복귀로 수집되고, 배포 시에도
@@ -928,7 +930,7 @@ datasets = [
 
 | # | 항목 | 영향 범위 |
 |---|------|---------|
-| 1 | Gemma 시각 검증과 depth grasp 검증의 종합 정책 (depth 우선 / Gemma 우선 / 가중 평균) | `agent_node.verify_result` |
+| 1 | verify_result 종합 판정 — v1 구현됨(`_combine_verify`: Gemma 우선 + depth place 단방향 veto). depth 우선/가중 등 **최종** 정책은 실기 verify 정확도 측정 후 확정 | `agent_node.verify_result` |
 
 ### Sim teleop 수집 (`record_sim_teleop.py`) — [D1]~[D9] 확정
 
