@@ -519,7 +519,11 @@ bash training/act/scripts/train_act.sh tableware
 
 - 산출물: `${OUTPUT_DIR}/checkpoints/last/pretrained_model/` → Jetson `~/models/act/<domain>/pretrained_model` 로 복사
 - recycling 데이터셋은 재라벨([`relabel_recycling_dataset.py`](imitation_data/scripts/relabel_recycling_dataset.py)) + 신규 수집분을 **단일 데이터셋으로 병합**한 뒤 그 root 를 `DATASET_ROOT` 로 지정 (병합 방법은 아래 **3-1** 참조 — 클라우드 학습 환경에서는 `aggregate_datasets` 권장)
-- 데이터셋의 `observation.language_embedding`(MiniLM, D=384, L2 정규화)이 배포 `embedding_node` 와 동일 모델이어야 함
+- 데이터셋의 언어 임베딩 채널(MiniLM, D=384, L2 정규화)이 배포 `embedding_node` 와 동일 모델이어야 함
+- ⚠️ **학습 전 언어 임베딩 키를 `observation.environment_state` 로 rename 필수**
+  ([`rename_feature.py`](imitation_data/scripts/rename_feature.py)): stock ACT 는
+  `observation.language_embedding`(STATE 중복)을 무시하고, `observation.environment_state`(ENV)
+  만 인코더 토큰으로 배선한다. 안 하면 언어 조건화가 동작하지 않음(검증: `eval_act_offline.py` [4] |Δaction|>0).
 
 스크립트 내부의 하이퍼파라미터·선행 조건·환경 변수는 [`train_act.sh`](act/scripts/train_act.sh)
 헤더 주석 참조.

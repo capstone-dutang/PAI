@@ -80,9 +80,17 @@ def phase1_config(policy_path: Path) -> dict | None:
     out = list(cfg.get("output_features", {}))
     print(f"  input_features : {inp}")
     print(f"  output_features: {out}")
-    has_lang = any("language_embedding" in k for k in inp)
-    print(f"  → language_embedding 입력: "
-          f"{'예 ✅ (language-conditioned)' if has_lang else '아니오 ❌ — 언어 무시 학습됨!'}")
+    # ACT 가 언어를 쓰려면 environment_state(ENV) 여야 함. language_embedding(STATE)은
+    # 무시됨. 둘 중 하나라도 있으면 입력엔 존재 — 단 실제 사용 판정은 [4] 로.
+    has_env = any("environment_state" in k for k in inp)
+    has_lang_legacy = any("language_embedding" in k for k in inp)
+    if has_env:
+        msg = "예 ✅ environment_state (ENV 토큰으로 배선 — language-conditioned)"
+    elif has_lang_legacy:
+        msg = "⚠️ language_embedding 키 (STATE 로 분류돼 ACT 가 무시! environment_state 로 rename 필요)"
+    else:
+        msg = "아니오 ❌ — 언어 임베딩 입력 없음"
+    print(f"  → 언어 임베딩 입력: {msg}")
     for k in ("type", "chunk_size", "n_action_steps", "n_obs_steps"):
         if k in cfg:
             print(f"  {k} = {cfg[k]}")

@@ -62,9 +62,12 @@ except Exception:
 
 EXPECTED = {
     "observation.state": 6,
-    "observation.language_embedding": 384,
     "action": 6,
 }
+# 임베딩 채널 키: 수집 원본은 observation.language_embedding, ACT 학습용으로
+# rename(rename_feature.py) 하면 observation.environment_state (ENV). 둘 다 허용.
+EMB_CANDIDATES = ("observation.language_embedding", "observation.environment_state")
+EMB_DIM = 384
 CAMERA_KEY = "observation.images.top"
 EXPECTED_IMG = [480, 640, 3]
 EXPECTED_FPS = 30
@@ -162,6 +165,15 @@ def verify(root: str, domain: str | None, vocab_path: str, embed_model: str,
         shape = feats.get(k, {}).get("shape")
         rep.check(shape == [dim], f"feature {k} shape==[{dim}]",
                   detail_bad=f"실제 {shape}")
+    # 임베딩 채널 auto-detect (language_embedding 또는 environment_state)
+    emb_key = next((k for k in EMB_CANDIDATES if k in feats), None)
+    rep.check(emb_key is not None,
+              "임베딩 채널(language_embedding/environment_state) 존재", detail_bad="둘 다 없음")
+    if emb_key:
+        shape = feats.get(emb_key, {}).get("shape")
+        rep.check(shape == [EMB_DIM], f"feature {emb_key} shape==[{EMB_DIM}]",
+                  detail_bad=f"실제 {shape}")
+        print(f"  임베딩 채널 = {emb_key}")
     img = feats.get(CAMERA_KEY, {}).get("shape")
     rep.check(img == EXPECTED_IMG, f"feature {CAMERA_KEY} shape=={EXPECTED_IMG}",
               detail_bad=f"실제 {img}")
@@ -188,7 +200,8 @@ def verify(root: str, domain: str | None, vocab_path: str, embed_model: str,
     task_index = tbl["task_index"].to_numpy()[order]
     state = fsl_to_np(tbl, "observation.state")[order]
     action = fsl_to_np(tbl, "action")[order]
-    emb = fsl_to_np(tbl, "observation.language_embedding")[order]
+    emb = (fsl_to_np(tbl, emb_key)[order] if emb_key
+           else np.zeros((n, EMB_DIM), np.float32))
 
     # ── B. 프레임 정합 ───────────────────────────────────────────────────
     rep.check(n == total_frames, "행수 == total_frames",

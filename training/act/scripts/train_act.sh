@@ -18,10 +18,13 @@
 #     전환. co-training 스켈레톤(train_act_cotraining.sh)은 참고용으로 보존한다.
 #   - 단일 act.pth + LoRA hot-swap 가정 → **도메인별 ACT 체크포인트**로 변경
 #     (recycling / tableware 각각). 도메인 전환은 추후 act_node 의 model 선택/재기동.
-#   - ACT 는 language-conditioned 다 (observation.language_embedding 이 학습된
-#     체크포인트의 config.json input_features 에 포함됨을 확인). 따라서 데이터셋의
-#     language_embedding 채널(MiniLM, D=384, L2 정규화)이 필수이며, 배포
-#     embedding_node 와 동일 모델이어야 한다.
+#   - ACT 는 language-conditioned 다. ★주의★ config.json input_features 에 키가
+#     '포함'되는 것만으론 부족하다 — stock lerobot ACT 는 observation.* 를 STATE 로,
+#     정확히 observation.environment_state 만 ENV 로 분류해 인코더 토큰에 배선한다.
+#     그래서 언어 임베딩 채널은 학습 전 observation.environment_state 로 rename 해야
+#     ACT 가 실제로 사용한다(rename_feature.py). language_embedding 키로 두면 중복
+#     STATE 가 되어 ACT 가 무시한다(과거 실수). 임베딩은 MiniLM D=384, L2 정규화,
+#     배포 embedding_node 와 동일 모델. 검증: eval_act_offline.py [4] |Δaction|>0.
 #
 # -----------------------------------------------------------------------------
 # 하이퍼파라미터 선택 근거 (의도적 결정)
@@ -46,8 +49,9 @@
 #     (lerobot-train 단일 --dataset.* 가정). 결합 방식(디스크 병합 / append /
 #     멀티 데이터셋)은 데이터 준비 단계에서 확정.
 #   - tableware: plate/fork/spoon 갖춰 신규 수집한 단일 데이터셋.
-#   - 두 도메인 데이터셋의 feature 스펙(observation.state(6)/language_embedding(384)/
-#     images.top(H,W,3)/action(6))과 fps·해상도가 학습 진입 전 일관해야 한다.
+#   - 두 도메인 데이터셋의 feature 스펙(observation.state(6)/environment_state(384,
+#     =rename된 언어 임베딩)/images.top(H,W,3)/action(6))과 fps·해상도가 학습 진입
+#     전 일관해야 한다.
 #
 # -----------------------------------------------------------------------------
 # 사용법
