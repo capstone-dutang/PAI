@@ -48,7 +48,7 @@ PAI/
 │               │   ├── prompts.py              # 시스템 프롬프트 + ExecStatus enum (SSoT)
 │               │   └── utils/                  # home_pose.py / ros_image.py 공통 유틸
 │               ├── scripts/
-│               │   └── measure_grasp_roi.py    # grasp_roi.yaml 실측 보조 스크립트
+│               │   └── measure_roi.py          # depth ROI 실측 보조 (--mode destination|grasp)
 │               ├── launch/
 │               ├── urdf/                       # SO-101 URDF + STL 자산 (저장소 포함)
 │               │   ├── so101.urdf
@@ -359,7 +359,8 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 ├── calibration/
 │   ├── camera_intrinsics.yaml
 │   ├── camera_robot_transform.yaml
-│   ├── grasp_roi.yaml             # deploy/config/grasp_roi.yaml에서 복사 (캘리브레이션 후)
+│   ├── destination_roi.yaml       # deploy/config/에서 복사 (place 검증 — 현재 운영)
+│   ├── grasp_roi.yaml             # (미래 grasp 검증용 — 선택)
 │   └── home_pose.yaml             # SO-101 follower rest 자세. record_real_teleop 첫 실행 시 자동 생성.
 │                                  # robot_controller_node /go_home 서비스가 같은 파일을 읽는다.
 │
@@ -860,7 +861,6 @@ datasets = [
 
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
-| `agent_node.py` | `_depth_grasp_check()` 실판정만 잔여(현재 안전 비활성 `None`). 함수 호출 루프 본체는 구현 완료(아래 "작성 완료" 참조) | grasp_roi 실측 + 비교기준/미터-ROI↔intrinsics 충돌 해소 (`deploy/config/grasp_roi.yaml` 행과 연동) |
 | `act_node.py` | `_load_policy()`, `_predict_chunk()` | ACT Co-training 완료 |
 | `training/imitation_data/scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `training/imitation_data/scripts/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
@@ -896,7 +896,7 @@ datasets = [
 > **agent_node 함수 호출 루프 본체 — 구현 완료 (2026-06-03)**:
 > - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/agent_node.py` `_run_function_loop` / `_call_look_scene` / `_call_execute_subtask` / `_call_verify_result` 본체 구현 (llama-server `/v1/chat/completions` HTTP, `/embed_text`·`/go_home` 서비스, verify_result fallback, attempt 단위 재시도, `WAITING_USER` 종료 상태). 실행 모델은 워커 스레드 + `MultiThreadedExecutor`. 구현 결정 6건은 파일 상단 docstring + [deploy/README.md](deploy/README.md) "구현 결정 사항 (2026-06-03)" 참조.
 > - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/prompts.py` `LOOK_SCENE_SYSTEM_PROMPT` 추가 (look_scene 그라운딩 전용 — 배포 전용, 학습 분포 없음). `act_node.py` `ExecutionStatus.status` 대문자 enum(`ExecStatus`) 발행으로 교정.
-> - 잔여: `_depth_grasp_check()` 실판정(현재 안전 비활성 `None`) — grasp_roi 실측 + 미터-ROI↔intrinsics 충돌 해소 후. look_scene 묘사 정확도는 Jetson 실기 검증 필요.
+> - depth place 보조 검증(`_depth_place_check`) 구현 완료 — `destination_roi.yaml` 의 픽셀 ROI + baseline depth median 비교(intrinsics 비의존, 단방향 veto). grasp(집기 시점) 검증은 home_pose 복귀 데이터로는 불가 → 미래 확장으로 유보. look_scene 묘사 정확도는 Jetson 실기 검증 필요.
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.

@@ -74,7 +74,7 @@ cp ~/calibration/camera_robot_transform.yaml <repo>/deploy/calibration/
 SO-101 엔드이펙터 위치 근처에서 grasp 성공 시 depth 값이 변화하는 영역을 측정하여
 설정합니다. 카메라 frame 기준 좌표를 사용합니다.
 
-`scripts/measure_grasp_roi.py` 로 실측을 자동화할 수 있습니다. `/camera/depth` 를
+`scripts/measure_roi.py --mode grasp` 로 실측을 자동화할 수 있습니다. `/camera/depth` 를
 구독해 마우스로 지정한 ROI 를 `camera_intrinsics.yaml` 의 K 로 카메라 좌표에
 역투영하고, grasp 성공/빈손 두 상태의 depth 변화로 `depth_change_threshold` 까지
 산출합니다.
@@ -82,13 +82,13 @@ SO-101 엔드이펙터 위치 근처에서 grasp 성공 시 depth 값이 변화�
 ```bash
 # GUI 모드 (Jetson — 캘리브레이션과 동일하게 DISPLAY 필요)
 export DISPLAY=:1
-python3 scripts/measure_grasp_roi.py \
+python3 scripts/measure_roi.py --mode grasp \
     --intrinsics ~/calibration/camera_intrinsics.yaml \
     --out ~/calibration/grasp_roi.yaml
 #   드래그=ROI 지정 → g(물체 든 상태) → e(빈손) → s(저장)
 
 # headless 모드: 픽셀 ROI 직접 지정, 단발 측정
-python3 scripts/measure_grasp_roi.py \
+python3 scripts/measure_roi.py --mode grasp \
     --intrinsics ~/calibration/camera_intrinsics.yaml --roi 280 200 360 280
 ```
 
@@ -114,16 +114,23 @@ depth 변화로 물체가 놓였는지를 봅니다.
 카메라·목적지 고정 전제이므로 목적지는 이미지의 고정 픽셀 영역입니다 → **픽셀 ROI +
 baseline depth** 로 표현해 카메라 intrinsics 없이 동작합니다(`agent_node._depth_place_check`).
 
-측정 절차:
+측정 절차 — `measure_roi.py --mode destination` 가 픽셀 ROI 와 baseline 을 직접
+출력합니다 (intrinsics 불필요):
 
-1. 카메라·목적지를 운영 배치로 두고, **빈 목적지** 상태에서 측정 스크립트를 띄웁니다.
-2. 각 목적지를 드래그(또는 `--roi`)로 지정 → 콘솔에 표시되는 `roi_px` 와 `z_median`(m)
-   을 읽어 `destination_roi.yaml` 의 `roi_px` / `baseline_depth` 에 입력합니다.
-3. 물체를 놓은 상태의 median 과 baseline 의 차이의 절반쯤을 `depth_change_threshold`
-   로 잡습니다.
+```bash
+# GUI (Jetson — DISPLAY 필요): 빈 목적지 상태에서 실행
+export DISPLAY=:1
+python3 scripts/measure_roi.py --mode destination --domain recycling \
+    --out ~/calibration/destination_roi.yaml
+#   각 통/영역 드래그 → b(baseline 등록, 반복) → (선택) o(threshold 힌트) → s(저장)
 
-> `measure_grasp_roi.py` 는 현재 미터 박스 yaml(grasp_roi 포맷)을 출력하므로,
-> destination_roi 는 콘솔의 `roi_px` / `z_median` 값을 보고 아래 형식으로 수기 입력합니다.
+# headless: 픽셀 ROI 직접 지정, 단일 목적지
+python3 scripts/measure_roi.py --mode destination --domain recycling \
+    --name can_bin --roi 120 200 220 300
+```
+
+`name` 은 자동(dest_N)이라 출력 yaml 에서 `can_bin`/`target_area` 등으로 rename 합니다.
+`depth_change_threshold` 는 'o' 표본(물체 놓은 상태)으로 힌트를 받거나 기본값(0.02)을 씁니다.
 
 ```yaml
 # ~/calibration/destination_roi.yaml (예시)
