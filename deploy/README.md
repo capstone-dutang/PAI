@@ -167,10 +167,13 @@ ros2 run robot_arm_pkg agent_node \
              -p max_verify_iterations:=3 \
              -p exec_timeout_s:=120.0
 
-# ACT Policy (model_path 는 도메인별 pretrained_model 디렉터리)
+# ACT Policy (model_root 에서 SubtaskCommand.domain 으로 도메인별 pretrained_model 자동 재선택)
 ros2 run robot_arm_pkg act_node \
-  --ros-args -p model_path:=~/models/act/recycling/pretrained_model \
-             -p chunk_size:=100
+  --ros-args -p model_root:=~/models/act \
+             -p horizon_steps:=300
+#   단일 도메인만 쓰면 고정 경로 override (도메인 재로드 비활성):
+#     -p model_path:=~/models/act/recycling/pretrained_model
+#   device 는 기본 auto(cuda 가능 시 cuda) — 명시하려면 -p device:=cuda
 
 # 로봇 컨트롤러 (SO-101 팔로워)
 ros2 run robot_arm_pkg robot_controller_node \

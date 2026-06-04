@@ -864,7 +864,6 @@ datasets = [
 
 | 파일 | 미구현 핵심 로직 | 선행 조건 |
 |------|------------------|----------|
-| `act_node.py` | `_load_policy()`, `_predict_chunk()` (도메인별 pretrained_model 로드 + processor 적용) | ACT 학습(real-only) 완료 — **충족**(양 도메인 학습됨), 본체 구현만 잔여 |
 | `training/imitation_data/scripts/postprocess_real_labels.py` | `synthesize_paraphrases()` (외부 LLM), `apply_to_dataset()` (LeRobot metadata) | 외부 LLM 클라이언트, LeRobot 0.4.4 metadata API |
 | `training/imitation_data/scripts/record_sim_teleop.py` | (핵심 로직 구현 완료) `SimInterface`·`SceneManager`·`TargetSelector` 의 Isaac Sim 5.1 API 호출은 best-effort — 실기 검증 필요. DR 의 texture/friction/pd_gain/노이즈는 의도적 보류 | Isaac Sim 5.1 환경 검증 |
 | `training/imitation_data/scripts/generate_language_labels.py` | Gemma 자체 라벨링 (시스템 프롬프트는 확정), 외부 LLM paraphrase, LeRobot metadata 반영 | llama-server VLM 페이로드, 외부 LLM 클라이언트 |
@@ -902,8 +901,14 @@ datasets = [
 > - depth place 보조 검증(`_depth_place_check`) 구현 완료 — `destination_roi.yaml` 의 픽셀 ROI + baseline depth median 비교(intrinsics 비의존, 단방향 veto). grasp(집기 시점) 검증은 home_pose 복귀 데이터로는 불가 → 미래 확장으로 유보. look_scene 묘사 정확도는 Jetson 실기 검증 필요.
 >
 > **ACT 정책 학습 — 양 도메인 완료 (2026-06-04, real-only)**:
-> - recycling(병합 571ep) / tableware(233ep) 도메인별 `pretrained_model/` 산출 (gitignore — `models/act/<domain>/` 로컬 배치, Jetson scp 대상). 단일 `act.pth` + LoRA hot-swap 가정은 **도메인별 ACT 체크포인트**로 변경. 도메인 전환 시 정책 재로드/재선택은 `act_node._load_policy()` 구현 범위(현재 stub — `model_path` 파라미터로 도메인별 지정).
+> - recycling(병합 571ep) / tableware(233ep) 도메인별 `pretrained_model/` 산출 (gitignore — `models/act/<domain>/` 로컬 배치, Jetson scp 대상). 단일 `act.pth` + LoRA hot-swap 가정은 **도메인별 ACT 체크포인트**로 변경. 도메인 전환 시 정책 재로드/재선택은 `act_node` 가 `SubtaskCommand.domain` 으로 수행(아래 act_node 구현 항목 참조).
 > - **언어 조건화 배선 수정**: stock lerobot ACT 가 `observation.language_embedding`(중복 STATE)을 무시하던 문제를 발견 → 학습 데이터셋 feature 를 `observation.environment_state`(ENV)로 rename([`rename_feature.py`](training/imitation_data/scripts/rename_feature.py)) 후 재학습해 `encoder_env_state_input_proj(384→512)` 토큰으로 언어를 실제 사용. 오프라인 검증([`eval_act_offline.py`](training/act/scripts/eval_act_offline.py)) [4] 임베딩 swap 민감도로 확인(정식 판정은 Jetson multi-target rollout). 자세한 경위는 메모리/스크립트 docstring 참조.
+>
+> **act_node ACT 추론 본체 — closed-loop 구현 완료 (2026-06-04, Jetson 실기 검증 대기)**:
+> - `deploy/ros2_ws/src/robot_arm_pkg/robot_arm_pkg/act_node.py` `_load_policy`/`_build_obs`/`_timer_callback` 본체 구현. 매 틱 `policy.select_action()`(closed-loop, temporal ensemble) → `horizon_steps` 만큼 실행 후 SUCCESS 발행(=실행 완료; 성공/실패 판정은 `agent_node.verify_result`). 정규화는 검증된 [`eval_act_offline.py`](training/act/scripts/eval_act_offline.py) 패턴(체크포인트 `*normaliz*.safetensors` mean/std 수동 적용 + action 역정규화 — lerobot 0.4.4 는 정규화를 별도 processor 로 처리).
+> - **도메인별 재선택**: `model_root`(기본 `~/models/act`)에서 `SubtaskCommand.domain` → `{root}/{domain}/pretrained_model` 자동 재로드. `model_path` 파라미터로 단일 도메인 고정도 가능.
+> - **단위 정합**: `/joint_states`(URDF rad + 그리퍼 URDF 스케일) → SDK `.pos`(deg + 0~100) 역변환해 `observation.state` 구성(`robot_controller_node._read_joints` 의 역, 그리퍼 상수 동기 유지). 출력 `/joint_command` 는 `.pos` 그대로라 robot_controller 가 변환 없이 소비. 이미지 해상도는 정책 `config.json` 에서 읽어 resize.
+> - 정식 검증은 Jetson 실기 rollout(이미지 해상도/단위/언어 민감도). 그 전 오프라인 sanity 는 [`eval_act_offline.py`](training/act/scripts/eval_act_offline.py).
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,
 > `scripts/record_with_vlm.py` — `agent_node` 함수 호출 툴 및 `record_real_teleop.py`로 대체됨.
