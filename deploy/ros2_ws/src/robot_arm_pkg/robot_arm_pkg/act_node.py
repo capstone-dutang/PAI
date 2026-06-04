@@ -46,9 +46,12 @@ act_node는 추론 시점에 임베딩 변환 지연이 없다.
      (구 'observation.language_embedding' 키는 중복 STATE 로 분류돼 ACT 가 무시했음.)
      학습 데이터셋도 이 키로 rename 되어 있어야 한다(rename_feature.py).
 
-TODO (ACT Co-training 완료 후 구현):
-  _load_policy()    — 체크포인트 로드 및 normalizer 설정 확인
-  _predict_chunk()  — 입력 텐서 전처리 + policy.select_action() 호출
+TODO (ACT 학습(real-only) 완료 후 구현):
+  _load_policy()    — 도메인별 pretrained_model 디렉터리 로드 + lerobot processor(정규화)
+                      적용. model_path 가 도메인별이므로 **도메인 전환 시 정책 재로드/재선택**도
+                      이 범위에 포함(현재는 __init__ 에서 1회 로드, _subtask_callback 은 domain
+                      을 로그로만 사용).
+  _predict_chunk()  — 입력 텐서 전처리(processor) + policy.select_action() 호출
 """
 
 from __future__ import annotations
@@ -86,7 +89,9 @@ class ACTNode(Node):
         # ── 파라미터 ──────────────────────────────
         self.declare_parameter(
             'model_path',
-            os.path.expanduser('~/models/act/act.pth'),
+            # 도메인별 pretrained_model 디렉터리 (단일 act.pth 폐기). 배포 시 launch
+            # 파라미터로 도메인에 맞게 지정 — 예: ~/models/act/tableware/pretrained_model
+            os.path.expanduser('~/models/act/recycling/pretrained_model'),
         )
         self.declare_parameter('chunk_size', 100)
         self.declare_parameter('publish_hz', 30.0)
@@ -96,7 +101,7 @@ class ACTNode(Node):
         publish_hz      = self.get_parameter('publish_hz').value
 
         # ── LeRobot Policy 로드 ───────────────────
-        # TODO: ACT Co-training 완료 후 _load_policy() 구현
+        # TODO: ACT 학습(real-only) 완료 후 _load_policy() 구현
         self.policy = self._load_policy()
 
         # ── 입력 캐시 ─────────────────────────────
@@ -155,7 +160,7 @@ class ACTNode(Node):
         """
         self.get_logger().warn(
             '[act_node] _load_policy() 미구현. '
-            'ACT Co-training 완료 후 LeRobot ACT 체크포인트 로드를 구현하세요.'
+            'ACT 학습(real-only) 완료 후 LeRobot ACT 체크포인트 로드를 구현하세요.'
         )
         return None
 
@@ -287,7 +292,7 @@ class ACTNode(Node):
         # TODO: 위 독스트링의 구현 내용 채우기
         raise NotImplementedError(
             "[act_node] _predict_chunk() 미구현. "
-            "ACT Co-training 완료 후 LeRobot Policy 추론을 구현하세요."
+            "ACT 학습(real-only) 완료 후 LeRobot Policy 추론을 구현하세요."
         )
 
 

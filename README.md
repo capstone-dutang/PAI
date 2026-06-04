@@ -902,7 +902,7 @@ datasets = [
 > - depth place 보조 검증(`_depth_place_check`) 구현 완료 — `destination_roi.yaml` 의 픽셀 ROI + baseline depth median 비교(intrinsics 비의존, 단방향 veto). grasp(집기 시점) 검증은 home_pose 복귀 데이터로는 불가 → 미래 확장으로 유보. look_scene 묘사 정확도는 Jetson 실기 검증 필요.
 >
 > **ACT 정책 학습 — 양 도메인 완료 (2026-06-04, real-only)**:
-> - recycling(병합 571ep) / tableware(233ep) 도메인별 `pretrained_model/` 산출 (gitignore — `models/act/<domain>/` 로컬 배치, Jetson scp 대상). 단일 `act.pth` + LoRA hot-swap 가정은 **도메인별 ACT 체크포인트 + 모델 재선택**으로 변경(`act_node` 도메인 전환 시 재로드).
+> - recycling(병합 571ep) / tableware(233ep) 도메인별 `pretrained_model/` 산출 (gitignore — `models/act/<domain>/` 로컬 배치, Jetson scp 대상). 단일 `act.pth` + LoRA hot-swap 가정은 **도메인별 ACT 체크포인트**로 변경. 도메인 전환 시 정책 재로드/재선택은 `act_node._load_policy()` 구현 범위(현재 stub — `model_path` 파라미터로 도메인별 지정).
 > - **언어 조건화 배선 수정**: stock lerobot ACT 가 `observation.language_embedding`(중복 STATE)을 무시하던 문제를 발견 → 학습 데이터셋 feature 를 `observation.environment_state`(ENV)로 rename([`rename_feature.py`](training/imitation_data/scripts/rename_feature.py)) 후 재학습해 `encoder_env_state_input_proj(384→512)` 토큰으로 언어를 실제 사용. 오프라인 검증([`eval_act_offline.py`](training/act/scripts/eval_act_offline.py)) [4] 임베딩 swap 민감도로 확인(정식 판정은 Jetson multi-target rollout). 자세한 경위는 메모리/스크립트 docstring 참조.
 
 > **제거 완료 노드/스크립트**: `vlm_node.py`, `yolo_node.py`, `state_monitor_node.py`,

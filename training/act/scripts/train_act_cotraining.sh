@@ -2,6 +2,14 @@
 # =============================================================================
 # train_act_cotraining.sh
 # -----------------------------------------------------------------------------
+# ⚠️ 상태: **보존된 원설계 스켈레톤 (현 운영 아님)**. 현재 ACT 는 real-only 도메인별
+#   train_act.sh 로 학습한다. 아래 본문은 원 co-training 설계 시점 표기라 일부 stale 하며,
+#   되살릴 경우 반드시 현재 결정에 맞출 것:
+#     (1) 언어 임베딩 obs 키 = observation.environment_state (ENV). observation.language_embedding
+#         은 stock lerobot ACT 가 STATE 중복으로 **무시**한다 → 학습 전 rename_feature.py 로 rename.
+#         (근거: 메모리 project_act_language_wiring / README "Language-conditioned VLA 패턴" 노트)
+#     (2) Sim 목표 ~500 에피소드(순수 teleop 전환, README), 산출물 = 도메인별 pretrained_model/ 디렉터리.
+# -----------------------------------------------------------------------------
 # 목적: ACT Policy를 Sim dataset + Real dataset 혼합으로
 #       Co-training 한다. LeRobot 0.4.4의 멀티 데이터셋 학습 기능을 사용.
 #
