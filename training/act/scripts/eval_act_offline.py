@@ -145,6 +145,23 @@ def main():
         lang_key = next((k for k in obs_keys
                          if "image" not in k and k != "observation.state"), None)
         print(f"  언어(env_state) 키: {lang_key}")
+        # ── normalizer (lerobot 0.4.4 는 정규화를 별도 processor 로 처리) ──
+        # 체크포인트 preprocessor 의 normalizer 버퍼(mean/std)를 직접 읽어 MEAN_STD 적용.
+        # 안 하면 env_state(L2정규화, ~0.05)가 학습 스케일(÷std≈0.03, ~33×)보다 훨씬
+        # 작아 env_state 토큰이 bias 근처 상수가 되어 [4]≈0 으로 죽는다(=eval 결함).
+        norm = {}
+        try:
+            from safetensors.torch import load_file
+            nf = glob.glob(str(policy_path / "*normaliz*.safetensors"))
+            buf = load_file(nf[0]) if nf else {}
+            for k in obs_keys + [ACTION_KEY]:
+                m, s = buf.get(f"{k}.mean"), buf.get(f"{k}.std")
+                if m is not None and s is not None:
+                    norm[k] = (m.float().to(args.device), s.float().to(args.device))
+            print(f"  정규화 적용 feature: {list(norm)}"
+                  + ("" if norm else " — ⚠️ normalizer 버퍼 없음 → raw 사용([3]/[4] 신뢰 불가)"))
+        except Exception as nex:
+            print(f"  ⚠️ normalizer 로드 실패({type(nex).__name__}) — raw 사용")
     except Exception as ex:
         print(f"  ❌ 로드 실패 — {type(ex).__name__}: {ex}")
         print("  (lerobot/torch 환경 또는 정책 경로 확인. [1] 결과만으로도 학습 정합은 확인 가능)")
@@ -156,7 +173,27 @@ def main():
             np.linspace(0, len(all_eps) - 1, min(args.episodes, len(all_eps))).astype(int)]
 
     def obs_batch(item):
-        return {k: item[k].unsqueeze(0).to(args.device) for k in obs_keys}
+        out = {}
+        for k in obs_keys:
+            x = item[k].float().unsqueeze(0).to(args.device)
+            if k in norm:
+                m, s = norm[k]
+                x = (x - m) / (s + 1e-8)
+            out[k] = x
+        return out
+
+    def norm_env(raw):  # 다른 에피소드 임베딩도 obs 와 동일하게 정규화 → (1, D) on device
+        x = raw.float().unsqueeze(0).to(args.device)
+        if lang_key in norm:
+            m, s = norm[lang_key]
+            x = (x - m) / (s + 1e-8)
+        return x
+
+    def unnorm_action(a):  # 예측(정규화 공간) → 원 단위 (GT 비교용)
+        if ACTION_KEY in norm:
+            m, s = norm[ACTION_KEY]
+            return a * s.cpu().numpy() + m.cpu().numpy()
+        return a
 
     def gt_action(item):
         a = item[ACTION_KEY]
@@ -173,7 +210,7 @@ def main():
                 item = ds[gi]
                 with torch.no_grad():
                     pred = policy.select_action(obs_batch(item))
-                pred = pred.squeeze(0).detach().cpu().numpy()
+                pred = unnorm_action(pred.squeeze(0).detach().cpu().numpy())
                 gt = gt_action(item)
                 errs.append(np.abs(pred - gt))
                 gts.append(gt)
@@ -185,11 +222,10 @@ def main():
         print(f"  L1 오차 / joint     : {np.round(l1_joint, 3)}")
         print(f"  GT action std/joint : {np.round(gts.std(0), 3)}")
         print(f"  L1 / std (작을수록↑): {np.round(l1_joint / scale, 3)}")
-        print(f"  전체 평균 L1 = {errs.mean():.4f} | (참고) GT 평균 |Δstd| 대비 "
+        print(f"  전체 평균 L1 = {errs.mean():.4f} | (참고) GT std 평균 대비 "
               f"{(l1_joint / scale).mean():.2%}")
-        print("  ⚠️ 주의: lerobot 0.4.4 는 정규화를 별도 processor 로 처리하는데 본 eval 은")
-        print("     미적용이라 [3] 절대값(L1)은 신뢰 불가(과대). **핵심 판정은 아래 [4]** —")
-        print("     [4] 는 swap 전/후 모두 동일 조건이라 차이값이 정규화와 무관하게 유효.")
+        print("  해석: 정규화(processor) 적용됨. L1/std 가 대체로 < ~0.5 면 학습 매핑을")
+        print("        잘 재현(open-loop chunk 기준, 후반 프레임 drift 포함).")
     except Exception as ex:
         print(f"  ❌ 예측 오차 평가 실패 — {type(ex).__name__}: {ex}")
 
@@ -201,7 +237,8 @@ def main():
         print("      (observation.environment_state 로 rename 후 재학습했는지 확인)")
         return
     try:
-        ep_emb = {ep: ds[bounds[ep][0]][lang_key] for ep in pick}
+        # 정규화된 env_state (obs 와 동일 스케일) — (1, D) on device
+        ep_emb = {ep: norm_env(ds[bounds[ep][0]][lang_key]) for ep in pick}
         deltas = []
         for ep in pick:
             others = [e for e in pick
@@ -213,23 +250,24 @@ def main():
                 base = obs_batch(item)
                 policy.reset()
                 with torch.no_grad():
-                    a_real = policy.select_action(base).squeeze(0).cpu().numpy()
+                    a_real = unnorm_action(policy.select_action(base).squeeze(0).cpu().numpy())
                 swap = dict(base)
-                swap[lang_key] = ep_emb[random.choice(others)].unsqueeze(0).to(args.device)
+                swap[lang_key] = ep_emb[random.choice(others)]   # 이미 (1,D) 정규화 on device
                 policy.reset()
                 with torch.no_grad():
-                    a_swap = policy.select_action(swap).squeeze(0).cpu().numpy()
+                    a_swap = unnorm_action(policy.select_action(swap).squeeze(0).cpu().numpy())
                 deltas.append(np.abs(a_real - a_swap))
         if not deltas:
             print("  표본 에피소드 임베딩이 모두 동일 — --episodes 를 늘려 다시 시도.")
             return
         deltas = np.stack(deltas)
         # 비교 기준: 같은 GT action std (위 [3]) — 없으면 자체 계산 생략
-        print(f"  테스트 프레임 {len(deltas)}개")
+        print(f"  테스트 프레임 {len(deltas)}개 (정규화 적용, action 원 단위)")
         print(f"  |Δaction| / joint (임베딩 swap): {np.round(deltas.mean(0), 3)}")
         print(f"  전체 평균 |Δaction| = {deltas.mean():.4f}")
-        print("  해석: 이 값이 0 에 가까우면 정책이 언어를 무시(shortcut). [3]의 GT std")
-        print("        와 비슷하거나 그 이상으로 클수록 언어로 행동을 잘 변별하는 것.")
+        print("  해석: ~0 이면 정책이 언어를 무시(shortcut). [3]의 GT action std 와")
+        print("        같은 단위 — std 대비 의미있는 크기(예: joint 당 수~수십)면 언어로")
+        print("        행동을 변별하는 것. (normalizer 미적용 시엔 항상 ~0 이니 무의미)")
     except Exception as ex:
         print(f"  ❌ 언어 민감도 평가 실패 — {type(ex).__name__}: {ex}")
 
