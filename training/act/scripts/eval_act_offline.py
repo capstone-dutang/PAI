@@ -21,9 +21,11 @@ real-only ACT 는 Sim eval 환경이 없어 정식 평가는 실기 rollout 이�
 
 CLI:
   python training/act/scripts/eval_act_offline.py \
-    --policy-path  training/act/outputs/recycling/checkpoints/last/pretrained_model \
+    --policy-path  models/act/recycling/pretrained_model \
     --dataset-root training/imitation_data/datasets/recycling_real_merge \
     --device cpu --episodes 5 --max-frames 50
+  # --policy-path 는 배포 모델(models/act/<domain>/pretrained_model) 또는 학습 출력
+  #   (models/act/outputs/<domain>/checkpoints/last/pretrained_model) 어느 쪽이든 가능.
 """
 from __future__ import annotations
 

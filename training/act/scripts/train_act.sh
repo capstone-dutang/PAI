@@ -78,7 +78,7 @@ fi
 # DATASET_REPO_ID: lerobot 이 사용할 repo id (push 안 하므로 라벨 역할).
 DATASET_REPO_ID="${DATASET_REPO_ID:-local/${DOMAIN}_real}"
 DATASET_ROOT="${DATASET_ROOT:-training/imitation_data/datasets/${DOMAIN}_real}"
-OUTPUT_DIR="${OUTPUT_DIR:-training/act/outputs/${DOMAIN}}"
+OUTPUT_DIR="${OUTPUT_DIR:-models/act/outputs/${DOMAIN}}"   # models/ 는 gitignore
 POLICY_REPO_ID="${POLICY_REPO_ID:-local/act_${DOMAIN}}"
 
 DEVICE="${DEVICE:-cuda}"
