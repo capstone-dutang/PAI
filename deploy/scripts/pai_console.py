@@ -53,6 +53,9 @@ except Exception as e:  # noqa: BLE001
 
 HOME = os.path.expanduser('~')
 
+# 임베딩 모델 — 로컬 디렉터리가 없으면 이 HF repo id 로 폴백(~/.cache/huggingface 캐시/Hub)
+DEFAULT_EMBED_REPO = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+
 
 # ── ANSI 색상 ──
 def _c(t, code):
@@ -85,12 +88,32 @@ def parse_args():
     return p.parse_args()
 
 
+def _resolve_embed_model(a):
+    """로컬 임베딩 디렉터리가 있으면 그 경로, 없으면 HF repo id(캐시/Hub)로 폴백."""
+    path = os.path.expanduser(a.embed_model)
+    return path if os.path.isdir(path) else DEFAULT_EMBED_REPO
+
+
 def node_specs(a):
-    """기동 순서대로 (name, argv, env_extra, settle_sec). act/realsense 는 로딩이 길어 settle 김."""
+    """기동 순서대로 (name, argv, env_extra, settle_sec).
+
+    순서 근거 (2026-06-04 실기 검증): GPU 를 쓰는 act_node 를 llama-server 직후
+    가장 먼저 기동해 GPU 를 일찍 확보한다(단편화 마진 + 검증 순서 일치). act 를
+    model_root 로 띄우면 모델 로드(GPU 점유)는 첫 subtask 까지 지연(lazy)되지만,
+    기동을 앞에 둔다. realsense 는 하드웨어 초기화가 길어 가장 먼저 시작(GPU 무관),
+    embedding 은 CPU 라 GPU 경쟁 없음.
+    """
+    embed_model = _resolve_embed_model(a)
     return [
         ('realsense',
          ['ros2', 'launch', 'realsense2_camera', 'rs_launch.py',
           'align_depth.enable:=true'], {}, 8.0),
+        ('act_node',
+         ['ros2', 'run', 'robot_arm_pkg', 'act_node', '--ros-args',
+          '-p', f'model_root:={a.model_root}',
+          '-p', 'device:=cuda',
+          '-p', f'horizon_steps:={a.horizon}'],
+         {'PYTORCH_CUDA_ALLOC_CONF': 'expandable_segments:True'}, 5.0),
         ('camera_node',
          ['ros2', 'run', 'robot_arm_pkg', 'camera_node'], {}, 3.0),
         ('llama_server_manager',
@@ -99,14 +122,8 @@ def node_specs(a):
           '-p', f'adapter_dir:={HOME}/models/gemma/adapters/'], {}, 2.0),
         ('embedding_node',
          ['ros2', 'run', 'robot_arm_pkg', 'embedding_node', '--ros-args',
-          '-p', f'model_name:={a.embed_model}',
+          '-p', f'model_name:={embed_model}',
           '-p', 'device:=cpu'], {}, 6.0),
-        ('act_node',
-         ['ros2', 'run', 'robot_arm_pkg', 'act_node', '--ros-args',
-          '-p', f'model_root:={a.model_root}',
-          '-p', 'device:=cuda',
-          '-p', f'horizon_steps:={a.horizon}'],
-         {'PYTORCH_CUDA_ALLOC_CONF': 'expandable_segments:True'}, 3.0),
         ('robot_controller_node',
          ['ros2', 'run', 'robot_arm_pkg', 'robot_controller_node', '--ros-args',
           '-p', f'robot_port:={a.robot_port}',
@@ -140,12 +157,17 @@ def precheck(a):
         print(red('  ✗ ~/ros2_ws/install 없음 — colcon build 필요')); hard_ok = False
 
     for label, path in [('ACT model_root', a.model_root),
-                        ('embedding', a.embed_model),
                         ('gemma adapters', f'{HOME}/models/gemma/adapters')]:
         if os.path.exists(os.path.expanduser(path)):
             print(green(f'  ✓ {label}: {path}'))
         else:
             print(yellow(f'  ? {label} 없음: {path}'))
+
+    if os.path.isdir(os.path.expanduser(a.embed_model)):
+        print(green(f'  ✓ embedding(로컬): {a.embed_model}'))
+    else:
+        print(yellow(f'  ? embedding 로컬 경로 없음 → HF repo id(캐시/Hub) 폴백: '
+                     + DEFAULT_EMBED_REPO))
 
     if os.path.exists(a.dest_roi):
         print(green('  ✓ destination_roi (verify depth veto 활성)'))
