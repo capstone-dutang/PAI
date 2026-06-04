@@ -411,7 +411,7 @@ paraphrase 학습된 모델이므로 Sim의 외부 LLM paraphrase 증강([README
 | KV Cache / 기타 | ~1.0 GB | Gemma 컨텍스트 윈도우 |
 | **합계** | **~6.2 GB** | 도메인 수가 늘어도 합계 불변 |
 
-> Gemma LoRA는 llama-server에 HTTP `/lora-adapter` 요청으로 hot-swap (서브-초 latency).
+> Gemma LoRA는 llama-server에 HTTP `/lora-adapters` 요청으로 hot-swap (서브-초 latency).
 > 한 태스크가 끝나는 시점(verify_result 직후)에 스왑하면 안정적이다.
 
 ---
@@ -540,7 +540,7 @@ llama-server (Gemma base GGUF, `--jinja`) 를 systemd 로 상시 구동하고, R
 > Sim과 Jetson 실물은 **동일 노드 구성**(camera_node, agent_node,
 > llama_server_manager, embedding_node, act_node, robot_controller_node)으로
 > 운영하며 검증도 같은 파이프라인에서 수행한다. Gemma LoRA는 도메인 1개만
-> 적재되고, 사용자 명령 → 도메인 분류 → llama-server `/lora-adapter` HTTP
+> 적재되고, 사용자 명령 → 도메인 분류 → llama-server `/lora-adapters` HTTP
 > 요청으로 hot-swap된다.
 >
 > ACT는 Sim-to-Real Co-training 방식으로 학습한다. Sim 측 Domain Randomization:

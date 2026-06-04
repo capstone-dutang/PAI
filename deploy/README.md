@@ -157,7 +157,7 @@ ros2 run robot_arm_pkg llama_server_manager \
 
 # 임베딩 노드 (텍스트 → 벡터 Service)
 ros2 run robot_arm_pkg embedding_node \
-  --ros-args -p model_path:=~/models/embedding/
+  --ros-args -p model_name:=~/models/embedding/
 
 # 에이전트 (Gemma 함수 호출 오케스트레이션)
 ros2 run robot_arm_pkg agent_node \

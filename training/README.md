@@ -56,7 +56,7 @@ ros2 run robot_arm_pkg camera_node
 
 # 3. embedding_node 실행 (수집 시 자연어 라벨 → 임베딩 변환에 사용)
 ros2 run robot_arm_pkg embedding_node \
-  --ros-args -p model_path:=~/models/embedding/
+  --ros-args -p model_name:=~/models/embedding/
 
 # 4. teleop 데이터 수집 스크립트 실행 (Option C — 슬롯 기반 템플릿)
 python <repo>/training/imitation_data/scripts/record_real_teleop.py \
@@ -267,7 +267,7 @@ done
 python training/lora_finetuning/scripts/merge_qa_dataset.py \
   --function_call   training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
   --verify          training/lora_finetuning/data/recycling/recycling_verify_qa.jsonl \
-  --output          training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
+  --output          training/lora_finetuning/data/recycling/recycling_merged.jsonl
 ```
 
 verify 가 비어 있어도 동작 (function_call 만 사용 + 경고). 1차 학습 시 function_call 만으로
@@ -277,7 +277,7 @@ verify 가 비어 있어도 동작 (function_call 만 사용 + 경고). 1차 학
 python training/lora_finetuning/scripts/merge_qa_dataset.py \
   --function_call training/lora_finetuning/data/recycling/recycling_function_call_qa.jsonl \
   --verify        /tmp/verify_empty.jsonl \
-  --output        training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl
+  --output        training/lora_finetuning/data/recycling/recycling_merged.jsonl
 ```
 
 ## 2-6. Unsloth QLoRA 파인튜닝 (FastVisionModel)
@@ -285,7 +285,7 @@ python training/lora_finetuning/scripts/merge_qa_dataset.py \
 ```bash
 python training/lora_finetuning/scripts/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
-  --dataset    training/lora_finetuning/data/recycling/recycling_qa_merged.jsonl \
+  --dataset    training/lora_finetuning/data/recycling/recycling_merged.jsonl \
   --image-dir  training/lora_finetuning/data/recycling/verify_images \
   --output-dir training/lora_finetuning/outputs/lora_recycling \
   --rank 16 --alpha 32 \
@@ -311,7 +311,7 @@ text-only 샘플과 vision collator 호환성을 빠르게 검증할 수 있는 
 ```bash
 python training/lora_finetuning/scripts/train_gemma_qlora.py \
   --base-model unsloth/gemma-4-E2B-it \
-  --dataset    training/lora_finetuning/data/recycling/function_call_qa_recycling.vision.jsonl \
+  --dataset    training/lora_finetuning/data/recycling/recycling_function_call_qa.vision.jsonl \
   --image-dir  training/lora_finetuning/data/recycling/verify_images \
   --output-dir /tmp/lora_sanity \
   --max-steps  10 \
@@ -376,18 +376,18 @@ vision encoder 가 base 그대로 유지됨. 결과:
   in the plastic bin is not in the plastic bin" 같은 자기모순도 발생)
 
 **현재 정책**: agent_node 가 reasoning 은 로그용으로만 사용하고 status enum 으로
-분기. enum 오답은 배포 실 동작에서 `max_verify_iterations` 재시도 + depth-grasp
-보조 검증 (`_depth_grasp_check`) 으로 보완. 정확도 개선이 필요해지면 다음
+분기. enum 오답은 배포 실 동작에서 `max_verify_iterations` 재시도 + depth place
+보조 검증 (`_depth_place_check`) 으로 보완. 정확도 개선이 필요해지면 다음
 옵션 검토:
 
 - `finetune_vision_layers=True` — VRAM/시간 비용 큼
 - verify QA augmentation (distractor 다양화, status 분포 보정)
-- depth-grasp 보조 검증 가중치 상향
+- depth place 보조 검증 가중치 상향
 
 ## 2-8. GGUF 변환
 
 LoRA 어댑터 (safetensors) 를 llama.cpp 의 GGUF 어댑터로 변환해야 Jetson 의
-llama-server 가 `/lora-adapter` HTTP 로 hot-swap 적재할 수 있습니다.
+llama-server 가 `/lora-adapters` HTTP 로 hot-swap 적재할 수 있습니다.
 
 ### 1회 환경 준비 (외부 학습 PC) — **변환 전용 venv 권장**
 
@@ -483,14 +483,14 @@ training/lora_finetuning/data/
 │   ├── recycling_function_call_qa.vision.jsonl
 │   ├── recycling_verify_qa.jsonl
 │   ├── recycling_verify_qa.jsonl.scenarios.jsonl
-│   ├── recycling_qa_merged.jsonl
+│   ├── recycling_merged.jsonl
 │   └── verify_images/
 └── tableware/
     ├── tableware_function_call_qa.jsonl
     ├── tableware_function_call_qa.vision.jsonl
     ├── tableware_verify_qa.jsonl
     ├── tableware_verify_qa.jsonl.scenarios.jsonl
-    ├── tableware_qa_merged.jsonl
+    ├── tableware_merged.jsonl
     └── verify_images/
 ```
 
