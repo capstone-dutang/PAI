@@ -871,7 +871,6 @@ datasets = [
 | `sim/config/dr_config.yaml` | 조명·카메라·질량 범위는 활성 — 보수적 기본값이므로 실기 측정 후 보정 필요. 텍스처·마찰·PD 게인 섹션은 미구현(주석) | 실기 측정, DR 헬퍼 추가 구현 |
 | `training/act/scripts/train_act_cotraining.sh` | LeRobot 멀티 데이터셋 가중치 학습 명령 본체 | LeRobot 가중치 API 확인, language_embedding 채널 검증 |
 | `deploy/config/grasp_roi.yaml` | 실측 ROI / threshold 값으로 템플릿 갱신 (grasp 시점 검증 — 미래 확장) | 캘리브레이션 완료, 엔드이펙터 측정 |
-| `deploy/config/destination_roi.yaml` | 실측 목적지 ROI(픽셀) / baseline depth / threshold 로 템플릿 갱신 (place 검증 — 현재 운영) | 캘리브레이션 완료, 목적지 배치 확정 |
 
 > **작성 완료 항목** (스켈레톤 + 인터페이스 정합 완료, 본 표에는 포함 안 됨):
 > - `robot_arm_msgs/` 패키지 (`SubtaskCommand`, `ExecutionStatus`, `DomainSelection`, `AgentLog` + `EmbedText`)
@@ -883,6 +882,7 @@ datasets = [
 > - `embedding_node.py` (paraphrase-multilingual-MiniLM-L12-v2, D=384 — 모델 확정)
 > - `sim/config/multi_target_scenes.yaml` (placement 실측 완료 — spawn_region·table_top_z·exclusion_zones 를 base_scene.usd 에서 측정해 기입, domains.recycling/tableware 네임스페이스 구조)
 > - `deploy/calibration/camera_intrinsics.yaml` (RealSense D435 공장 캘리브레이션값), `camera_robot_transform.yaml` (eye-on-base hand-eye 결과), `home_pose.yaml` (follower rest 자세 캡처)
+> - `deploy/config/destination_roi.yaml` (place 검증 ROI 실측 완료 — 2026-06-04, recycling 3 bin + tableware 영역, 픽셀 ROI + baseline depth, threshold 0.025)
 >
 > **Gemma 도메인 LoRA 파이프라인 — 본체 구현 + 양 도메인 실행 완료 (2026-06-02)**:
 > - `training/lora_finetuning/scripts/generate_function_call_qa.py` (function_call 합성)

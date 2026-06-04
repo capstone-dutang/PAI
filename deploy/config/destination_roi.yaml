@@ -24,14 +24,12 @@
 #   ~/calibration/destination_roi.yaml 로 복사 후 agent_node 의 destination_roi
 #   파라미터가 가리키도록 설정.
 #
-# 측정 (scripts/measure_grasp_roi.py 보조):
+# 측정 (scripts/measure_roi.py --mode destination):
 #   1) 카메라/목적지를 운영 배치로 두고, 빈 목적지 상태에서 스크립트를 띄운다.
-#   2) 각 목적지를 드래그(또는 --roi)로 지정 → 콘솔의 'roi_px' 와 'z_median' 을 읽어
-#      아래 roi_px / baseline_depth 에 입력한다 (e 표본 = 빈 목적지 baseline).
-#   3) 물체를 놓은 상태(g 표본)의 median 과의 차이의 절반쯤을
-#      depth_change_threshold 로 잡는다.
-#   ※ 스크립트는 현재 미터 박스 yaml 을 출력하므로, destination_roi 포맷은
-#     콘솔의 roi_px/median 을 보고 본 파일에 수기 입력한다.
+#   2) 각 목적지를 드래그 → b(baseline 등록, 반복). 도메인별로 한 번씩 실행하고
+#      (--domain 으로 선택) 출력 블록을 본 파일 destinations 아래에 합친다.
+#   3) 물체를 놓은 상태에서 o → threshold 힌트. 여러 도메인이면 변화가 가장 작은
+#      쪽도 감지되도록 작은 threshold 로 통일한다.
 #
 # 필드:
 #   depth_scale              — 16UC1 raw→m 스케일 (RealSense 기본 0.001). 32FC1 이면 무시.
@@ -42,26 +40,28 @@
 #     roi_px                 — [x0, y0, x1, y1] 픽셀 박스 (640x480 기준).
 #     baseline_depth         — 빈 목적지일 때 ROI median depth (m).
 #
-# TODO: 아래 roi_px / baseline_depth 는 예시값 — 캘리브레이션·배치 확정 후 실측 갱신.
+# 실측값 (2026-06-04, RealSense D435 aligned-depth 640x480). name 은 measure_roi.py
+# 자동 dest_N — 운영에서 can_bin/plastic_bin/paper_bin/target_area 로 rename 예정.
 
 depth_scale: 0.001
-depth_change_threshold: 0.02
+# recycling 0.053 / tableware 0.0185 측정 → 변화가 작은 tableware 도 감지되도록 통일.
+depth_change_threshold: 0.025
 
 destinations:
-  # recycling: 객체별 분리 bin 3개 (generate_verify_qa.DESTINATIONS 와 동일 명칭)
+  # recycling: 객체별 분리 bin 3개
   recycling:
-    - name: can_bin
-      roi_px: [120, 200, 220, 300]
-      baseline_depth: 0.55
     - name: plastic_bin
-      roi_px: [270, 200, 370, 300]
-      baseline_depth: 0.55
+      roi_px: [467, 234, 617, 278]
+      baseline_depth: 0.8730
+    - name: can_bin
+      roi_px: [457, 195, 588, 220]
+      baseline_depth: 0.9670
     - name: paper_bin
-      roi_px: [420, 200, 520, 300]
-      baseline_depth: 0.55
+      roi_px: [444, 159, 564, 186]
+      baseline_depth: 1.0670
 
-  # tableware: 테이블 위 단일 목표 영역 (별도 통 자산 없음 — 평면)
+  # tableware: 테이블 위 단일 목표 영역
   tableware:
     - name: target_area
-      roi_px: [240, 220, 400, 340]
-      baseline_depth: 0.50
+      roi_px: [71, 244, 129, 301]
+      baseline_depth: 0.9070
