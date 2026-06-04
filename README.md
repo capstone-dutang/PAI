@@ -82,7 +82,7 @@ PAI/
 │       ├── sim_cloud_teleop_setting.md         # 클라우드(EC2) Isaac Sim teleop 셋업 가이드
 │       └── sim_local_teleop_setting.md         # 로컬 Isaac Sim teleop 셋업 가이드
 │
-├── training/                                   # [학습: 모방데이터 + LoRA 파인튜닝 + ACT Co-training]
+├── training/                                   # [학습: 모방데이터 + LoRA 파인튜닝 + ACT 학습(real-only)]
 │   ├── README.md                               # 3개 워크스트림 실행 통합 가이드
 │   ├── imitation_data/                         # 모방데이터 수집 (ACT 학습용 시연)
 │   │   └── scripts/                            # 수집·라벨링·병합 스크립트
@@ -90,9 +90,12 @@ PAI/
 │   │       ├── record_sim_teleop.py            # Isaac Sim teleop 수집 (직접 API)
 │   │       ├── generate_language_labels.py     # Sim 에피소드 언어 라벨링
 │   │       ├── postprocess_real_labels.py      # Real 라벨 paraphrase + 임베딩 후처리
-│   │       ├── merge_lerobot_datasets.py       # LeRobotDataset 디스크 병합 (재라벨+신규)
+│   │       ├── merge_lerobot_datasets.py       # LeRobotDataset 디스크 병합 (--video-codec h264 가속)
 │   │       ├── relabel_recycling_dataset.py    # recycling 기존 수집분 재라벨링
-│   │       └── verify_relabel.py               # 재라벨링 결과 검증
+│   │       ├── verify_relabel.py               # 재라벨링 결과 검증
+│   │       ├── verify_real_dataset.py          # 신규 수집/병합 데이터셋 무결성·임베딩↔task 검증
+│   │       ├── regenerate_labels.py            # labels.jsonl 을 데이터셋 task(SSoT)에서 재생성
+│   │       └── rename_feature.py               # feature 키 rename (언어 임베딩 → environment_state, ACT ENV 배선)
 │   ├── lora_finetuning/                        # Gemma 도메인 LoRA 파인튜닝
 │   │   ├── scripts/                            # Q&A 합성·변환·학습·검증 스크립트
 │   │   │   ├── generate_function_call_qa.py    # function_call (함수 호출) 시나리오 합성
@@ -109,9 +112,10 @@ PAI/
 │   │       ├── recycling/
 │   │       └── tableware/
 │   └── act/                                    # ACT 학습 (현재 real-only, co-training 유보)
-│       └── scripts/                            # 학습 스크립트
+│       └── scripts/                            # 학습·검증 스크립트
 │           ├── train_act.sh                    # real-only 도메인별 학습 (현재 운영)
-│           └── train_act_cotraining.sh         # Sim + Real 혼합 학습 (co-training 스켈레톤 — 보존)
+│           ├── train_act_cotraining.sh         # Sim + Real 혼합 학습 (co-training 스켈레톤 — 보존)
+│           └── eval_act_offline.py             # 학습된 ACT 오프라인 검증 (action 오차 + 언어 민감도)
 │
 ├── shared/                                     # 3목적 공통 자산 (현재 비어 있음)
 ├── docs/
@@ -619,6 +623,13 @@ ACT 학습용 시연 데이터를 teleop으로 수집한다. `agent_node` 및 Lo
 | `observation.images.top` | (H,W,3) uint8 | RealSense RGB (`/camera/color/image_raw`) |
 | `action` | (6,) float32 | 리더 관절 값 (정답 행동) |
 
+> **언어 임베딩 채널 — 학습 전 `environment_state` 로 rename**: 위 표의
+> `observation.language_embedding` 은 **수집 시점 원본 키**다. stock lerobot ACT 는
+> 이 키를 STATE 로 분류해 무시하므로, ACT 학습 직전
+> [`rename_feature.py`](training/imitation_data/scripts/rename_feature.py) 로
+> `observation.environment_state`(ENV) 로 rename 해야 ACT 가 언어를 실제로 사용한다
+> (위 "아키텍처 핵심 결정 사항" 절 참조).
+
 > 이전 설계의 `observation.target_position` 채널은 제거되었다. depth는
 > `verify_result` 단계에서만 사용되고 ACT 학습 obs에 포함되지 않는다.
 
@@ -824,13 +835,13 @@ datasets = [
     LeRobotDataset("dataset_sim",  weight=0.7),
     LeRobotDataset("dataset_real", weight=0.3),
 ]
-# observation.language_embedding 채널이 두 데이터셋 모두에 존재해야 함
+# 언어 임베딩 채널(학습 키: observation.environment_state)이 두 데이터셋 모두에 존재해야 함
 # 임베딩 차원 D 일치 필수
 ```
 
 **학습 입력 obs**:
 - `observation.state`
-- `observation.language_embedding`
+- `observation.environment_state` (=언어 임베딩, ENV 토큰. 수집 키 `language_embedding` 에서 `rename_feature.py` 로 rename — "아키텍처 핵심 결정 사항" 절 참조)
 - `observation.images.top`
 
 **학습 타겟**:
